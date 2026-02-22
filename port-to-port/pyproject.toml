@@ -1,0 +1,12 @@
+[project]
+name = "mini-rl-harness"
+version = "0.1.0"
+description = "Standalone mini RL benchmark harness for Gradient Bang task loops"
+requires-python = ">=3.12"
+dependencies = [
+  "loguru>=0.7.0",
+  "pipecat-ai[google,anthropic]==0.0.102",
+]
+
+[tool.uv]
+package = false
