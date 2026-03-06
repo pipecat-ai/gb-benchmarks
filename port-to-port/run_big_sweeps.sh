@@ -40,23 +40,23 @@ metric_from_log() {
 
 run_nemotron_worker() {
   local results="$NEMO_DIR/results.tsv"
-  echo -e "round\tbudget\tmax_tokens\texit_code\telapsed_s\tsuccess\tbad_actions\tfinal_sector\tcoherent_report\tturns\tlog\tjson" > "$results"
+  echo -e "round\tthinking\tmax_tokens\texit_code\telapsed_s\tsuccess\tbad_actions\tfinal_sector\tcoherent_report\tturns\tlog\tjson" > "$results"
 
   local total=$((NEMO_ROUNDS * 3))
   local i=0
   echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) NEMOTRON start rounds=${NEMO_ROUNDS} total=${total}"
 
   for round in $(seq 1 "$NEMO_ROUNDS"); do
-    for budget in 512 1024 default; do
+    for thinking in low medium high; do
       i=$((i + 1))
       local max_tokens=""
-      if [[ "$budget" == "512" ]]; then
+      if [[ "$thinking" == "low" ]]; then
         max_tokens="4608"
-      elif [[ "$budget" == "1024" ]]; then
+      elif [[ "$thinking" == "medium" ]]; then
         max_tokens="5120"
       fi
 
-      local run_tag="r$(printf '%02d' "$round")-tb${budget}"
+      local run_tag="r$(printf '%02d' "$round")-th${thinking}"
       local slug
       slug="$(sanitize_slug "openai-${NEMO_MODEL}-${run_tag}")"
       local log_file="$NEMO_DIR/${slug}.log"
@@ -70,8 +70,8 @@ run_nemotron_worker() {
         --provider openai
         --model "$NEMO_MODEL"
         --openai-base-url "$NEMO_BASE_URL"
-        --thinking-budget "$budget"
-        --max-turns 40
+        --thinking "$thinking"
+        --max-turns 50
         --function-call-timeout-secs 20
         --log-json "$json_file"
       )
@@ -93,8 +93,8 @@ run_nemotron_worker() {
       coherent_report="$(metric_from_log COHERENT_REPORT "$log_file")"
       turns="$(metric_from_log TURNS "$log_file")"
 
-      echo -e "${round}\t${budget}\t${max_tokens}\t${rc}\t${elapsed}\t${success:-}\t${bad_actions:-}\t${final_sector:-}\t${coherent_report:-}\t${turns:-}\t${log_file}\t${json_file}" >> "$results"
-      echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) NEMOTRON ${i}/${total} round=${round} budget=${budget} rc=${rc} elapsed_s=${elapsed}" >> "$NEMO_DIR/progress.log"
+      echo -e "${round}\t${thinking}\t${max_tokens}\t${rc}\t${elapsed}\t${success:-}\t${bad_actions:-}\t${final_sector:-}\t${coherent_report:-}\t${turns:-}\t${log_file}\t${json_file}" >> "$results"
+      echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) NEMOTRON ${i}/${total} round=${round} thinking=${thinking} rc=${rc} elapsed_s=${elapsed}" >> "$NEMO_DIR/progress.log"
     done
   done
 }
@@ -127,8 +127,8 @@ run_model_matrix_worker() {
       "$UV_BIN" run python mini-rl-env.py \
         --provider "$provider" \
         --model "$model" \
-        --thinking-budget 2048 \
-        --max-turns 40 \
+        --thinking high \
+        --max-turns 50 \
         --function-call-timeout-secs 20 \
         --log-json "$json_file" \
         > "$log_file" 2>&1
@@ -162,7 +162,7 @@ run_dir=$RUN_DIR
 nemotron_base_url=$NEMO_BASE_URL
 nemotron_model=$NEMO_MODEL
 nemotron_rounds=$NEMO_ROUNDS
-nemotron_budgets=512,1024,default
+nemotron_thinking_levels=low,medium,high
 default_prompt=mini-rl-env.py built-in DEFAULT_BENCHMARK_TASK
 matrix_rounds=$MATRIX_ROUNDS
 matrix_models=${MODELS[*]}

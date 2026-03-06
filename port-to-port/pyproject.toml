@@ -4,8 +4,9 @@ version = "0.1.0"
 description = "Standalone mini RL benchmark harness for Gradient Bang task loops"
 requires-python = ">=3.12"
 dependencies = [
+  "anthropic==0.79.0",
   "loguru>=0.7.0",
-  "pipecat-ai[google,anthropic]==0.0.102",
+  "pipecat-ai[google]==0.0.102",
 ]
 
 [tool.uv]

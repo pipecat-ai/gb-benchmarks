@@ -6,9 +6,24 @@ RUN_DIR="runs/matrix-${TS}"
 mkdir -p "$RUN_DIR"
 UV_BIN="${UV_BIN:-uv}"
 
+finish_run() {
+  local status="$1"
+  {
+    echo "DONE"
+    echo "$status"
+  } > "$RUN_DIR/DONE"
+  echo "$RUN_DIR" > runs/LATEST_MATRIX_RUN
+}
+
 if ! command -v "$UV_BIN" >/dev/null 2>&1; then
   echo "ERROR: uv binary not found: $UV_BIN" >&2
   exit 127
+fi
+
+if [[ -z "${ANTHROPIC_API_KEY:-}" ]]; then
+  echo "ERROR: ANTHROPIC_API_KEY is required for LLM report judging." >&2
+  finish_run "PRECHECK_FAILED"
+  exit 2
 fi
 
 RESULTS="$RUN_DIR/results.tsv"
@@ -39,7 +54,8 @@ for entry in "${models[@]}"; do
   "$UV_BIN" run python mini-rl-env.py \
     --provider "$provider" \
     --model "$model" \
-    --max-turns 40 \
+    --thinking high \
+    --max-turns 50 \
     --log-json "$json_file" \
     > "$log_file" 2>&1
   rc=$?
@@ -64,20 +80,14 @@ done
 
 eval_status="EVAL_OK"
 eval_log="$RUN_DIR/evaluate.log"
-judge_args=(--report-accuracy-judge deterministic)
-if [[ -n "${ANTHROPIC_API_KEY:-}" ]]; then
-  judge_args=(
-    --report-accuracy-judge llm
-    --judge-model "${EVAL_JUDGE_MODEL:-claude-sonnet-4-6}"
-  )
-fi
-if ! "$UV_BIN" run python evaluate_runs.py "$RUN_DIR/*.json" --out-dir "$RUN_DIR/eval" "${judge_args[@]}" > "$eval_log" 2>&1; then
+if ! "$UV_BIN" run python evaluate_runs.py \
+  "$RUN_DIR/*.json" \
+  --out-dir "$RUN_DIR/eval" \
+  --report-accuracy-judge llm \
+  --judge-model "${EVAL_JUDGE_MODEL:-claude-sonnet-4-6}" \
+  > "$eval_log" 2>&1; then
   eval_status="EVAL_FAILED"
   echo "Evaluator failed; see $eval_log" >&2
 fi
 
-{
-  echo "DONE"
-  echo "$eval_status"
-} > "$RUN_DIR/DONE"
-echo "$RUN_DIR" > runs/LATEST_MATRIX_RUN
+finish_run "$eval_status"

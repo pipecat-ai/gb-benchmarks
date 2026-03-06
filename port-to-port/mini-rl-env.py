@@ -1,15 +1,12 @@
 #!/usr/bin/env python3
-"""Standalone mini RL benchmark harness for one Gradient Bang task loop.
-
-This harness has no dependency on Supabase edge functions or game servers.
-It runs a synthetic environment loop locally and drives model inference each turn.
-"""
+"""Standalone mini RL benchmark harness using native Pipecat function calling."""
 
 from __future__ import annotations
 
 import argparse
-import ast
 import asyncio
+import base64
+import contextlib
 import hashlib
 import json
 import os
@@ -18,21 +15,33 @@ import subprocess
 import sys
 import time
 import uuid
-from collections import deque
-from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
+from types import MethodType, SimpleNamespace
 from typing import Any, Optional
 
 from loguru import logger
-from pipecat.processors.aggregators.llm_context import LLMContext
-
-from llm_factory import (  # noqa: E402
-    LLMProvider,
-    LLMServiceConfig,
-    UnifiedThinkingConfig,
-    create_llm_service,
+from pipecat.frames.frames import (
+    EndFrame,
+    FunctionCallResultFrame,
+    FunctionCallResultProperties,
+    FunctionCallsStartedFrame,
+    LLMFullResponseEndFrame,
+    LLMFullResponseStartFrame,
+    LLMMessagesAppendFrame,
+    LLMRunFrame,
+    LLMTextFrame,
+    LLMThoughtTextFrame,
+    MetricsFrame,
 )
+from pipecat.metrics.metrics import LLMTokenUsage, LLMUsageMetricsData
+from pipecat.pipeline.pipeline import Pipeline
+from pipecat.pipeline.runner import PipelineRunner
+from pipecat.pipeline.task import PipelineParams, PipelineTask
+from pipecat.processors.aggregators.llm_context import LLMContext, LLMSpecificMessage
+from pipecat.processors.aggregators.llm_response_universal import LLMContextAggregatorPair
+from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
+from pipecat.services.llm_service import FunctionCallParams, LLMService
 
 
 def _find_repo_root(start_dir: Path) -> Path:
@@ -45,45 +54,60 @@ def _find_repo_root(start_dir: Path) -> Path:
 HARNESS_DIR = Path(__file__).resolve().parent
 REPO_ROOT = _find_repo_root(HARNESS_DIR)
 
+from llm_factory import (  # noqa: E402
+    LLMProvider,
+    LLMServiceConfig,
+    create_llm_service,
+)
 
-MEGA_PORT_SECTOR = 1611
+from synthetic_world import (  # noqa: E402
+    MEGA_PORT_SECTOR,
+    EventPlan,
+    SyntheticWorld,
+    classify_result_status,
+    serialize_response_data,
+)
+from taskagent_event_summaries import TaskAgentEventSummaries  # noqa: E402
+from tool_catalog import (  # noqa: E402
+    BENCHMARK_ASYNC_TOOL_COMPLETIONS,
+    BENCHMARK_SYNC_TOOL_EVENTS,
+    assert_catalog_parity,
+    build_tools_schema,
+)
+
+
 DEFAULT_BENCHMARK_TASK = (
-    "Find the nearest mega-port that's not our current location. "
-    "Fly there, trading opportunistically along the way.\n"
-    "When we get there, report how many ports we traded at, and how much profit we made in total."
-)
-ACTION_FORMAT_REMINDER = (
-    'Respond with exactly one action as JSON: '
-    '{"action":"<name>","args":{...}}. '
-    'Use "finished" when task is complete: '
-    '{"action":"finished","args":{"message":"..."}}.'
+    "Go round-trip from our current location to the nearest mega-port. "
+    "At the mega-port, recharge to full warp power. "
+    "While traveling there and back, trade at every port that provides a trading opportunity. "
+    "Make as much money as possible. "
+    "Be sure you know how to trade well. "
+    "When you're back where you started, give me a quick summary with the mega-port you used, how much warp you recharged and what it cost, how many ports you traded at, and total profit from the whole trip."
 )
 
-RUN_SCHEMA_VERSION = "mini_rl_run.v2"
-RUNNER_VERSION = "2026-02-21"
+MEGA_PORT_NAME = "MEGA SSS"
+RUN_SCHEMA_VERSION = "mini_rl_run.v3"
+RUNNER_VERSION = "2026-02-25"
+ASYNC_COMPLETION_TIMEOUT = 5.0
+MAX_NO_TOOL_NUDGES = 3
+NO_TOOL_WATCHDOG_DELAY = 5.0
+EVENT_BATCH_INFERENCE_DELAY = 1.0
+PIPELINE_GRACEFUL_SHUTDOWN_TIMEOUT = 3.0
+THINKING_LEVELS = ("none", "minimal", "low", "medium", "high")
+THINKING_BUDGET_MAP = {"minimal": 0, "low": 128, "medium": 512, "high": 2048}
+ANTHROPIC_HAIKU_THINKING_BUDGET_MAP = {"low": 1024, "medium": 2048, "high": 4096}
+GEMINI_25_FLASH_THINKING_BUDGET_MAP = {"low": 1024, "medium": 2048, "high": 4096}
+GOOGLE_THINKING_LEVEL_MODEL_PREFIXES = ("gemini-3", "supernova")
+CONTROL_TOKEN_REPLAY_PATTERNS = (
+    re.compile(r"<\|start\|>assistant<\|channel\|>[A-Za-z_]+"),
+    re.compile(r"<\|start\|>assistant"),
+    re.compile(r"<\|channel\|>[A-Za-z_]+"),
+    re.compile(r"<\|(?:start|end|channel)\|>"),
+)
 
 
 def _iso_utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
-
-
-def create_task_instruction_user_message(task: str) -> str:
-    prompt_parts = [
-        "# Agent Instructions",
-        "",
-        "You are an autonomous agent. Execute this task step by step. After each step, observe the results and react accordingly. Responses you generate from each inference call will be used only internally to complete the task. The only information that is returned to the user is the final result message that is passed to the `finished` tool call.",
-        "",
-        "When you have completed the task, call the `finished` tool with a message to be returned to the user who initiated the task.",
-        "",
-        "# Current time (UTC)",
-        f"{datetime.now(timezone.utc).isoformat()}",
-        "",
-        "# Task Instructions",
-        "",
-        f"{task}",
-        "",
-    ]
-    return "\n".join(prompt_parts)
 
 
 def _sha256_text(text: str) -> str:
@@ -103,599 +127,6 @@ def _git_sha(repo_root: Path) -> Optional[str]:
         return None
 
 
-def _canonical_commodity(name: str) -> str:
-    normalized = name.strip().lower().replace("-", "_").replace(" ", "_")
-    alias = {
-        "qf": "quantum_foam",
-        "quantumfoam": "quantum_foam",
-        "ro": "retro_organics",
-        "retroorganics": "retro_organics",
-        "ns": "neuro_symbolics",
-        "neurosymbolics": "neuro_symbolics",
-    }
-    return alias.get(normalized, normalized)
-
-
-def _display_commodity(name: str) -> str:
-    mapping = {
-        "quantum_foam": "quantum foam",
-        "retro_organics": "retro organics",
-        "neuro_symbolics": "neuro symbolics",
-    }
-    return mapping.get(name, name.replace("_", " "))
-
-
-@dataclass
-class PortMarket:
-    name: str
-    buys: dict[str, int] = field(default_factory=dict)
-    sells: dict[str, int] = field(default_factory=dict)
-
-    def summary(self) -> str:
-        parts: list[str] = []
-        if self.buys:
-            buy_str = ",".join(
-                f"{k.split('_')[0].upper()}@{v}" for k, v in sorted(self.buys.items())
-            )
-            parts.append(f"buys {buy_str}")
-        if self.sells:
-            sell_str = ",".join(
-                f"{k.split('_')[0].upper()}@{v}" for k, v in sorted(self.sells.items())
-            )
-            parts.append(f"sells {sell_str}")
-        return f"{self.name} {' '.join(parts)}" if parts else self.name
-
-
-@dataclass
-class Salvage:
-    salvage_id: str
-    sector: int
-    cargo: dict[str, int]
-
-
-@dataclass
-class GameState:
-    sector: int = 3080
-    warp: int = 500
-    max_warp: int = 500
-    shields: int = 150
-    max_shields: int = 150
-    fighters: int = 300
-    credits: int = 16564
-    bank_credits: int = 0
-    cargo: dict[str, int] = field(
-        default_factory=lambda: {
-            "quantum_foam": 10,
-            "retro_organics": 0,
-            "neuro_symbolics": 0,
-        }
-    )
-    holds_total: int = 30
-    explored_count: int = 101
-    explored_percent: int = 2
-    visited_sectors: set[int] = field(default_factory=lambda: {3080})
-
-    @property
-    def used_holds(self) -> int:
-        return sum(self.cargo.values())
-
-    @property
-    def empty_holds(self) -> int:
-        return max(0, self.holds_total - self.used_holds)
-
-
-class MiniRLEnv:
-    graph: dict[int, list[int]] = {
-        0: [4874],
-        172: [220],
-        200: [2469],
-        220: [172],
-        916: [3885, 4884],
-        1344: [2469, 3900, 4874],
-        1487: [1928],
-        1611: [1928, 2058],
-        1928: [1487, 1611, 4382],
-        2058: [1611, 2831],
-        2217: [2266],
-        2266: [3080, 3313, 3885],
-        2469: [200, 1344, 4884],
-        2766: [3494],
-        2831: [2058, 3494, 4822],
-        3080: [2266, 3313],
-        3313: [2266, 3080],
-        3494: [2766, 2831, 4874],
-        3871: [3885],
-        3885: [916, 2266, 3871],
-        3900: [1344],
-        4382: [1928],
-        4822: [2831],
-        4874: [0, 1344, 3494],
-        4884: [916, 2469, 2833],
-    }
-
-    ports: dict[int, PortMarket] = {
-        3080: PortMarket(
-            name="BSB",
-            buys={"quantum_foam": 33, "neuro_symbolics": 52},
-            sells={"retro_organics": 8},
-        ),
-        1611: PortMarket(
-            name="MEGA SSS",
-            sells={"quantum_foam": 19, "retro_organics": 8, "neuro_symbolics": 30},
-        ),
-        1928: PortMarket(
-            name="BBS",
-            buys={"quantum_foam": 32, "retro_organics": 13},
-            sells={"neuro_symbolics": 30},
-        ),
-        2831: PortMarket(
-            name="SSB",
-            buys={"neuro_symbolics": 52},
-            sells={"quantum_foam": 19, "retro_organics": 8},
-        ),
-        4874: PortMarket(
-            name="SSS",
-            sells={"quantum_foam": 19, "retro_organics": 8, "neuro_symbolics": 30},
-        ),
-    }
-
-    def __init__(self) -> None:
-        self.state = GameState()
-        self.salvage_by_id: dict[str, Salvage] = {}
-        self.bad_actions_count = 0
-        self.turn_count = 0
-        self.trade_events: list[dict[str, Any]] = []
-
-    def state_snapshot(self) -> dict[str, Any]:
-        return {
-            "sector": self.state.sector,
-            "warp": self.state.warp,
-            "max_warp": self.state.max_warp,
-            "credits": self.state.credits,
-            "bank_credits": self.state.bank_credits,
-            "cargo": dict(self.state.cargo),
-            "empty_holds": self.state.empty_holds,
-            "used_holds": self.state.used_holds,
-            "visited_sector_count": len(self.state.visited_sectors),
-        }
-
-    def _status_snapshot(self) -> str:
-        sector = self.state.sector
-        neighbors = self.graph.get(sector, [])
-        port = self.ports.get(sector)
-        port_text = port.summary() if port else "None"
-
-        lines = [
-            "Player: Jane Eyre",
-            f"In sector {sector}.",
-            f"Adjacent sectors: {neighbors}",
-            "Region: Federation Space",
-            f"Explored {self.state.explored_count} sectors ({self.state.explored_percent}%).",
-            "Ship: Kestrel Courier (Kestrel Courier)",
-            (
-                f"Credits: {self.state.credits} (bank: {self.state.bank_credits}). "
-                f"Cargo: {self.state.cargo['quantum_foam']} QF | "
-                f"{self.state.cargo['retro_organics']} RO | "
-                f"{self.state.cargo['neuro_symbolics']} NS. "
-                f"Empty holds: {self.state.empty_holds}."
-            ),
-            (
-                f"Warp: {self.state.warp}/{self.state.max_warp}. "
-                f"Shields: {self.state.shields}/{self.state.max_shields}. "
-                f"Fighters: {self.state.fighters}."
-            ),
-            f"Port: {port_text}",
-            "Garrison: None",
-        ]
-        return "\n".join(lines)
-
-    def _map_local(self) -> str:
-        sector = self.state.sector
-        neighbors = self.graph.get(sector, [])
-        visited = sum(1 for s in neighbors if s in self.state.visited_sectors)
-        total = len(neighbors)
-        unvisited = [s for s in neighbors if s not in self.state.visited_sectors]
-        nearest = ", ".join(f"{s} (1 hops)" for s in unvisited[:3]) if unvisited else "None"
-        return (
-            f"Local map around sector {sector}: {visited}/{total} visited, {len(unvisited)} unvisited.\n"
-            "Region: Federation Space.\n"
-            f"Nearest unvisited: {nearest}.\n"
-            f"We are currently in sector {sector}."
-        )
-
-    def initial_observation(self) -> str:
-        return (
-            f"[EVENT] status.snapshot: {self._status_snapshot()}\n"
-            f"[EVENT] map.local: {self._map_local()}\n\n"
-            f"[REMINDER] {ACTION_FORMAT_REMINDER}"
-        )
-
-    def _bfs_path(self, start: int, target: int) -> Optional[list[int]]:
-        if start == target:
-            return [start]
-        queue: deque[int] = deque([start])
-        parent: dict[int, Optional[int]] = {start: None}
-        while queue:
-            cur = queue.popleft()
-            for nxt in self.graph.get(cur, []):
-                if nxt in parent:
-                    continue
-                parent[nxt] = cur
-                if nxt == target:
-                    path: list[int] = [target]
-                    while parent[path[-1]] is not None:
-                        path.append(parent[path[-1]])
-                    path.reverse()
-                    return path
-                queue.append(nxt)
-        return None
-
-    def _emit_error(self, endpoint: str, message: str) -> str:
-        self.bad_actions_count += 1
-        payload = {
-            "endpoint": endpoint,
-            "error": message,
-            "source": {"type": "synthetic"},
-            "synthesized": True,
-            "status": 400,
-        }
-        return f"[EVENT] error: {json.dumps(payload)}\n\n[REMINDER] {ACTION_FORMAT_REMINDER}"
-
-    def _handle_list_known_ports(self, args: dict[str, Any]) -> str:
-        from_sector = int(args.get("from_sector", self.state.sector))
-        mega_only = bool(args.get("mega", False))
-        commodity = args.get("commodity")
-        trade_type = args.get("trade_type")
-
-        entries: list[tuple[int, int, PortMarket]] = []
-        for sector, market in self.ports.items():
-            if mega_only and not market.name.startswith("MEGA"):
-                continue
-            if commodity and trade_type:
-                commodity_name = _canonical_commodity(str(commodity))
-                if str(trade_type) == "sell" and commodity_name not in market.buys:
-                    continue
-                if str(trade_type) == "buy" and commodity_name not in market.sells:
-                    continue
-            path = self._bfs_path(from_sector, sector)
-            if not path:
-                continue
-            entries.append((sector, len(path) - 1, market))
-
-        entries.sort(key=lambda item: item[1])
-        if not entries:
-            return f"[EVENT] ports.list: No matching ports found from sector {from_sector}.\n\n[REMINDER] {ACTION_FORMAT_REMINDER}"
-
-        lines = [f"[EVENT] ports.list: Found {len(entries)} ports from sector {from_sector}:"]
-        for sector, hops, market in entries[:10]:
-            lines.append(f"  - Sector {sector} ({hops} hops): {market.summary()}")
-        lines.append("")
-        lines.append(f"[REMINDER] {ACTION_FORMAT_REMINDER}")
-        return "\n".join(lines)
-
-    def _handle_plot_course(self, args: dict[str, Any]) -> str:
-        to_sector = args.get("to_sector")
-        if to_sector is None:
-            return self._emit_error("plot_course", "Missing required argument: to_sector")
-        to_sector = int(to_sector)
-        path = self._bfs_path(self.state.sector, to_sector)
-        if not path:
-            return self._emit_error("plot_course", f"No known route to sector {to_sector}")
-        distance = max(0, len(path) - 1)
-        return (
-            f"[EVENT] course.plot: Course: {path}. Distance: {distance}.\n\n"
-            f"[REMINDER] {ACTION_FORMAT_REMINDER}"
-        )
-
-    def _handle_move(self, args: dict[str, Any]) -> str:
-        to_sector = args.get("to_sector")
-        if to_sector is None:
-            return self._emit_error("move", "Missing required argument: to_sector")
-        to_sector = int(to_sector)
-        current = self.state.sector
-        if to_sector not in self.graph.get(current, []):
-            return self._emit_error(
-                "move", f"Sector {to_sector} is not adjacent to current sector {current}"
-            )
-
-        self.state.sector = to_sector
-        self.state.warp = max(0, self.state.warp - 3)
-        self.state.visited_sectors.add(to_sector)
-
-        return (
-            f"[EVENT] movement.start: Entering hyperspace to sector {to_sector} (ETA: 0.5s). "
-            "Region: Federation Space.\n"
-            f"[EVENT] movement.complete: {self._status_snapshot()}\n"
-            f"[EVENT] map.local: {self._map_local()}\n\n"
-            f"[REMINDER] {ACTION_FORMAT_REMINDER}"
-        )
-
-    def _handle_trade(self, args: dict[str, Any]) -> str:
-        commodity_raw = args.get("commodity")
-        quantity = args.get("quantity")
-        trade_type = args.get("trade_type")
-        if commodity_raw is None or quantity is None or trade_type is None:
-            return self._emit_error(
-                "trade", "Missing required arguments: commodity, quantity, trade_type"
-            )
-
-        commodity = _canonical_commodity(str(commodity_raw))
-        if commodity not in self.state.cargo:
-            return self._emit_error("trade", f"Unknown commodity: {commodity_raw}")
-
-        quantity = int(quantity)
-        if quantity <= 0:
-            return self._emit_error("trade", "Quantity must be positive")
-
-        port = self.ports.get(self.state.sector)
-        if not port:
-            return self._emit_error("trade", "No port in this sector")
-
-        trade_type = str(trade_type)
-        if trade_type == "sell":
-            if commodity not in port.buys:
-                return self._emit_error("trade", f"Port does not buy {commodity}")
-            if self.state.cargo[commodity] < quantity:
-                return self._emit_error(
-                    "trade", f"Insufficient cargo. Have {self.state.cargo[commodity]}, need {quantity}"
-                )
-            price = port.buys[commodity]
-            total = price * quantity
-            self.state.cargo[commodity] -= quantity
-            self.state.credits += total
-            action_text = (
-                f"Sold {quantity} {_display_commodity(commodity)} (@ {price} each, total {total})"
-            )
-        elif trade_type == "buy":
-            if commodity not in port.sells:
-                return self._emit_error("trade", f"Port does not sell {commodity}")
-            if self.state.empty_holds < quantity:
-                return self._emit_error(
-                    "trade", f"Not enough cargo space. Available: {self.state.empty_holds}"
-                )
-            price = port.sells[commodity]
-            total = price * quantity
-            if self.state.credits < total:
-                return self._emit_error(
-                    "trade", f"Insufficient credits. Have {self.state.credits}, need {total}"
-                )
-            self.state.cargo[commodity] += quantity
-            self.state.credits -= total
-            action_text = (
-                f"Bought {quantity} {_display_commodity(commodity)} (@ {price} each, total {total})"
-            )
-        else:
-            return self._emit_error("trade", f"Unknown trade_type: {trade_type}")
-
-        self.trade_events.append(
-            {
-                "sector": self.state.sector,
-                "commodity": commodity,
-                "quantity": quantity,
-                "trade_type": trade_type,
-                "credits": self.state.credits,
-            }
-        )
-
-        return (
-            f"[EVENT] trade.executed: Trade executed. Credits: {self.state.credits}. {action_text}. "
-            f"Cargo: {self.state.cargo['quantum_foam']} QF | {self.state.cargo['retro_organics']} RO | "
-            f"{self.state.cargo['neuro_symbolics']} NS. Fighters: {self.state.fighters}.\n"
-            f"[EVENT] status.update: Status update: Sector {self.state.sector}; Credits {self.state.credits} "
-            f"(bank {self.state.bank_credits}); Warp {self.state.warp}/{self.state.max_warp}; "
-            f"Shields {self.state.shields}/{self.state.max_shields}; Fighters {self.state.fighters};\n"
-            f"[EVENT] port.update: Port update at sector {self.state.sector} ({port.name}).\n\n"
-            f"[REMINDER] {ACTION_FORMAT_REMINDER}"
-        )
-
-    def _handle_my_status(self, _args: dict[str, Any]) -> str:
-        return (
-            f"[EVENT] status.snapshot: {self._status_snapshot()}\n"
-            f"[EVENT] map.local: {self._map_local()}\n\n"
-            f"[REMINDER] {ACTION_FORMAT_REMINDER}"
-        )
-
-    def _handle_local_map_region(self, args: dict[str, Any]) -> str:
-        center = int(args.get("center_sector", self.state.sector))
-        hops = int(args.get("max_hops", 1))
-        neighbors = self.graph.get(center, [])
-        return (
-            f"[EVENT] map.region: Region map around sector {center} (max_hops={hops}). "
-            f"Known adjacent sectors: {neighbors}.\n\n"
-            f"[REMINDER] {ACTION_FORMAT_REMINDER}"
-        )
-
-    def _handle_wait_in_idle_state(self, _args: dict[str, Any]) -> str:
-        return f"[EVENT] idle.complete: Wait complete.\n\n[REMINDER] {ACTION_FORMAT_REMINDER}"
-
-    def _handle_load_game_info(self, args: dict[str, Any]) -> str:
-        topic = str(args.get("topic", "general"))
-        return (
-            f"[EVENT] info.loaded: Loaded game info topic '{topic}'. "
-            "Use trading and movement tools to execute the task.\n\n"
-            f"[REMINDER] {ACTION_FORMAT_REMINDER}"
-        )
-
-    def _handle_dump_cargo(self, args: dict[str, Any]) -> str:
-        items = args.get("items")
-        if not isinstance(items, list) or not items:
-            return self._emit_error("dump_cargo", "items must be a non-empty list")
-
-        dumped: dict[str, int] = {}
-        for item in items:
-            if not isinstance(item, dict):
-                continue
-            commodity = _canonical_commodity(str(item.get("commodity", "")))
-            units = int(item.get("units", 0))
-            if commodity not in self.state.cargo or units <= 0:
-                continue
-            amount = min(units, self.state.cargo[commodity])
-            if amount <= 0:
-                continue
-            self.state.cargo[commodity] -= amount
-            dumped[commodity] = dumped.get(commodity, 0) + amount
-
-        if not dumped:
-            return self._emit_error("dump_cargo", "No cargo was dumped")
-
-        salvage_id = str(uuid.uuid4())
-        self.salvage_by_id[salvage_id] = Salvage(
-            salvage_id=salvage_id,
-            sector=self.state.sector,
-            cargo=dumped,
-        )
-        return (
-            f"[EVENT] salvage.created: Salvage created in sector {self.state.sector}. "
-            f"ID: {salvage_id}, cargo: {dumped}.\n"
-            f"[EVENT] status.update: Status update: Sector {self.state.sector}; Credits {self.state.credits}.\n\n"
-            f"[REMINDER] {ACTION_FORMAT_REMINDER}"
-        )
-
-    def _handle_salvage_collect(self, args: dict[str, Any]) -> str:
-        salvage_id = str(args.get("salvage_id", "")).strip()
-        if not salvage_id:
-            return self._emit_error("salvage_collect", "Missing required argument: salvage_id")
-
-        salvage = self.salvage_by_id.get(salvage_id)
-        if not salvage:
-            return self._emit_error("salvage_collect", f"Unknown salvage id: {salvage_id}")
-        if salvage.sector != self.state.sector:
-            return self._emit_error(
-                "salvage_collect", f"Salvage {salvage_id} is not in current sector {self.state.sector}"
-            )
-
-        units = sum(salvage.cargo.values())
-        if units > self.state.empty_holds:
-            return self._emit_error(
-                "salvage_collect", f"Not enough cargo space. Available: {self.state.empty_holds}"
-            )
-
-        for commodity, amount in salvage.cargo.items():
-            self.state.cargo[commodity] += amount
-        del self.salvage_by_id[salvage_id]
-
-        return (
-            f"[EVENT] salvage.collected: Collected salvage {salvage_id}.\n"
-            f"[EVENT] status.update: Status update: Sector {self.state.sector}; Credits {self.state.credits}.\n\n"
-            f"[REMINDER] {ACTION_FORMAT_REMINDER}"
-        )
-
-    def apply_action(self, action: str, args: dict[str, Any]) -> str:
-        self.turn_count += 1
-        handlers = {
-            "list_known_ports": self._handle_list_known_ports,
-            "plot_course": self._handle_plot_course,
-            "move": self._handle_move,
-            "trade": self._handle_trade,
-            "my_status": self._handle_my_status,
-            "local_map_region": self._handle_local_map_region,
-            "wait_in_idle_state": self._handle_wait_in_idle_state,
-            "load_game_info": self._handle_load_game_info,
-            "dump_cargo": self._handle_dump_cargo,
-            "salvage_collect": self._handle_salvage_collect,
-        }
-        handler = handlers.get(action)
-        if not handler:
-            return self._emit_error("unknown_action", f"Unsupported action: {action}")
-        return handler(args)
-
-
-def _extract_first_json_object(text: str) -> Optional[dict[str, Any]]:
-    text = text.strip()
-    if not text:
-        return None
-
-    candidates: list[str] = [text]
-
-    fenced = re.findall(r"```(?:json)?\s*(\{[\s\S]*?\})\s*```", text)
-    candidates.extend(fenced)
-
-    if "{" in text and "}" in text:
-        start = text.find("{")
-        depth = 0
-        for i, ch in enumerate(text[start:], start=start):
-            if ch == "{":
-                depth += 1
-            elif ch == "}":
-                depth -= 1
-                if depth == 0:
-                    candidates.append(text[start : i + 1])
-                    break
-
-    for candidate in candidates:
-        candidate = candidate.strip()
-        if not candidate:
-            continue
-        try:
-            parsed = json.loads(candidate)
-        except json.JSONDecodeError:
-            continue
-        if isinstance(parsed, dict):
-            return parsed
-    return None
-
-
-def _parse_args_blob(blob: str) -> dict[str, Any]:
-    blob = blob.strip()
-    if not blob:
-        return {}
-    try:
-        parsed = json.loads(blob)
-        if isinstance(parsed, dict):
-            return parsed
-    except json.JSONDecodeError:
-        pass
-    try:
-        parsed = ast.literal_eval(blob)
-    except Exception:
-        return {}
-    return parsed if isinstance(parsed, dict) else {}
-
-
-def parse_action(text: str) -> tuple[Optional[str], dict[str, Any], Optional[str]]:
-    raw = (text or "").strip()
-    if not raw:
-        return None, {}, "empty model response"
-
-    fn_match = re.search(r"([a-zA-Z_][a-zA-Z0-9_]*)\s*\((\{[\s\S]*\})\)", raw)
-    if fn_match:
-        action = fn_match.group(1)
-        args = _parse_args_blob(fn_match.group(2))
-        return action, args, None
-
-    parsed = _extract_first_json_object(raw)
-    if parsed is None:
-        return None, {}, "could not parse JSON or function-style action"
-
-    if "action" in parsed:
-        action = str(parsed["action"]).strip()
-        args = parsed.get("args")
-        if not isinstance(args, dict):
-            args = {}
-        return action, args, None
-
-    if "name" in parsed:
-        action = str(parsed["name"]).strip()
-        args = parsed.get("arguments")
-        if not isinstance(args, dict):
-            args = {}
-        return action, args, None
-
-    return None, {}, "parsed JSON object missing action/name field"
-
-
-def _extract_error_event(observation: str) -> Optional[dict[str, Any]]:
-    match = re.search(r"\[EVENT\] error:\s*(\{.*\})", observation)
-    if not match:
-        return None
-    payload_text = match.group(1).strip()
-    try:
-        payload = json.loads(payload_text)
-    except json.JSONDecodeError:
-        return {"raw": payload_text}
-    return payload if isinstance(payload, dict) else {"raw": payload_text}
-
-
 def _provider_from_str(provider: str) -> LLMProvider:
     normalized = provider.strip().lower()
     if normalized == "openai":
@@ -707,30 +138,1573 @@ def _provider_from_str(provider: str) -> LLMProvider:
     raise ValueError(f"Unsupported provider: {provider}")
 
 
+def _is_google_thinking_level_model(model_lower: str) -> bool:
+    normalized = model_lower.strip().lower()
+    return any(normalized.startswith(prefix) for prefix in GOOGLE_THINKING_LEVEL_MODEL_PREFIXES)
+
+
+def _is_qwen35_model(model_lower: str) -> bool:
+    normalized = model_lower.strip().lower()
+    return "qwen3.5" in normalized or "qwen-3.5" in normalized
+
+
+def _sanitize_assistant_replay_text(text: str) -> str:
+    sanitized = text
+    for pattern in CONTROL_TOKEN_REPLAY_PATTERNS:
+        sanitized = pattern.sub(" ", sanitized)
+    sanitized = re.sub(r"[ \t]{2,}", " ", sanitized)
+    return sanitized
+
+
+def _is_gpt_oss_model(model_lower: str) -> bool:
+    normalized = model_lower.strip().lower()
+    return normalized.startswith("gpt-oss")
+
+
+def _gpt_oss_reasoning_level(thinking: str) -> str:
+    # gpt-oss endpoints accept "Reasoning: <level>" style control in system messages.
+    # There is no known "none/disabled" mode, so map benchmark none/minimal to low.
+    if thinking in {"none", "minimal", "low"}:
+        return "low"
+    if thinking in {"medium", "high"}:
+        return thinking
+    raise ValueError(f"Unsupported thinking level for gpt-oss model: {thinking}")
+
+
+def _system_reasoning_prefix_for_model(
+    *,
+    provider: LLMProvider,
+    model: str,
+    thinking: str,
+    openai_base_url: Optional[str],
+) -> Optional[str]:
+    if provider != LLMProvider.OPENAI or not openai_base_url:
+        return None
+
+    model_lower = model.strip().lower()
+    if _is_gpt_oss_model(model_lower):
+        level = _gpt_oss_reasoning_level(thinking)
+        return f"Reasoning: {level}"
+
+    return None
+
+
+def _apply_openai_non_streaming_tool_call_workaround(
+    *,
+    llm_service: LLMService,
+    provider: LLMProvider,
+    model: str,
+    openai_base_url: Optional[str],
+) -> str:
+    """Work around streamed tool-call argument loss for some OpenAI-compatible endpoints.
+
+    Some servers emit incomplete/empty function arguments while streaming tool calls.
+    We request non-streaming chat completions and adapt them into chunk-like objects so
+    Pipecat's function-call pipeline can remain unchanged.
+    """
+    if provider != LLMProvider.OPENAI or not openai_base_url:
+        return "disabled"
+
+    model_lower = model.strip().lower()
+    if not _is_gpt_oss_model(model_lower):
+        return "disabled"
+
+    original = getattr(llm_service, "get_chat_completions", None)
+    if not callable(original):
+        logger.warning("OpenAI non-streaming workaround unavailable: get_chat_completions missing.")
+        return "unavailable"
+
+    async def _patched_get_chat_completions(self: Any, params_from_context: Any) -> Any:
+        params = self.build_chat_completion_params(params_from_context)
+        params["stream"] = False
+        params.pop("stream_options", None)
+
+        response = await self._client.chat.completions.create(**params)
+        choices = getattr(response, "choices", None) or []
+        choice0 = choices[0] if choices else None
+        message = getattr(choice0, "message", None)
+        usage = getattr(response, "usage", None)
+        model_name = getattr(response, "model", None)
+
+        async def _iter_chunks() -> Any:
+            if message is None:
+                return
+
+            tool_calls = getattr(message, "tool_calls", None) or []
+            if tool_calls:
+                for fallback_idx, call in enumerate(tool_calls):
+                    function = getattr(call, "function", None)
+                    index = getattr(call, "index", None)
+                    yield SimpleNamespace(
+                        usage=usage if fallback_idx == 0 else None,
+                        model=model_name if fallback_idx == 0 else None,
+                        choices=[
+                            SimpleNamespace(
+                                delta=SimpleNamespace(
+                                    content=None,
+                                    tool_calls=[
+                                        SimpleNamespace(
+                                            index=fallback_idx if index is None else index,
+                                            id=getattr(call, "id", ""),
+                                            function=SimpleNamespace(
+                                                name=getattr(function, "name", "") if function else "",
+                                                arguments=getattr(function, "arguments", "")
+                                                if function
+                                                else "",
+                                            ),
+                                        )
+                                    ]
+                                )
+                            )
+                        ],
+                    )
+
+            content = getattr(message, "content", None)
+            if content:
+                yield SimpleNamespace(
+                    usage=None,
+                    model=model_name,
+                    choices=[SimpleNamespace(delta=SimpleNamespace(content=content, tool_calls=None))],
+                )
+
+        return _iter_chunks()
+
+    llm_service.get_chat_completions = MethodType(_patched_get_chat_completions, llm_service)
+    return "enabled"
+
+
+def _to_json_compatible(value: Any) -> Any:
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+
+    if isinstance(value, (bytes, bytearray, memoryview)):
+        return {
+            "_type": "bytes_b64",
+            "data": base64.b64encode(bytes(value)).decode("ascii"),
+        }
+
+    if isinstance(value, dict):
+        return {str(key): _to_json_compatible(val) for key, val in value.items()}
+
+    if isinstance(value, (list, tuple)):
+        return [_to_json_compatible(item) for item in value]
+
+    model_dump = getattr(value, "model_dump", None)
+    if callable(model_dump):
+        try:
+            return _to_json_compatible(model_dump(exclude_none=False))
+        except TypeError:
+            return _to_json_compatible(model_dump())
+        except Exception:  # noqa: BLE001
+            pass
+
+    to_dict = getattr(value, "dict", None)
+    if callable(to_dict):
+        try:
+            return _to_json_compatible(to_dict())
+        except Exception:  # noqa: BLE001
+            pass
+
+    return repr(value)
+
+
+def _serialize_llm_usage_metrics(metric_data: LLMUsageMetricsData) -> dict[str, Any]:
+    value = metric_data.value
+    payload: dict[str, Any] = {
+        "prompt_tokens": int(value.prompt_tokens),
+        "completion_tokens": int(value.completion_tokens),
+        "total_tokens": int(value.total_tokens),
+    }
+    for field in ("cache_read_input_tokens", "cache_creation_input_tokens", "reasoning_tokens"):
+        metric_value = getattr(value, field, None)
+        if metric_value is not None:
+            payload[field] = int(metric_value)
+    if metric_data.processor:
+        payload["processor"] = metric_data.processor
+    if metric_data.model:
+        payload["model"] = metric_data.model
+    return payload
+
+
+def _usage_entry_from_metrics_frame(frame: MetricsFrame) -> Optional[dict[str, Any]]:
+    usage_entry: Optional[dict[str, Any]] = None
+    for metric_data in frame.data:
+        if not isinstance(metric_data, LLMUsageMetricsData):
+            continue
+        serialized = _serialize_llm_usage_metrics(metric_data)
+        if usage_entry is None:
+            usage_entry = serialized
+        else:
+            usage_entry.update(serialized)
+    return usage_entry
+
+
+def _serialize_context_message(message: Any) -> Any:
+    if isinstance(message, LLMSpecificMessage):
+        return {
+            "_type": "llm_specific",
+            "llm": message.llm,
+            "message": _to_json_compatible(message.message),
+        }
+
+    return _to_json_compatible(message)
+
+
+def _normalize_benchmark_thinking_level(thinking: str) -> str:
+    return "none" if thinking == "minimal" else thinking
+
+
+def _mapped_budget_for_thinking(
+    thinking: str,
+    *,
+    budget_map: dict[str, int],
+) -> int:
+    normalized = _normalize_benchmark_thinking_level(thinking)
+    if normalized == "none":
+        return 0
+    return budget_map[normalized]
+
+
+def _default_thinking_level() -> str:
+    explicit = os.getenv("TASK_LLM_THINKING")
+    if explicit:
+        normalized = explicit.strip().lower()
+        if normalized in THINKING_LEVELS:
+            return normalized
+        logger.warning("Unknown TASK_LLM_THINKING='{}'; falling back to 'high'.", explicit)
+        return "high"
+
+    return "high"
+
+
+def _parse_optional_json_dict(raw: Optional[str], *, label: str) -> Optional[dict[str, Any]]:
+    if raw is None:
+        return None
+    text = raw.strip()
+    if not text:
+        return None
+    try:
+        parsed = json.loads(text)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"{label} must be valid JSON: {exc}") from exc
+    if not isinstance(parsed, dict):
+        raise ValueError(f"{label} must be a JSON object.")
+    return parsed
+
+
+def _parse_optional_nonnegative_int(raw: Optional[str], *, label: str) -> Optional[int]:
+    if raw is None:
+        return None
+    text = str(raw).strip()
+    if not text:
+        return None
+    try:
+        value = int(text)
+    except ValueError as exc:
+        raise ValueError(f"{label} must be a non-negative integer.") from exc
+    if value < 0:
+        raise ValueError(f"{label} must be a non-negative integer.")
+    return value
+
+
+def _validate_generation_controls(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
+    model_lower = str(args.model).strip().lower()
+    thinking_budget = args.thinking_budget
+
+    if args.max_tokens is not None and args.provider != "openai":
+        parser.error("--max-tokens is only supported when --provider openai is selected.")
+
+    if args.provider == "openai":
+        if args.openai_base_url and _is_qwen35_model(model_lower):
+            if args.thinking not in {"none", "high"}:
+                parser.error(
+                    "For Qwen 3.5 on OpenAI-compatible vLLM, --thinking must be 'none' "
+                    "(thinking disabled) or 'high' (thinking enabled)."
+                )
+            if thinking_budget is not None:
+                parser.error(
+                    "Qwen 3.5 on OpenAI-compatible vLLM does not expose an exact "
+                    "--thinking-budget control; use --thinking none|high instead."
+                )
+            return
+
+        if thinking_budget is None:
+            return
+
+        if model_lower.startswith("gpt-5"):
+            parser.error("GPT-5 models support benchmark --thinking levels, not exact --thinking-budget.")
+        if model_lower.startswith("gpt-4.1"):
+            parser.error("GPT-4.1 models do not support exact --thinking-budget in this harness.")
+        if args.openai_base_url and _is_gpt_oss_model(model_lower):
+            parser.error(
+                "gpt-oss endpoints support benchmark --thinking levels via system prompting, "
+                "not exact --thinking-budget."
+            )
+        if not args.openai_base_url:
+            parser.error(
+                "Hosted OpenAI models in this harness do not support exact --thinking-budget; "
+                "use --thinking instead."
+            )
+        return
+
+    if thinking_budget is None:
+        return
+
+    if args.provider == "anthropic" and (
+        "claude-opus-4-6" in model_lower or "claude-sonnet-4-6" in model_lower
+    ):
+        parser.error(
+            "Claude Sonnet/Opus adaptive reasoning models support benchmark --thinking levels, "
+            "not exact --thinking-budget."
+        )
+
+    if args.provider == "google" and _is_google_thinking_level_model(model_lower):
+        parser.error(
+            "Gemini 3 / Supernova models support benchmark --thinking levels, "
+            "not exact --thinking-budget."
+        )
+
+
+def _apply_benchmark_thinking_mode(
+    *,
+    llm_service: LLMService,
+    provider: LLMProvider,
+    model: str,
+    thinking: str,
+    thinking_budget: Optional[int],
+    openai_base_url: Optional[str],
+) -> str:
+    model_lower = model.strip().lower()
+    normalized_thinking = _normalize_benchmark_thinking_level(thinking)
+    settings = getattr(llm_service, "_settings", None)
+    if not isinstance(settings, dict):
+        logger.warning("LLM service settings are not mutable; skipping thinking-mode override.")
+        return "unmodified"
+
+    extra = settings.get("extra")
+    if not isinstance(extra, dict):
+        extra = {}
+        settings["extra"] = extra
+
+    # Clear keys this function owns before applying model-specific config.
+    for key in ("thinking", "output_config", "reasoning", "reasoning_effort"):
+        extra.pop(key, None)
+
+    if provider == LLMProvider.OPENAI:
+        if model_lower.startswith("gpt-5"):
+            effort = "minimal" if thinking in {"none", "minimal"} else thinking
+            extra["reasoning_effort"] = effort
+            return f"openai:gpt-5 reasoning_effort={effort}"
+
+        if model_lower.startswith("gpt-4.1"):
+            return "openai:gpt-4.1 reasoning_n/a"
+
+        if openai_base_url and _is_gpt_oss_model(model_lower):
+            level = _gpt_oss_reasoning_level(thinking)
+            return f"openai-compatible:gpt-oss reasoning_level={level} (system_message)"
+
+        if openai_base_url and _is_qwen35_model(model_lower):
+            if thinking == "none":
+                enable_thinking = False
+            elif thinking == "high":
+                enable_thinking = True
+            else:
+                raise ValueError(
+                    "Qwen 3.5 on OpenAI-compatible vLLM supports only thinking='none' or 'high'."
+                )
+
+            existing_extra_body = extra.get("extra_body")
+            extra_body = dict(existing_extra_body) if isinstance(existing_extra_body, dict) else {}
+            existing_ctk = extra_body.get("chat_template_kwargs")
+            chat_template_kwargs = dict(existing_ctk) if isinstance(existing_ctk, dict) else {}
+            chat_template_kwargs["enable_thinking"] = enable_thinking
+            extra_body["chat_template_kwargs"] = chat_template_kwargs
+            extra["extra_body"] = extra_body
+            return f"openai-compatible:vllm qwen3.5 enable_thinking={enable_thinking}"
+
+        if openai_base_url:
+            budget = (
+                int(thinking_budget)
+                if thinking_budget is not None
+                else _mapped_budget_for_thinking(thinking, budget_map=THINKING_BUDGET_MAP)
+            )
+            existing_extra_body = extra.get("extra_body")
+            extra_body = dict(existing_extra_body) if isinstance(existing_extra_body, dict) else {}
+            existing_xargs = extra_body.get("vllm_xargs")
+            xargs = dict(existing_xargs) if isinstance(existing_xargs, dict) else {}
+            xargs["thinking_budget"] = budget
+            extra_body["vllm_xargs"] = xargs
+            extra["extra_body"] = extra_body
+            return f"openai-compatible:vllm thinking_budget={budget}"
+
+        return "openai:unknown_model no_reasoning_override"
+
+    if provider == LLMProvider.ANTHROPIC:
+        from pipecat.services.anthropic.llm import AnthropicLLMService
+
+        if "claude-opus-4-6" in model_lower or "claude-sonnet-4-6" in model_lower:
+            effort = "low" if normalized_thinking == "none" else normalized_thinking
+            settings["thinking"] = None
+            extra["thinking"] = {"type": "adaptive"}
+            extra["output_config"] = {"effort": effort}
+            return f"anthropic:adaptive effort={effort}"
+
+        if "claude-haiku-4-5" in model_lower:
+            if thinking_budget == 0 or (thinking_budget is None and normalized_thinking == "none"):
+                settings["thinking"] = None
+                return "anthropic:haiku thinking=disabled"
+            budget = (
+                int(thinking_budget)
+                if thinking_budget is not None
+                else _mapped_budget_for_thinking(
+                    thinking,
+                    budget_map=ANTHROPIC_HAIKU_THINKING_BUDGET_MAP,
+                )
+            )
+            settings["thinking"] = AnthropicLLMService.ThinkingConfig(
+                type="enabled",
+                budget_tokens=budget,
+            )
+            return f"anthropic:haiku budget_tokens={budget}"
+
+        if thinking_budget == 0 or (thinking_budget is None and normalized_thinking == "none"):
+            settings["thinking"] = None
+            return "anthropic:default thinking=disabled"
+        budget = (
+            int(thinking_budget)
+            if thinking_budget is not None
+            else max(1024, _mapped_budget_for_thinking(thinking, budget_map=THINKING_BUDGET_MAP))
+        )
+        settings["thinking"] = AnthropicLLMService.ThinkingConfig(
+            type="enabled",
+            budget_tokens=budget,
+        )
+        return f"anthropic:default budget_tokens={budget}"
+
+    if provider == LLMProvider.GOOGLE:
+        from pipecat.services.google.llm import GoogleLLMService
+
+        if model_lower.startswith("gemini-2.5-flash"):
+            budget = (
+                int(thinking_budget)
+                if thinking_budget is not None
+                else _mapped_budget_for_thinking(
+                    thinking,
+                    budget_map=GEMINI_25_FLASH_THINKING_BUDGET_MAP,
+                )
+            )
+            settings["thinking"] = GoogleLLMService.ThinkingConfig(
+                thinking_budget=budget,
+                include_thoughts=budget > 0,
+            )
+            return f"google:gemini-2.5-flash thinking_budget={budget}"
+
+        if _is_google_thinking_level_model(model_lower):
+            level = "minimal" if normalized_thinking == "none" else normalized_thinking
+            settings["thinking"] = GoogleLLMService.ThinkingConfig(
+                thinking_level=level,
+                include_thoughts=True,
+            )
+            return f"google:gemini-3-family thinking_level={level}"
+
+        if normalized_thinking == "none":
+            settings["thinking"] = None
+            return "google:default thinking=disabled"
+        budget = (
+            int(thinking_budget)
+            if thinking_budget is not None
+            else _mapped_budget_for_thinking(thinking, budget_map=THINKING_BUDGET_MAP)
+        )
+        settings["thinking"] = GoogleLLMService.ThinkingConfig(
+            thinking_budget=budget,
+            include_thoughts=True,
+        )
+        return f"google:default thinking_budget={budget}"
+
+    return "unknown_provider"
+
+
+def _normalize_prompt_text(text: str) -> str:
+    lines = [line.rstrip() for line in text.strip().splitlines()]
+    normalized: list[str] = []
+    saw_blank = False
+    for line in lines:
+        if line == "":
+            if saw_blank:
+                continue
+            normalized.append("")
+            saw_blank = True
+        else:
+            saw_blank = False
+            normalized.append(line)
+    return "\n".join(normalized)
+
+
 def _load_system_instruction(path: Path) -> str:
     return path.read_text(encoding="utf-8").strip()
 
 
-def _thinking_config_from_arg(value: str) -> Optional[UnifiedThinkingConfig]:
-    normalized = value.strip().lower()
-    if normalized in {"", "none", "default", "unlimited"}:
-        return None
-    budget = int(value)
-    if budget <= 0:
-        return None
-    return UnifiedThinkingConfig(enabled=True, budget_tokens=budget, include_thoughts=True)
+def create_task_instruction_user_message(task: str) -> str:
+    """Create the task-specific user message for the benchmark run."""
+    prompt_parts = [
+        "# Agent Instructions",
+        "",
+        "You are an autonomous agent. Execute this task step by step. After each step, observe the results and react accordingly. Responses you generate from each inference call will be used only internally to complete the task. The only information that is returned to the user is the final result message that is passed to the `finished` tool call.",
+        "",
+        "When you have completed the task, call the `finished` tool with a message to be returned to the user who initiated the task.",
+        "",
+        "# Current time (UTC)",
+        f"{datetime.now(timezone.utc).isoformat()}",
+        "",
+        "# Task Instructions",
+        "",
+        f"{task}",
+        "",
+    ]
+    return "\n".join(prompt_parts)
 
 
-def _get_openai_inference_debug(llm_service: Any) -> Optional[dict[str, Any]]:
-    getter = getattr(llm_service, "get_last_inference_debug", None)
-    if not callable(getter):
-        return None
-    try:
-        payload = getter()
-    except Exception as exc:  # noqa: BLE001
-        logger.warning("Failed to collect OpenAI inference debug payload: {}", exc)
-        return None
-    return payload if isinstance(payload, dict) else None
+def _event_xml_message(event_name: str, response_data: Any) -> dict[str, str]:
+    return {
+        "role": "user",
+        "content": f"<event name={event_name}>\n{serialize_response_data(response_data)}\n</event>",
+    }
+
+
+def _is_coherent_finished_report(message: str) -> bool:
+    lowered = message.lower()
+    recharge_like = (
+        "recharg" in lowered
+        or "refill" in lowered
+        or (
+            "warp" in lowered
+            and any(
+                phrase in lowered
+                for phrase in (
+                    "topped off",
+                    "topped up",
+                    "top off",
+                    "top up",
+                    "filled up",
+                    "fill up",
+                    "full warp",
+                    "restored",
+                )
+            )
+        )
+    )
+    return (
+        any(
+            token in lowered
+            for token in ("profit", "net change", "net result", "overall gain", "overall loss", "overall net")
+        )
+        and ("trade" in lowered or "traded" in lowered or "ports" in lowered)
+        and recharge_like
+        and (
+            "mega" in lowered
+            or MEGA_PORT_NAME.lower() in lowered
+            or re.search(rf"\b{MEGA_PORT_SECTOR}\b", lowered) is not None
+        )
+    )
+
+
+def _event_payload_as_dict(event: dict[str, Any]) -> dict[str, Any]:
+    payload = event.get("event_payload")
+    if isinstance(payload, dict):
+        return payload
+    response_data = event.get("response_data")
+    if isinstance(response_data, dict):
+        return response_data
+    return {}
+
+
+class _BenchmarkInferenceController:
+    def __init__(self, runtime: "_BenchmarkRuntime") -> None:
+        self._runtime = runtime
+        self._pipeline_task: Optional[PipelineTask] = None
+        self._llm_inflight = False
+        self._tool_call_in_progress = False
+        self._inference_reasons: list[str] = []
+        self._inference_watchdog_handle: Optional[asyncio.TimerHandle] = None
+        self._no_tool_watchdog_handle: Optional[asyncio.TimerHandle] = None
+        self._no_tool_nudge_count = 0
+        self._pending_async: dict[str, dict[str, Any]] = {}
+
+    def bind_pipeline_task(self, pipeline_task: PipelineTask) -> None:
+        self._pipeline_task = pipeline_task
+
+    def set_tool_call_in_progress(self, in_progress: bool) -> None:
+        self._tool_call_in_progress = in_progress
+
+    def on_response_start(self) -> None:
+        self._llm_inflight = True
+        if self._no_tool_watchdog_handle:
+            self._no_tool_watchdog_handle.cancel()
+            self._no_tool_watchdog_handle = None
+
+    async def on_response_end(self, *, has_function_calls: bool) -> None:
+        self._llm_inflight = False
+        if self._runtime.stop_requested or self._runtime.inference_suppressed:
+            return
+        if has_function_calls:
+            await self._schedule_pending_inference()
+            return
+        self._start_no_tool_watchdog()
+
+    def register_async_completion(
+        self,
+        *,
+        tool_call_id: str,
+        expected_event: str,
+        tool_name: str,
+    ) -> None:
+        existing = self._pending_async.pop(tool_call_id, None)
+        if existing and existing.get("timeout_handle"):
+            existing["timeout_handle"].cancel()
+
+        loop = asyncio.get_running_loop()
+        timeout_handle = loop.call_later(
+            ASYNC_COMPLETION_TIMEOUT,
+            lambda: asyncio.create_task(self._on_async_timeout(tool_call_id)),
+        )
+        self._pending_async[tool_call_id] = {
+            "expected_event": expected_event,
+            "tool_name": tool_name,
+            "timeout_handle": timeout_handle,
+        }
+
+    def cancel_async_completion(self, tool_call_id: str) -> None:
+        pending = self._pending_async.pop(tool_call_id, None)
+        if pending is None:
+            return
+        handle = pending.get("timeout_handle")
+        if handle:
+            handle.cancel()
+        if not self._pending_async:
+            self._runtime.resolve_async_dependency_waiters(allow_execution=False)
+
+    def has_pending_async_completions(self) -> bool:
+        return bool(self._pending_async)
+
+    async def _on_async_timeout(self, tool_call_id: str) -> None:
+        pending = self._pending_async.pop(tool_call_id, None)
+        if pending is None:
+            return
+        handle = pending.get("timeout_handle")
+        if handle:
+            handle.cancel()
+        self._runtime.async_completion_timeout_count += 1
+        if not self._pending_async:
+            self._runtime.resolve_async_dependency_waiters(allow_execution=False)
+        await self._runtime.response_tracker.finalize_pending_response()
+        if self._runtime.inference_suppressed:
+            self._runtime.maybe_finalize_deferred_stop()
+            return
+        await self.request_inference(f"async_timeout:{tool_call_id}")
+
+    def _clear_pending_for_event(self, event_name: str) -> int:
+        for tool_call_id, payload in list(self._pending_async.items()):
+            if payload.get("expected_event") != event_name:
+                continue
+            matched = self._pending_async.pop(tool_call_id, None)
+            if matched and matched.get("timeout_handle"):
+                matched["timeout_handle"].cancel()
+            return 1
+        return 0
+
+    async def on_event(self, event_name: str) -> None:
+        matched = self._clear_pending_for_event(event_name)
+        had_waiters = self._runtime.has_async_dependency_waiters()
+        if matched and not self._pending_async:
+            await self._runtime.response_tracker.finalize_pending_response()
+            self._runtime.resolve_async_dependency_waiters(allow_execution=True)
+        if self._runtime.inference_suppressed:
+            if not had_waiters:
+                self._runtime.maybe_finalize_deferred_stop()
+            return
+        await self.request_inference(f"event:{event_name}")
+
+    async def queue_initial_run(self) -> None:
+        if self._runtime.stop_requested:
+            return
+        if not self._pipeline_task or self._pipeline_task.has_finished():
+            return
+        self._runtime.capture_inference_input(["initial_run"])
+        self._llm_inflight = True
+        await self._pipeline_task.queue_frames([LLMRunFrame()])
+
+    async def request_inference(self, reason: str) -> None:
+        if self._runtime.stop_requested or self._runtime.inference_suppressed:
+            return
+        self._inference_reasons.append(reason)
+        if len(self._inference_reasons) > 50:
+            self._inference_reasons = self._inference_reasons[-50:]
+        self._start_inference_watchdog()
+
+    def _start_inference_watchdog(self) -> None:
+        if self._runtime.stop_requested or self._runtime.inference_suppressed:
+            return
+        if self._inference_watchdog_handle is not None:
+            return
+        if self._llm_inflight:
+            return
+        if self._tool_call_in_progress:
+            return
+        if not self._inference_reasons:
+            return
+        if self._pending_async:
+            return
+        if not self._pipeline_task or self._pipeline_task.has_finished():
+            return
+
+        loop = asyncio.get_running_loop()
+        self._inference_watchdog_handle = loop.call_later(
+            EVENT_BATCH_INFERENCE_DELAY,
+            self._inference_watchdog_fire,
+        )
+
+    def _inference_watchdog_fire(self) -> None:
+        self._inference_watchdog_handle = None
+
+        async def _run() -> None:
+            await self._schedule_pending_inference()
+
+        asyncio.create_task(_run())
+
+    async def _schedule_pending_inference(self) -> None:
+        if self._runtime.stop_requested or self._runtime.inference_suppressed:
+            self._inference_reasons.clear()
+            return
+        if self._llm_inflight or self._tool_call_in_progress:
+            return
+        if not self._inference_reasons:
+            return
+        if self._pending_async:
+            return
+        if not self._pipeline_task or self._pipeline_task.has_finished():
+            return
+
+        reasons_snapshot = list(self._inference_reasons)
+        self._inference_reasons.clear()
+
+        if self._no_tool_watchdog_handle:
+            self._no_tool_watchdog_handle.cancel()
+            self._no_tool_watchdog_handle = None
+
+        if "no_tool_nudge" not in reasons_snapshot:
+            self._no_tool_nudge_count = 0
+
+        self._runtime.capture_inference_input(reasons_snapshot)
+        self._llm_inflight = True
+        try:
+            await self._pipeline_task.queue_frames([LLMRunFrame()])
+        except Exception:
+            self._llm_inflight = False
+            self._inference_reasons = reasons_snapshot + self._inference_reasons
+            raise
+
+    def _start_no_tool_watchdog(self) -> None:
+        if self._runtime.stop_requested or self._runtime.inference_suppressed:
+            return
+        if self._no_tool_watchdog_handle is not None:
+            return
+        if not self._pipeline_task or self._pipeline_task.has_finished():
+            return
+        loop = asyncio.get_running_loop()
+        self._no_tool_watchdog_handle = loop.call_later(
+            NO_TOOL_WATCHDOG_DELAY,
+            self._no_tool_watchdog_fire,
+        )
+
+    def _no_tool_watchdog_fire(self) -> None:
+        self._no_tool_watchdog_handle = None
+
+        async def _run() -> None:
+            if self._runtime.stop_requested:
+                return
+            self._no_tool_nudge_count += 1
+            if self._no_tool_nudge_count > MAX_NO_TOOL_NUDGES:
+                self._runtime.finished_message = "Task stopped: LLM failed to call required tools"
+                self._runtime.request_stop("no_tool_call_stall")
+                return
+
+            nudge_message = {
+                "role": "user",
+                "content": (
+                    "You did not call any tools in your last response. "
+                    "If the task is complete, call the `finished` tool with a summary message. "
+                    "If more work is needed, call the appropriate tool to continue."
+                ),
+            }
+            if self._pipeline_task and not self._pipeline_task.has_finished():
+                await self._pipeline_task.queue_frames(
+                    [LLMMessagesAppendFrame(messages=[nudge_message], run_llm=False)]
+                )
+            await self.request_inference("no_tool_nudge")
+
+        asyncio.create_task(_run())
+
+    def close(self) -> None:
+        if self._inference_watchdog_handle:
+            self._inference_watchdog_handle.cancel()
+            self._inference_watchdog_handle = None
+        if self._no_tool_watchdog_handle:
+            self._no_tool_watchdog_handle.cancel()
+            self._no_tool_watchdog_handle = None
+        for payload in list(self._pending_async.values()):
+            handle = payload.get("timeout_handle")
+            if handle:
+                handle.cancel()
+        self._pending_async.clear()
+
+
+class _BenchmarkResponseTracker(FrameProcessor):
+    def __init__(self, runtime: "_BenchmarkRuntime", controller: _BenchmarkInferenceController):
+        super().__init__()
+        self._runtime = runtime
+        self._controller = controller
+        self._reset_response()
+
+    def _reset_response(self) -> None:
+        self._response_started = False
+        self._response_start_monotonic: Optional[float] = None
+        self._response_state_before: dict[str, Any] = {}
+        self._bad_before = 0
+        self._response_end_seen = False
+        self._pending_tool_results = 0
+        self._has_function_calls = False
+        self._response_text = ""
+        self._response_text_raw = ""
+        self._response_thought = ""
+        self._decision_ms: Optional[float] = None
+        self._tool_calls: list[dict[str, Any]] = []
+        self._tool_call_by_id: dict[str, int] = {}
+        self._usage_metrics: Optional[dict[str, Any]] = None
+
+    async def process_frame(self, frame: Any, direction: FrameDirection):
+        await super().process_frame(frame, direction)
+        frame_to_push: Any = frame
+
+        if isinstance(frame, LLMFullResponseStartFrame):
+            self._reset_response()
+            self._response_started = True
+            self._response_start_monotonic = time.perf_counter()
+            self._response_state_before = self._runtime.world.state_snapshot()
+            self._bad_before = self._runtime.world.bad_actions_count
+            self._controller.on_response_start()
+
+        elif isinstance(frame, LLMTextFrame):
+            self._response_text_raw += frame.text
+            sanitized_chunk = _sanitize_assistant_replay_text(frame.text)
+            if sanitized_chunk:
+                self._response_text += sanitized_chunk
+                frame_to_push = LLMTextFrame(sanitized_chunk)
+            else:
+                frame_to_push = None
+
+        elif isinstance(frame, LLMThoughtTextFrame):
+            self._response_thought += frame.text
+
+        elif isinstance(frame, FunctionCallsStartedFrame):
+            self._has_function_calls = True
+            function_calls = list(frame.function_calls)
+            self._pending_tool_results = len(function_calls)
+            self._tool_calls = []
+            self._tool_call_by_id = {}
+            for idx, function_call in enumerate(function_calls):
+                entry = {
+                    "name": function_call.function_name,
+                    "args": dict(function_call.arguments or {}),
+                    "result_status": "pending",
+                    "tool_call_id": function_call.tool_call_id,
+                }
+                self._tool_calls.append(entry)
+                self._tool_call_by_id[function_call.tool_call_id] = idx
+
+        elif isinstance(frame, FunctionCallResultFrame):
+            index = self._tool_call_by_id.get(frame.tool_call_id)
+            if index is None:
+                entry = {
+                    "name": frame.function_name,
+                    "args": frame.arguments if isinstance(frame.arguments, dict) else {},
+                    "result_status": classify_result_status(frame.result),
+                    "tool_call_id": frame.tool_call_id,
+                }
+                self._tool_calls.append(entry)
+            else:
+                self._tool_calls[index]["result_status"] = classify_result_status(frame.result)
+            self._pending_tool_results = max(0, self._pending_tool_results - 1)
+
+            if isinstance(frame.result, dict) and frame.result.get("error") is not None:
+                self._runtime.last_error_event = dict(frame.result)
+
+        elif isinstance(frame, MetricsFrame):
+            usage_entry = _usage_entry_from_metrics_frame(frame)
+            if usage_entry is not None:
+                self._usage_metrics = usage_entry
+
+        elif isinstance(frame, LLMFullResponseEndFrame):
+            self._response_end_seen = True
+            if self._response_start_monotonic is not None:
+                self._decision_ms = round((time.perf_counter() - self._response_start_monotonic) * 1000, 2)
+            await self._controller.on_response_end(has_function_calls=self._has_function_calls)
+
+        await self._finalize_if_ready()
+        if frame_to_push is not None:
+            await self.push_frame(frame_to_push, direction)
+
+    async def _finalize_if_ready(self) -> None:
+        if not self._response_started:
+            return
+        if not self._response_end_seen:
+            return
+        if self._pending_tool_results != 0:
+            return
+        if self._controller.has_pending_async_completions():
+            return
+
+        failure_class = "none"
+        if not self._has_function_calls:
+            failure_class = "no_tool_call"
+            self._runtime.no_tool_call_count += 1
+            self._runtime.world.increment_bad_action()
+
+        state_after = self._runtime.world.state_snapshot()
+        bad_after = self._runtime.world.bad_actions_count
+
+        tool_calls = [
+            {
+                "name": entry.get("name"),
+                "args": entry.get("args") if isinstance(entry.get("args"), dict) else {},
+                "result_status": entry.get("result_status", "unknown"),
+            }
+            for entry in self._tool_calls
+        ]
+
+        turn_log: dict[str, Any] = {
+            "llm_turn": self._runtime.turn_count + 1,
+            "decision_ms": self._decision_ms,
+            "tool_calls": tool_calls,
+            "raw_response_text": self._response_text.strip(),
+            "failure_class": failure_class,
+            "bad_actions_before": self._bad_before,
+            "bad_actions_after": bad_after,
+            "bad_action_increment": bad_after - self._bad_before,
+            "state_before": self._response_state_before,
+            "state_after": state_after,
+        }
+        raw_text_raw = self._response_text_raw.strip()
+        if raw_text_raw and raw_text_raw != turn_log["raw_response_text"]:
+            turn_log["raw_response_text_raw"] = raw_text_raw
+
+        if self._runtime.last_error_event is not None:
+            turn_log["error_event"] = self._runtime.last_error_event
+            self._runtime.last_error_event = None
+
+        if self._response_thought:
+            turn_log["raw_thought_text"] = self._response_thought
+
+        if self._usage_metrics is not None:
+            turn_log["usage"] = dict(self._usage_metrics)
+
+        self._runtime.turn_logs.append(turn_log)
+        self._runtime.turn_count += 1
+
+        if self._runtime.turn_count >= self._runtime.max_turns and not self._runtime.stop_requested:
+            self._runtime.request_stop("max_turns_exhausted", wait_for_pending_async=True)
+
+        self._response_started = False
+
+    async def finalize_pending_response(self) -> None:
+        await self._finalize_if_ready()
+
+
+class _BenchmarkRuntime:
+    def __init__(
+        self,
+        *,
+        args: argparse.Namespace,
+        llm_service: LLMService,
+        world: SyntheticWorld,
+        system_instruction: str,
+        system_instruction_path: Path,
+    ) -> None:
+        self.args = args
+        self.llm_service = llm_service
+        self.world = world
+        self.system_instruction = system_instruction
+        self.system_instruction_path = system_instruction_path
+
+        self.turn_logs: list[dict[str, Any]] = []
+        self.turn_count = 0
+        self.stop_requested = False
+        self.inference_suppressed = False
+        self.finished_called = False
+        self.finished_message: Optional[str] = None
+        self.terminal_reason = "max_turns_exhausted"
+        self._deferred_stop_reason: Optional[str] = None
+        self.last_error_event: Optional[dict[str, Any]] = None
+
+        self.no_tool_call_count = 0
+        self.post_finished_call_count = 0
+        self.async_completion_timeout_count = 0
+
+        self.run_id = str(uuid.uuid4())
+        self.started_at_utc = _iso_utc_now()
+        self.started_monotonic = time.perf_counter()
+        self.initial_state_snapshot = self.world.state_snapshot()
+
+        self.max_turns = args.max_turns
+        self.done_event = asyncio.Event()
+
+        self.pipeline_task: Optional[PipelineTask] = None
+        self.llm_context: Optional[LLMContext] = None
+        self.controller = _BenchmarkInferenceController(self)
+        self.response_tracker = _BenchmarkResponseTracker(self, self.controller)
+        self.event_summaries = TaskAgentEventSummaries()
+        self.inference_inputs: list[dict[str, Any]] = []
+
+        self._event_tasks: set[asyncio.Task[Any]] = set()
+        self._skip_context_events: dict[str, int] = {}
+        self._async_dependency_waiters: list[asyncio.Future[bool]] = []
+
+    async def setup_pipeline(self) -> tuple[PipelineTask, asyncio.Task[Any]]:
+        self.llm_service.register_function(None, self.handle_function_call)
+
+        messages: list[dict[str, Any]] = [
+            {"role": "system", "content": self.system_instruction},
+            {"role": "user", "content": create_task_instruction_user_message(self.args.task)},
+        ]
+
+        self.world.current_task_id = self.run_id
+        for event_plan in self.world.initial_events():
+            event_payload, response_data = self._resolve_event_payload_and_response_data(event_plan)
+            self.world.record_event(
+                event_name=event_plan.event_name,
+                response_data=response_data,
+                event_payload=event_payload,
+                source_tool=event_plan.source_tool,
+            )
+            messages.append(_event_xml_message(event_plan.event_name, response_data))
+
+        context = LLMContext(messages=messages, tools=build_tools_schema())
+        self.llm_context = context
+        aggregator_pair = LLMContextAggregatorPair(context)
+        pipeline = Pipeline(
+            [
+                aggregator_pair.user(),
+                self.llm_service,
+                self.response_tracker,
+                aggregator_pair.assistant(),
+            ]
+        )
+
+        pipeline_task = PipelineTask(
+            pipeline,
+            params=PipelineParams(
+                allow_interruptions=False,
+                enable_metrics=True,
+                enable_usage_metrics=True,
+            ),
+            idle_timeout_frames=(
+                LLMTextFrame,
+                FunctionCallsStartedFrame,
+                LLMFullResponseStartFrame,
+            ),
+        )
+        pipeline_runner = PipelineRunner(handle_sigint=False, handle_sigterm=False)
+        runner_task = asyncio.create_task(pipeline_runner.run(pipeline_task))
+
+        self.pipeline_task = pipeline_task
+        self.controller.bind_pipeline_task(pipeline_task)
+        return pipeline_task, runner_task
+
+    def capture_inference_input(self, reasons: list[str]) -> None:
+        if not self.args.capture_inference_inputs:
+            return
+        if self.llm_context is None:
+            return
+
+        entry: dict[str, Any] = {
+            "inference_index": len(self.inference_inputs) + 1,
+            "llm_turn": self.turn_count + 1,
+            "reasons": list(reasons),
+            "state_before": self.world.state_snapshot(),
+            "messages": [
+                _serialize_context_message(message) for message in self.llm_context.get_messages()
+            ],
+        }
+
+        try:
+            adapter = self.llm_service.get_llm_adapter()
+            llm_filter = getattr(adapter, "id_for_llm_specific_messages", None)
+            if isinstance(llm_filter, str) and llm_filter:
+                filtered_messages = self.llm_context.get_messages(llm_specific_filter=llm_filter)
+                entry["messages_for_llm"] = [
+                    _serialize_context_message(message) for message in filtered_messages
+                ]
+            entry["provider_invocation_params"] = _to_json_compatible(
+                adapter.get_llm_invocation_params(self.llm_context)
+            )
+        except Exception as exc:  # noqa: BLE001
+            entry["capture_error"] = str(exc)
+
+        llm_settings = getattr(self.llm_service, "_settings", None)
+        if llm_settings is not None:
+            entry["llm_settings"] = _to_json_compatible(llm_settings)
+
+        llm_tool_config = getattr(self.llm_service, "_tool_config", None)
+        if llm_tool_config is not None:
+            entry["llm_tool_config"] = _to_json_compatible(llm_tool_config)
+
+        self.inference_inputs.append(entry)
+
+    def _resolve_event_payload_and_response_data(self, event_plan: EventPlan) -> tuple[Any, Any]:
+        if event_plan.summary_factory is not None:
+            summary = event_plan.summary_factory()
+        else:
+            summary = event_plan.summary
+
+        if event_plan.payload_factory is not None:
+            payload = event_plan.payload_factory()
+        else:
+            payload = event_plan.payload
+
+        if summary is None:
+            formatted_summary = self.event_summaries.summarize_event(event_plan.event_name, payload)
+            if formatted_summary is not None:
+                summary = formatted_summary
+
+        response_data = summary if summary is not None else payload
+        return payload, response_data
+
+    def _schedule_event_delivery(self, event_plan: EventPlan) -> None:
+        task = asyncio.create_task(self._deliver_event(event_plan))
+        self._event_tasks.add(task)
+
+        def _drop(done_task: asyncio.Task[Any]) -> None:
+            self._event_tasks.discard(done_task)
+
+        task.add_done_callback(_drop)
+
+    async def _deliver_event(self, event_plan: EventPlan) -> None:
+        try:
+            if event_plan.delay_s > 0:
+                await asyncio.sleep(event_plan.delay_s)
+
+            if self.stop_requested:
+                return
+            if not self.pipeline_task or self.pipeline_task.has_finished():
+                return
+
+            if event_plan.mutation is not None:
+                event_plan.mutation()
+
+            event_payload, response_data = self._resolve_event_payload_and_response_data(event_plan)
+            self.world.record_event(
+                event_name=event_plan.event_name,
+                response_data=response_data,
+                event_payload=event_payload,
+                source_tool=event_plan.source_tool,
+            )
+
+            if event_plan.event_name == "error":
+                self.last_error_event = (
+                    response_data if isinstance(response_data, dict) else {"error": str(response_data)}
+                )
+
+            # TaskAgent parity: selected sync tool events are emitted for logs but
+            # not injected into LLM context to avoid duplicating sync tool payloads.
+            skip_count = self._skip_context_events.get(event_plan.event_name, 0)
+            if skip_count > 0:
+                self._skip_context_events[event_plan.event_name] = skip_count - 1
+                if self._skip_context_events[event_plan.event_name] == 0:
+                    del self._skip_context_events[event_plan.event_name]
+                return
+
+            await self.pipeline_task.queue_frames(
+                [
+                    LLMMessagesAppendFrame(
+                        messages=[_event_xml_message(event_plan.event_name, response_data)],
+                        run_llm=False,
+                    )
+                ]
+            )
+
+            await self.controller.on_event(event_plan.event_name)
+
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Failed to deliver synthetic event {}: {}", event_plan.event_name, exc)
+
+    def _complete_stop(self, terminal_reason: str) -> None:
+        if self.stop_requested:
+            return
+        self.stop_requested = True
+        self.terminal_reason = terminal_reason
+        self.resolve_async_dependency_waiters(allow_execution=False)
+
+        async def _queue_end() -> None:
+            if self.pipeline_task and not self.pipeline_task.has_finished():
+                try:
+                    await self.pipeline_task.queue_frames([EndFrame()])
+                except Exception as exc:  # noqa: BLE001
+                    logger.debug("Failed to queue EndFrame: {}", exc)
+
+        asyncio.create_task(_queue_end())
+        self.done_event.set()
+
+    def maybe_finalize_deferred_stop(self) -> None:
+        if self.stop_requested:
+            return
+        if self._deferred_stop_reason is None:
+            return
+        if self.controller.has_pending_async_completions():
+            return
+        if self.has_async_dependency_waiters():
+            return
+
+        terminal_reason = self._deferred_stop_reason
+        self._deferred_stop_reason = None
+        self._complete_stop(terminal_reason)
+
+    def request_stop(self, terminal_reason: str, *, wait_for_pending_async: bool = False) -> None:
+        if self.stop_requested:
+            return
+
+        if wait_for_pending_async:
+            self.inference_suppressed = True
+            self.terminal_reason = terminal_reason
+            if self.controller.has_pending_async_completions():
+                self._deferred_stop_reason = terminal_reason
+                return
+
+        self._deferred_stop_reason = None
+        self._complete_stop(terminal_reason)
+
+    def has_async_dependency_waiters(self) -> bool:
+        return any(not waiter.done() for waiter in self._async_dependency_waiters)
+
+    def resolve_async_dependency_waiters(self, *, allow_execution: bool) -> None:
+        if allow_execution and self.controller.has_pending_async_completions():
+            return
+        waiters = list(self._async_dependency_waiters)
+        self._async_dependency_waiters.clear()
+        for waiter in waiters:
+            if not waiter.done():
+                waiter.set_result(allow_execution)
+
+    async def wait_for_async_dependency_resolution(self) -> bool:
+        while self.controller.has_pending_async_completions() and not self.stop_requested:
+            loop = asyncio.get_running_loop()
+            waiter: asyncio.Future[bool] = loop.create_future()
+            self._async_dependency_waiters.append(waiter)
+            allow_execution = await waiter
+            if not allow_execution:
+                return False
+        return not self.stop_requested
+
+    async def handle_function_call(self, params: FunctionCallParams) -> None:
+        tool_name = params.function_name
+        arguments = params.arguments or {}
+        properties = FunctionCallResultProperties(run_llm=False)
+
+        if self.controller.has_pending_async_completions():
+            can_execute = await self.wait_for_async_dependency_resolution()
+            if not can_execute:
+                payload = {
+                    "status": "error",
+                    "error_class": "async_dependency_unresolved",
+                    "error": "Previous async tool call did not complete before this batched call could run.",
+                    "tool": tool_name,
+                }
+                self.last_error_event = dict(payload)
+                await params.result_callback(payload, properties=properties)
+                if self.inference_suppressed:
+                    self.maybe_finalize_deferred_stop()
+                return
+
+        if self.finished_called and tool_name != "finished":
+            self.world.increment_bad_action()
+            self.post_finished_call_count += 1
+            payload = {
+                "status": "error",
+                "error_class": "post_finished_call",
+                "error": "Tool call received after finished() in the same response batch.",
+                "tool": tool_name,
+            }
+            self.last_error_event = dict(payload)
+            await params.result_callback(payload, properties=properties)
+            return
+
+        if tool_name == "finished":
+            self.finished_called = True
+            message = str(arguments.get("message") or "Done").strip()
+            self.finished_message = message or "Done"
+            await params.result_callback(
+                {"status": "completed", "message": self.finished_message},
+                properties=properties,
+            )
+            self.request_stop("finished_tool", wait_for_pending_async=True)
+            return
+
+        is_async = tool_name in BENCHMARK_ASYNC_TOOL_COMPLETIONS
+        expected_event = BENCHMARK_ASYNC_TOOL_COMPLETIONS.get(tool_name)
+        sync_event_to_skip = BENCHMARK_SYNC_TOOL_EVENTS.get(tool_name)
+        tool_call_id = params.tool_call_id or f"{tool_name}:{uuid.uuid4()}"
+
+        if is_async and expected_event is not None:
+            self.controller.register_async_completion(
+                tool_call_id=tool_call_id,
+                expected_event=expected_event,
+                tool_name=tool_name,
+            )
+
+        if sync_event_to_skip is not None:
+            self._skip_context_events[sync_event_to_skip] = (
+                self._skip_context_events.get(sync_event_to_skip, 0) + 1
+            )
+
+        self.controller.set_tool_call_in_progress(True)
+        try:
+            execution = self.world.execute_tool(tool_name, dict(arguments))
+        except Exception as exc:  # noqa: BLE001
+            execution = self.world._error(tool_name, str(exc))  # type: ignore[attr-defined]
+        finally:
+            self.controller.set_tool_call_in_progress(False)
+
+        if not execution.ok:
+            if is_async:
+                self.controller.cancel_async_completion(tool_call_id)
+            if sync_event_to_skip is not None:
+                remaining = self._skip_context_events.get(sync_event_to_skip, 0)
+                if remaining <= 1:
+                    self._skip_context_events.pop(sync_event_to_skip, None)
+                else:
+                    self._skip_context_events[sync_event_to_skip] = remaining - 1
+            await params.result_callback(execution.payload, properties=properties)
+            self.last_error_event = dict(execution.payload)
+            await self.controller.request_inference(f"tool_error:{tool_name}")
+            if self.inference_suppressed:
+                self.maybe_finalize_deferred_stop()
+            return
+
+        if is_async:
+            # Async tools mirror TaskAgent behavior: immediate minimal ack and
+            # rerun is gated by completion event arrival.
+            await params.result_callback({"status": "Executed."}, properties=properties)
+            for event_plan in execution.events:
+                self._schedule_event_delivery(event_plan)
+            if self.inference_suppressed:
+                self.maybe_finalize_deferred_stop()
+            return
+
+        # Sync tools (including sync tools that also emit events) return full
+        # payload immediately and schedule a rerun. Selected duplicate sync
+        # events are skipped from context by _deliver_event.
+        await params.result_callback(execution.payload, properties=properties)
+        for event_plan in execution.events:
+            self._schedule_event_delivery(event_plan)
+        await self.controller.request_inference(f"tool:{tool_name}")
+        if self.inference_suppressed:
+            self.maybe_finalize_deferred_stop()
+
+    async def close(self) -> None:
+        self.controller.close()
+        for event_task in list(self._event_tasks):
+            if not event_task.done():
+                event_task.cancel()
+        if self._event_tasks:
+            await asyncio.gather(*self._event_tasks, return_exceptions=True)
+
+    def build_summary(self) -> dict[str, Any]:
+        total_ms = round((time.perf_counter() - self.started_monotonic) * 1000, 2)
+        final_sector = self.world.state.sector
+        final_credits = self.world.state.credits
+        start_sector_raw = self.initial_state_snapshot.get("sector")
+        start_sector = start_sector_raw if isinstance(start_sector_raw, int) else 3080
+        expected_finish_sector = start_sector
+        final_sector_matches_start = final_sector == expected_finish_sector
+        final_sector_is_mega = final_sector == MEGA_PORT_SECTOR
+        event_history = [event for event in self.world.event_history if isinstance(event, dict)]
+        reached_mega_anytime = bool(
+            final_sector_is_mega
+            or any(event.get("sector") == MEGA_PORT_SECTOR for event in event_history)
+            or any((turn.get("state_after") or {}).get("sector") == MEGA_PORT_SECTOR for turn in self.turn_logs)
+        )
+
+        recharge_units_total = 0
+        recharge_cost_total = 0
+        recharge_to_full_at_mega = False
+        recharge_sector: Optional[int] = None
+        recharge_events = [
+            event
+            for event in event_history
+            if event.get("event_name") == "warp.purchase"
+            and event.get("source_tool") == "recharge_warp_power"
+        ]
+        if recharge_events:
+            for event in recharge_events:
+                payload = _event_payload_as_dict(event)
+
+                units = payload.get("units")
+                if isinstance(units, int) and units > 0:
+                    recharge_units_total += units
+
+                total_cost = payload.get("total_cost")
+                if isinstance(total_cost, (int, float)) and total_cost > 0:
+                    recharge_cost_total += int(total_cost)
+
+                sector = event.get("sector")
+                if isinstance(sector, int) and sector == MEGA_PORT_SECTOR:
+                    recharge_sector = sector
+                    new_warp = payload.get("new_warp_power")
+                    warp_capacity = payload.get("warp_power_capacity")
+                    if (
+                        isinstance(new_warp, int)
+                        and isinstance(warp_capacity, int)
+                        and new_warp >= warp_capacity
+                    ):
+                        recharge_to_full_at_mega = True
+        else:
+            for turn in self.turn_logs:
+                tool_calls = turn.get("tool_calls") if isinstance(turn.get("tool_calls"), list) else []
+                has_successful_recharge_call = any(
+                    isinstance(call, dict)
+                    and call.get("name") == "recharge_warp_power"
+                    and str(call.get("result_status") or "") in {"acknowledged", "success"}
+                    for call in tool_calls
+                )
+                if not has_successful_recharge_call:
+                    continue
+
+                state_before = turn.get("state_before") if isinstance(turn.get("state_before"), dict) else {}
+                state_after = turn.get("state_after") if isinstance(turn.get("state_after"), dict) else {}
+
+                before_warp = state_before.get("warp")
+                after_warp = state_after.get("warp")
+                if isinstance(before_warp, int) and isinstance(after_warp, int) and after_warp > before_warp:
+                    recharge_units_total += after_warp - before_warp
+
+                before_credits = state_before.get("credits")
+                after_credits = state_after.get("credits")
+                if (
+                    isinstance(before_credits, (int, float))
+                    and isinstance(after_credits, (int, float))
+                    and before_credits > after_credits
+                ):
+                    recharge_cost_total += int(before_credits - after_credits)
+
+                sector_after = state_after.get("sector")
+                sector_before = state_before.get("sector")
+                sector = sector_after if isinstance(sector_after, int) else sector_before
+                if isinstance(sector, int) and sector == MEGA_PORT_SECTOR:
+                    recharge_sector = sector
+                    max_warp = state_after.get("max_warp")
+                    if isinstance(after_warp, int) and isinstance(max_warp, int) and after_warp >= max_warp:
+                        recharge_to_full_at_mega = True
+
+        coherent_report = False
+        if self.finished_message:
+            coherent_report = _is_coherent_finished_report(self.finished_message)
+
+        success = bool(
+            self.finished_message
+            and final_sector_matches_start
+            and reached_mega_anytime
+            and recharge_to_full_at_mega
+            and coherent_report
+        )
+
+        tool_call_counts = [len(turn.get("tool_calls") or []) for turn in self.turn_logs]
+        multi_call_turn_count = sum(1 for count in tool_call_counts if count > 1)
+        avg_tool_calls = (
+            round(sum(tool_call_counts) / len(tool_call_counts), 3) if tool_call_counts else 0.0
+        )
+        max_tool_calls = max(tool_call_counts) if tool_call_counts else 0
+
+        return {
+            "schema_version": RUN_SCHEMA_VERSION,
+            "success": success,
+            "success_legacy": success,
+            "bad_actions_count": self.world.bad_actions_count,
+            "no_tool_call_count": self.no_tool_call_count,
+            "post_finished_call_count": self.post_finished_call_count,
+            "async_completion_timeout_count": self.async_completion_timeout_count,
+            "multi_call_turn_count": multi_call_turn_count,
+            "avg_tool_calls_per_turn": avg_tool_calls,
+            "max_tool_calls_per_turn": max_tool_calls,
+            "finished_message": self.finished_message,
+            "start_sector": start_sector,
+            "expected_finish_sector": expected_finish_sector,
+            "final_sector": final_sector,
+            "final_credits": final_credits,
+            "final_sector_matches_start": final_sector_matches_start,
+            "reached_mega": reached_mega_anytime,
+            "final_sector_is_mega": final_sector_is_mega,
+            "reached_mega_anytime": reached_mega_anytime,
+            "recharge_sector": recharge_sector,
+            "recharge_units_total": recharge_units_total,
+            "recharge_cost_total": recharge_cost_total,
+            "recharge_to_full_at_mega": recharge_to_full_at_mega,
+            "coherent_report": coherent_report,
+            "finished_called": self.finished_called,
+            "terminal_reason": self.terminal_reason,
+            "turns_executed": len(self.turn_logs),
+            "elapsed_ms": total_ms,
+            "provider": self.args.provider,
+            "model": self.args.model,
+            "thinking": self.args.thinking,
+            "thinking_budget": self.args.thinking_budget,
+            "max_tokens": self.args.max_tokens,
+        }
+
+    def build_output_payload(self) -> dict[str, Any]:
+        summary = self.build_summary()
+        ended_at_utc = _iso_utc_now()
+        git_sha = _git_sha(REPO_ROOT)
+
+        config_snapshot = {
+            "provider": self.args.provider,
+            "model": self.args.model,
+            "openai_base_url": self.args.openai_base_url,
+            "openai_params": getattr(self.args, "openai_params", None),
+            "thinking": self.args.thinking,
+            "thinking_budget": self.args.thinking_budget,
+            "max_tokens": self.args.max_tokens,
+            "max_turns": self.args.max_turns,
+            "function_call_timeout_secs": self.args.function_call_timeout_secs,
+            "capture_inference_inputs": self.args.capture_inference_inputs,
+            "task": self.args.task,
+        }
+        metadata = {
+            "run_id": self.run_id,
+            "runner_version": RUNNER_VERSION,
+            "started_at_utc": self.started_at_utc,
+            "ended_at_utc": ended_at_utc,
+            "repo_root": str(REPO_ROOT),
+            "git_sha": git_sha,
+            "system_instruction_path": str(self.system_instruction_path),
+            "system_instruction_hash": _sha256_text(self.system_instruction),
+            "task_prompt_hash": _sha256_text(self.args.task),
+            "initial_state": self.initial_state_snapshot,
+        }
+        termination = {
+            "reason": self.terminal_reason,
+            "finished_called": self.finished_called,
+            "finished_message": self.finished_message,
+            "elapsed_ms": summary.get("elapsed_ms"),
+        }
+        payload = {
+            "schema_version": RUN_SCHEMA_VERSION,
+            "metadata": metadata,
+            "config": config_snapshot,
+            "termination": termination,
+            "summary": summary,
+            "turns": self.turn_logs,
+        }
+        if self.args.capture_inference_inputs:
+            payload["inference_inputs"] = self.inference_inputs
+        return payload
 
 
 async def _run_benchmark(args: argparse.Namespace) -> int:
@@ -739,273 +1713,161 @@ async def _run_benchmark(args: argparse.Namespace) -> int:
     if provider == LLMProvider.OPENAI and not os.getenv("OPENAI_API_KEY"):
         os.environ["OPENAI_API_KEY"] = "dummy"
 
-    thinking = _thinking_config_from_arg(args.thinking_budget)
+    assert_catalog_parity()
+
     config = LLMServiceConfig(
         provider=provider,
         model=args.model,
-        thinking=thinking,
+        thinking=None,
+        max_tokens=args.max_tokens,
         function_call_timeout_secs=args.function_call_timeout_secs,
         run_in_parallel=False,
         openai_base_url=args.openai_base_url,
+        openai_params=args.openai_params,
     )
     llm_service = create_llm_service(config)
+    tool_call_streaming_workaround = _apply_openai_non_streaming_tool_call_workaround(
+        llm_service=llm_service,
+        provider=provider,
+        model=args.model,
+        openai_base_url=args.openai_base_url,
+    )
+    thinking_policy = _apply_benchmark_thinking_mode(
+        llm_service=llm_service,
+        provider=provider,
+        model=args.model,
+        thinking=args.thinking,
+        thinking_budget=args.thinking_budget,
+        openai_base_url=args.openai_base_url,
+    )
 
     harness_dir = Path(__file__).resolve().parent
-    system_instruction = _load_system_instruction(harness_dir / "system_instruction.md")
+    system_instruction_path = harness_dir / "system_instruction.txt"
+    system_instruction = _load_system_instruction(system_instruction_path)
+    reasoning_prefix = _system_reasoning_prefix_for_model(
+        provider=provider,
+        model=args.model,
+        thinking=args.thinking,
+        openai_base_url=args.openai_base_url,
+    )
+    if reasoning_prefix:
+        system_instruction = f"{reasoning_prefix}\n\n{system_instruction}"
 
-    env = MiniRLEnv()
-    initial_user = create_task_instruction_user_message(args.task)
-    initial_user += f"\n{ACTION_FORMAT_REMINDER}\n"
-
-    messages: list[dict[str, str]] = [
-        {"role": "system", "content": system_instruction},
-        {"role": "user", "content": initial_user},
-        {"role": "user", "content": env.initial_observation()},
-    ]
-
-    turn_logs: list[dict[str, Any]] = []
-    finished_message: Optional[str] = None
-    finished_called = False
-    terminal_reason = "max_turns_exhausted"
-    started = time.perf_counter()
-    started_at_utc = _iso_utc_now()
-    run_id = str(uuid.uuid4())
-    initial_state_snapshot = env.state_snapshot()
-    reached_mega_anytime = env.state.sector == MEGA_PORT_SECTOR
+    world = SyntheticWorld()
+    runtime = _BenchmarkRuntime(
+        args=args,
+        llm_service=llm_service,
+        world=world,
+        system_instruction=system_instruction,
+        system_instruction_path=system_instruction_path,
+    )
 
     logger.info(
-        "HARNESS_CONFIG provider={} model={} openai_base_url={} thinking_budget={} max_tokens={} max_turns={}",
+        "HARNESS_CONFIG provider={} model={} openai_base_url={} thinking={} thinking_budget={} thinking_policy={} tool_call_workaround={} max_tokens={} max_turns={}",
         provider.value,
         args.model,
         args.openai_base_url or "(default)",
-        thinking.budget_tokens if thinking else "default",
+        args.thinking,
+        args.thinking_budget if args.thinking_budget is not None else "(mapped)",
+        thinking_policy,
+        tool_call_streaming_workaround,
         args.max_tokens,
         args.max_turns,
     )
 
-    for turn in range(1, args.max_turns + 1):
-        state_before = env.state_snapshot()
-        bad_before = env.bad_actions_count
+    pipeline_task: Optional[PipelineTask] = None
+    runner_task: Optional[asyncio.Task[Any]] = None
+    interrupted = False
+    try:
+        pipeline_task, runner_task = await runtime.setup_pipeline()
+        await runtime.controller.queue_initial_run()
 
-        context = LLMContext(messages=messages)
-        t0 = time.perf_counter()
+        def _runner_done(task: asyncio.Task[Any]) -> None:
+            if task.cancelled():
+                if not runtime.stop_requested:
+                    runtime.request_stop("inference_failure")
+                return
+            exc = task.exception()
+            if exc is not None and not runtime.stop_requested:
+                runtime.world.increment_bad_action()
+                runtime.last_error_event = {
+                    "endpoint": "inference",
+                    "error": str(exc),
+                    "source": {"type": "pipeline"},
+                    "synthesized": True,
+                    "status": 500,
+                }
+                runtime.turn_logs.append(
+                    {
+                        "llm_turn": runtime.turn_count + 1,
+                        "decision_ms": 0.0,
+                        "tool_calls": [],
+                        "raw_response_text": "",
+                        "failure_class": "inference_failure",
+                        "bad_actions_before": runtime.world.bad_actions_count - 1,
+                        "bad_actions_after": runtime.world.bad_actions_count,
+                        "bad_action_increment": 1,
+                        "state_before": runtime.world.state_snapshot(),
+                        "state_after": runtime.world.state_snapshot(),
+                        "error_event": runtime.last_error_event,
+                    }
+                )
+                runtime.turn_count += 1
+                runtime.request_stop("inference_failure")
+
+        runner_task.add_done_callback(_runner_done)
+
         try:
-            response = await llm_service.run_inference(context, max_tokens=args.max_tokens)
-        except Exception as exc:  # noqa: BLE001
-            logger.error("TURN {} inference failure: {}", turn, exc)
-            observation = env._emit_error("inference", str(exc))
-            error_event = _extract_error_event(observation)
-            messages.append({"role": "user", "content": observation})
-            bad_after = env.bad_actions_count
-            state_after = env.state_snapshot()
-            turn_logs.append(
-                {
-                    "turn": turn,
-                    "decision_ms": round((time.perf_counter() - t0) * 1000, 2),
-                    "action": None,
-                    "args": {},
-                    "parse_error": "inference failure",
-                    "raw_response": "",
-                    "bad_actions_before": bad_before,
-                    "bad_actions_after": bad_after,
-                    "bad_action_increment": bad_after - bad_before,
-                    "state_before": state_before,
-                    "state_after": state_after,
-                    "error_event": error_event,
-                }
-            )
-            continue
+            await runtime.done_event.wait()
+        except asyncio.CancelledError:
+            interrupted = True
+            if not runtime.stop_requested:
+                runtime.request_stop("interrupted")
+            logger.warning("Benchmark run interrupted; proceeding with partial summary/output.")
 
-        decision_ms = round((time.perf_counter() - t0) * 1000, 2)
-        assistant_text = (response or "").strip()
-        openai_inference_debug = _get_openai_inference_debug(llm_service)
-        messages.append({"role": "assistant", "content": assistant_text})
+    finally:
+        if pipeline_task and not pipeline_task.has_finished():
+            try:
+                await pipeline_task.queue_frames([EndFrame()])
+            except Exception:  # noqa: BLE001
+                pass
 
-        action, action_args, parse_error = parse_action(assistant_text)
+        if runner_task is not None:
+            try:
+                await asyncio.wait_for(asyncio.shield(runner_task), timeout=PIPELINE_GRACEFUL_SHUTDOWN_TIMEOUT)
+            except asyncio.TimeoutError:
+                runner_task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await runner_task
+            except asyncio.CancelledError:
+                pass
+            except Exception as exc:  # noqa: BLE001
+                logger.debug("Runner task ended with error during shutdown: {}", exc)
 
-        if parse_error:
-            observation = env._emit_error("parser", parse_error)
-            error_event = _extract_error_event(observation)
-            messages.append({"role": "user", "content": observation})
-            bad_after = env.bad_actions_count
-            state_after = env.state_snapshot()
-            logger.info(
-                "TURN {} decision_ms={} action=parse_error bad_actions={} err={}",
-                turn,
-                decision_ms,
-                env.bad_actions_count,
-                parse_error,
-            )
-            turn_logs.append(
-                {
-                    "turn": turn,
-                    "decision_ms": decision_ms,
-                    "action": None,
-                    "args": {},
-                    "parse_error": parse_error,
-                    "raw_response": assistant_text,
-                    "bad_actions_before": bad_before,
-                    "bad_actions_after": bad_after,
-                    "bad_action_increment": bad_after - bad_before,
-                    "state_before": state_before,
-                    "state_after": state_after,
-                    "error_event": error_event,
-                    "openai_inference_debug": openai_inference_debug,
-                }
-            )
-            continue
+        await runtime.close()
 
-        if action == "finished":
-            finished_called = True
-            terminal_reason = "finished_action"
-            finished_message = str(action_args.get("message") or action_args.get("summary") or "").strip()
-            state_after = env.state_snapshot()
-            bad_after = env.bad_actions_count
-            logger.info(
-                "TURN {} decision_ms={} action=finished message_len={} bad_actions={}",
-                turn,
-                decision_ms,
-                len(finished_message),
-                env.bad_actions_count,
-            )
-            turn_logs.append(
-                {
-                    "turn": turn,
-                    "decision_ms": decision_ms,
-                    "action": action,
-                    "args": action_args,
-                    "parse_error": None,
-                    "raw_response": assistant_text,
-                    "bad_actions_before": bad_before,
-                    "bad_actions_after": bad_after,
-                    "bad_action_increment": bad_after - bad_before,
-                    "state_before": state_before,
-                    "state_after": state_after,
-                    "openai_inference_debug": openai_inference_debug,
-                }
-            )
-            break
-
-        observation = env.apply_action(action, action_args)
-        error_event = _extract_error_event(observation)
-        messages.append({"role": "user", "content": observation})
-        bad_after = env.bad_actions_count
-        state_after = env.state_snapshot()
-        reached_mega_anytime = reached_mega_anytime or (env.state.sector == MEGA_PORT_SECTOR)
-
-        logger.info(
-            "TURN {} decision_ms={} action={} bad_actions={} sector={} warp={}",
-            turn,
-            decision_ms,
-            action,
-            env.bad_actions_count,
-            env.state.sector,
-            env.state.warp,
-        )
-        turn_logs.append(
-            {
-                "turn": turn,
-                "decision_ms": decision_ms,
-                "action": action,
-                "args": action_args,
-                "parse_error": None,
-                "raw_response": assistant_text,
-                "bad_actions_before": bad_before,
-                "bad_actions_after": bad_after,
-                "bad_action_increment": bad_after - bad_before,
-                "state_before": state_before,
-                "state_after": state_after,
-                "error_event": error_event,
-                "openai_inference_debug": openai_inference_debug,
-            }
-        )
-
-    total_ms = round((time.perf_counter() - started) * 1000, 2)
-    ended_at_utc = _iso_utc_now()
-
-    final_sector_is_mega = env.state.sector == MEGA_PORT_SECTOR
-    coherent_report = False
-    if finished_message:
-        lowered = finished_message.lower()
-        coherent_report = "profit" in lowered and (
-            "trade" in lowered or "traded" in lowered or "ports" in lowered
-        )
-
-    success = bool(finished_message and final_sector_is_mega and coherent_report)
-
-    summary = {
-        "schema_version": RUN_SCHEMA_VERSION,
-        "success": success,
-        "success_legacy": success,
-        "bad_actions_count": env.bad_actions_count,
-        "finished_message": finished_message,
-        "final_sector": env.state.sector,
-        "reached_mega": final_sector_is_mega,
-        "final_sector_is_mega": final_sector_is_mega,
-        "reached_mega_anytime": reached_mega_anytime,
-        "coherent_report": coherent_report,
-        "finished_called": finished_called,
-        "terminal_reason": terminal_reason,
-        "turns_executed": len(turn_logs),
-        "elapsed_ms": total_ms,
-        "provider": provider.value,
-        "model": args.model,
-        "thinking_budget": thinking.budget_tokens if thinking else None,
-        "max_tokens": args.max_tokens,
-    }
+    summary = runtime.build_summary()
 
     print(f"SUCCESS={summary['success']}")
     print(f"BAD_ACTIONS_COUNT={summary['bad_actions_count']}")
+    print(f"NO_TOOL_CALL_COUNT={summary['no_tool_call_count']}")
     print(f"FINAL_SECTOR={summary['final_sector']}")
+    print(f"FINAL_SECTOR_MATCHES_START={summary['final_sector_matches_start']}")
+    print(f"RECHARGE_TO_FULL_AT_MEGA={summary['recharge_to_full_at_mega']}")
     print(f"COHERENT_REPORT={summary['coherent_report']}")
     print(f"TURNS={summary['turns_executed']}")
     print(f"ELAPSED_MS={summary['elapsed_ms']}")
-    if finished_message:
-        print(f"FINISH_MESSAGE={finished_message}")
+    if summary.get("finished_message"):
+        print(f"FINISH_MESSAGE={summary['finished_message']}")
 
     if args.log_json:
-        git_sha = _git_sha(REPO_ROOT)
-        config_snapshot = {
-            "provider": provider.value,
-            "model": args.model,
-            "openai_base_url": args.openai_base_url,
-            "thinking_budget": thinking.budget_tokens if thinking else None,
-            "max_tokens": args.max_tokens,
-            "max_turns": args.max_turns,
-            "function_call_timeout_secs": args.function_call_timeout_secs,
-            "task": args.task,
-        }
-        metadata = {
-            "run_id": run_id,
-            "runner_version": RUNNER_VERSION,
-            "started_at_utc": started_at_utc,
-            "ended_at_utc": ended_at_utc,
-            "repo_root": str(REPO_ROOT),
-            "git_sha": git_sha,
-            "system_instruction_path": str(harness_dir / "system_instruction.md"),
-            "system_instruction_hash": _sha256_text(system_instruction),
-            "task_prompt_hash": _sha256_text(args.task),
-            "action_format_reminder_hash": _sha256_text(ACTION_FORMAT_REMINDER),
-            "initial_state": initial_state_snapshot,
-        }
-        termination = {
-            "reason": terminal_reason,
-            "finished_called": finished_called,
-            "finished_message": finished_message,
-            "elapsed_ms": total_ms,
-        }
-        payload = {
-            "schema_version": RUN_SCHEMA_VERSION,
-            "metadata": metadata,
-            "config": config_snapshot,
-            "termination": termination,
-            "summary": summary,
-            "turns": turn_logs,
-        }
+        payload = runtime.build_output_payload()
         Path(args.log_json).write_text(json.dumps(payload, indent=2), encoding="utf-8")
         logger.info("WROTE {}", args.log_json)
 
-    return 0 if success else 1
+    if interrupted:
+        return 130
+    return 0 if summary.get("success") else 1
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -1032,9 +1894,26 @@ def _build_parser() -> argparse.ArgumentParser:
         help="OpenAI-compatible base URL (with or without /v1)",
     )
     parser.add_argument(
+        "--openai-params-json",
+        default=os.getenv("TASK_LLM_OPENAI_PARAMS_JSON"),
+        help=(
+            "Optional JSON object merged into OpenAI InputParams "
+            "(example: '{\"temperature\":0.2,\"extra\":{\"extra_body\":{\"top_k\":40}}}')"
+        ),
+    )
+    parser.add_argument(
+        "--thinking",
+        default=_default_thinking_level(),
+        choices=list(THINKING_LEVELS),
+        help="Benchmark thinking level: none|minimal|low|medium|high",
+    )
+    parser.add_argument(
         "--thinking-budget",
-        default=os.getenv("TASK_LLM_THINKING_BUDGET", "512"),
-        help="Thinking budget tokens, or one of: default|none|unlimited",
+        default=os.getenv("TASK_LLM_THINKING_BUDGET"),
+        help=(
+            "Optional exact numeric thinking budget override. When set, it overrides "
+            "the benchmark --thinking mapping on providers/models that expose exact budgets."
+        ),
     )
     parser.add_argument(
         "--max-tokens",
@@ -1045,7 +1924,7 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--max-turns",
         type=int,
-        default=40,
+        default=50,
         help="Max inference turns before hard stop",
     )
     parser.add_argument(
@@ -1059,6 +1938,11 @@ def _build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Optional output file for structured run logs",
     )
+    parser.add_argument(
+        "--capture-inference-inputs",
+        action="store_true",
+        help="Include full pre-inference context snapshots in --log-json output.",
+    )
     return parser
 
 
@@ -1066,7 +1950,22 @@ def main() -> int:
     logger.configure(handlers=[{"sink": sys.stderr, "level": os.getenv("LOGURU_LEVEL", "INFO")}])
     parser = _build_parser()
     args = parser.parse_args()
-    return asyncio.run(_run_benchmark(args))
+    try:
+        args.thinking_budget = _parse_optional_nonnegative_int(
+            args.thinking_budget,
+            label="--thinking-budget",
+        )
+        args.openai_params = _parse_optional_json_dict(
+            args.openai_params_json,
+            label="--openai-params-json",
+        )
+    except ValueError as exc:
+        parser.error(str(exc))
+    _validate_generation_controls(args, parser)
+    try:
+        return asyncio.run(_run_benchmark(args))
+    except KeyboardInterrupt:
+        return 130
 
 
 if __name__ == "__main__":
