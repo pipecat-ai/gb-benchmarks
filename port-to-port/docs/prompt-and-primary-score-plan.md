@@ -6,27 +6,23 @@ We want two changes to the port-to-port benchmark:
 
 1. Keep a natural default task instruction that reflects how capable-model users talk to agents.
 2. Add a second, more literal task instruction for small models.
-3. Replace `strict_success` as the primary leaderboard metric with a richer score that captures more of the performance variation we actually care about.
+3. Use a richer primary leaderboard metric that captures more of the performance variation we actually care about than a single pass/fail column.
 
 The same core task should remain unchanged across both prompts:
 
 - navigate from the start sector to the nearest mega-port
 - recharge to full at the mega-port
-- trade opportunistically along the way
+- trade as profitably as possible along the required route
 - return to the start sector
 - provide a finished message with the required elements
 
 ## Current State
 
-Current default task text in [mini-rl-env.py](/Users/khkramer/src/gb-benchmarks/port-to-port/mini-rl-env.py) is intentionally natural:
+Current default task text in [mini-rl-env.py](../mini-rl-env.py) is intentionally natural:
 
 > Go round-trip from our current location to the nearest mega-port. At the mega-port, recharge to full warp power. While traveling there and back, trade at every port that provides a trading opportunity. Make as much money as possible. Be sure you know how to trade well. When you're back where you started, give me a quick summary with the mega-port you used, how much warp you recharged and what it cost, how many ports you traded at, and total profit from the whole trip.
 
-Current primary pass/fail columns are still centered on:
-
-- `objective_success`
-- `lenient_success`
-- `strict_success`
+Current leaderboard summaries are still too centered on boolean completion outcomes.
 
 This is too coarse for top models. It distinguishes catastrophic failures from clean completions, but it does not separate:
 
@@ -38,25 +34,10 @@ This is too coarse for top models. It distinguishes catastrophic failures from c
 
 ## Observed Run Patterns
 
-Representative successful runs:
+Patterns from earlier evaluations:
 
-- [sonnet46-medium-r10.json](/Users/khkramer/src/gb-benchmarks/port-to-port/runs/data-collection-20260226T070342Z/json/sonnet46-medium-r10.json)
-- [sonnet46-medium-r02.json](/Users/khkramer/src/gb-benchmarks/port-to-port/runs/data-collection-20260226T070342Z/json/sonnet46-medium-r02.json)
-
-Representative middling Nemotron 3 Super runs:
-
-- [run-05.json](/Users/khkramer/src/gb-benchmarks/port-to-port/runs/nemotron3-super-120b-th512-20x-20260305T225007Z/run-05.json)
-- [run-14.json](/Users/khkramer/src/gb-benchmarks/port-to-port/runs/nemotron3-super-120b-th512-20x-20260305T225007Z/run-14.json)
-
-Representative poor but benchmark-valid runs:
-
-- [run-001.json](/Users/khkramer/src/gb-benchmarks/port-to-port/runs/supernova-low-20-batch4-20260226T234711Z/run-001.json)
-- [run-008.json](/Users/khkramer/src/gb-benchmarks/port-to-port/runs/gpt-5-mini-20x3-batch12-instrfix-20260227T185757Z/minimal/run-008.json)
-
-Patterns from those runs:
-
-- Strong Claude runs do more than finish. They infer profitable trade chains, take productive detours, avoid bad actions, and produce clean summaries with correct whole-trip accounting.
-- Middling Nemotron runs often complete the route and recharge correctly, but leave profit on the table, make a few invalid or unnecessary calls, or produce contradictory summaries.
+- Strong runs do more than finish. They infer profitable trade chains, avoid bad actions, and produce clean summaries with correct whole-trip accounting.
+- Middling runs often complete the route and recharge correctly, but leave profit on the table, make a few invalid or unnecessary calls, or produce contradictory summaries.
 - Poor runs fall into a few distinct buckets:
   - premature `finished` before returning home
   - repeated invalid or low-value trades
@@ -70,13 +51,20 @@ These differences are too important to collapse into a single strict boolean.
 
 ### Prompt A: Natural Prompt
 
-Keep the current default prompt as the large-model / natural-user prompt.
+Keep a natural default prompt for large-model / natural-user evaluation, but tighten it slightly so the no-detour constraint is explicit.
+
+Draft text:
+
+```text
+Go round-trip from our current location to the nearest mega-port. At the mega-port, recharge to full warp power. While traveling there and back, make as much money as possible by trading optimally at profitable ports on your route without going off-course. When you're back where you started, give me a quick summary with the mega-port you used, how much warp you recharged and what it cost, how many distinct ports you traded at, and total profit or loss from the whole trip.
+```
 
 This prompt is valuable because:
 
 - it matches how users naturally speak to high-capability agents
 - it rewards planning, abstraction, and implicit checklist-following
-- it exposes whether a model can infer missing operational structure
+- it still exposes whether a model can infer missing operational structure
+- it makes the benchmark's intended no-detour trading constraint explicit
 
 ### Prompt B: Literal Small-Model Prompt
 
@@ -91,11 +79,11 @@ Follow these rules exactly:
 1. First identify the nearest mega-port sector that is not your current sector.
 2. Plot a route to that mega-port.
 3. Move one sector at a time along that route.
-4. On the way to the mega-port, if the current sector has a valid trading opportunity, trade there.
+4. On the way to the mega-port, if the current sector has a profitable trading opportunity on your route, trade there.
 5. When you arrive at the mega-port, recharge warp power to full.
 6. Then plot a route back to your starting sector.
 7. Move one sector at a time along the route back.
-8. On the way back, if the current sector has a valid trading opportunity, trade there.
+8. On the way back, if the current sector has a profitable trading opportunity on your route, trade there.
 9. Do not call `finished` until you are back in your starting sector.
 10. Every response must call a tool. Do not answer with plain text instead of a tool call.
 11. Before you call `finished`, check all of these:
@@ -121,7 +109,7 @@ This second prompt should not change the task, only the amount of scaffolding.
 
 ## Implementation Contract
 
-These identifiers and field names should be treated as stable unless we intentionally version the benchmark again.
+These identifiers and field names define the current benchmark contract.
 
 Prompt variant ids:
 
@@ -132,15 +120,24 @@ Prompt variant ids:
 Expected harness metadata/config fields:
 
 - `metadata.task_variant`
+- `metadata.task_prompt_version`
 - `metadata.task_prompt_hash`
 - `config.task_variant`
+- `config.task_prompt_version`
+
+Expected evaluator output fields:
+
+- `score_rubric_version`
+- `task_complete`
+- `leaderboard_prompt_id`
 
 Resolution rules:
 
 - if `--task` is provided, it overrides `--task-variant`
 - if `--task` is not provided, `--task-variant` selects a built-in prompt
-- if `--task` is provided, the run should store `task_variant=custom`
-- if an older run does not contain `task_variant`, downstream code should fall back to `task_prompt_hash`
+- built-in prompt runs must stamp `task_variant`, `task_prompt_version`, and `task_prompt_hash`
+- if `--task` is provided, the run should store `task_variant=custom` and `task_prompt_hash`
+- `task_prompt_version` is for built-in prompts only
 
 Evaluator input contract:
 
@@ -192,11 +189,13 @@ Ground-truth accounting contract:
 
 ### Replace Boolean Primary Score With A 100-Point Score
 
-Keep existing booleans as supporting columns:
+Keep one supporting binary completion metric for summary views:
 
-- `objective_success`
-- `lenient_success`
-- `strict_success`
+- `task_complete`
+
+Definition:
+
+- `task_complete` means the run reached the mega-port, recharged to full, returned to the start sector, and the first `finished` call happened only after those mission conditions were satisfied.
 
 But define a new primary metric:
 
@@ -211,117 +210,124 @@ This score should be comparable across both prompt variants.
 - It should combine programmatic scoring and judged scoring.
 - It should penalize wasted or incorrect behavior without letting one small mistake dominate the full score.
 - It should not require special-case scoring for the natural vs literal prompt.
+- It should judge execution of the instructed round-trip task, not reward separate route-planning creativity.
 
 ## Proposed Score Structure
 
-### 1. Mission Completion: 35 points
+### 1. Mission Completion: 40 points
 
 - Reach the first required destination (nearest mega-port): 10
 - Recharge to full at the mega-port: 10
-- Return to the required final destination (start sector): 10
+- Return to the required final destination (start sector): 15
 - Call `finished` only after satisfying the route completion conditions: 5
 
-Why 35:
+Why 40:
 
 - This remains the backbone of the task.
 - Runs that miss these checkpoints should not be competitive even if they trade well.
 
-### 2. Trade Quality: 25 points
+### 2. Trade Quality: 15 points
 
-- Trade opportunity coverage on visited route: 10
-- Commodity-choice quality / realized trade value quality: 15
+- Trade opportunity coverage on the required course: 5
+- Commodity-choice quality / realized trade value quality on the required course: 10
 
 Recommended implementation split:
 
 - `trade_coverage_score`
-  - did the run actually trade when a valid opportunity existed?
-  - did it skip obviously beneficial trades?
+  - did the run actually trade when a beneficial opportunity existed on the required course?
+  - did it skip obviously beneficial on-course trades?
 - `trade_quality_score`
-  - compare realized trade value against a route-conditioned oracle optimum
-  - do not compare only raw profit across different realized routes
+  - compare realized on-course trade value against a required-course oracle optimum
+  - do not reward extra profit from off-course sectors
 
-Why route-conditioned optimum:
+Why required-course optimum:
 
-- It is fairer than comparing to a global omniscient optimum.
-- It isolates trading quality from navigation quality.
-- It still gives strong models room to separate themselves by choosing better commodities and cargo transitions.
+- It matches the benchmark task: execute the instructed round trip well.
+- It rewards trading skill without turning route choice into a second benchmark.
+- It prevents profitable off-course detours from inflating the trade score.
 
 Formal definition:
 
-- Fix the model's actual visited port sequence and visit order.
+- Fix the benchmark's required navigation course: start sector -> nearest mega-port -> start sector, using the benchmark's canonical shortest valid round trip.
+- In the current synthetic world this course is deterministic. If a future environment introduces multiple equally short valid courses, add a canonical tie-breaker and version the benchmark rather than leaving the choice implicit.
 - Fix the actual starting state:
   - credits
   - cargo
   - cargo capacity
   - sector
-- Fix the actual non-trade world events:
+- Fix the non-trade world events implied by that required course:
   - movement path
   - recharge event and recharge cost
   - any mandatory benchmark actions already taken
-- Define `realized_trade_value` as the net credits gained or lost from successful `trade` calls only.
-- Then compute `route_conditioned_optimal_trade_value` for a perfect trader who is only allowed to choose different `trade` actions at the ports actually visited, in the order actually visited.
-- Trade scoring compares `realized_trade_value` to `route_conditioned_optimal_trade_value`, not whole-trip profit after recharge.
+- Define `on_course_realized_trade_value` as the net credits gained or lost from successful `trade` calls that occur at required-course port visits before the first valid return to the start sector.
+- Off-course trade calls do not increase trade score.
+- Then compute `required_course_optimal_trade_value` for a perfect trader who is only allowed to choose different `trade` actions at the ports on the required course, in course order.
+- Trade scoring compares `on_course_realized_trade_value` to `required_course_optimal_trade_value`, not whole-trip profit after off-course detours.
 
 Oracle implementation rule:
 
-- the oracle should be a dynamic program over the visited-port sequence
+- the oracle should be a dynamic program over the required-course port sequence
 - oracle state should include at least:
   - current visit index
   - credits
   - cargo inventory by commodity
   - remaining free holds
-- allowed actions at each visited port should be:
+- allowed actions at each required-course port visit should be:
   - any valid buy, sell, or skip action permitted by benchmark trade rules at that port
-- invalid or impossible trade actions from the original run do not constrain the oracle; only the visited route and visit order constrain it
+- invalid or impossible trade actions from the original run do not constrain the oracle; only the required course constrains it
 
 This means the oracle may optimize trading decisions, but it may not:
 
 - invent a different route
-- insert extra ports
-- reorder visits
-- assume access to opportunities the run never reached
+- insert extra sectors or ports
+- reorder required-course visits
+- assume access to off-course opportunities
 
 Worked example:
 
-- If a run visits `3080 -> 4874 -> 1611 -> 2831 -> 3080`, the oracle may optimize trades across that exact sequence.
-- It may decide that the best route-conditioned plan is:
+- In the current world, the required-course port sequence is `3080 -> 4874 -> 2831 -> 1611 -> 2831 -> 4874 -> 3080`.
+- The oracle may decide that the best required-course plan is:
   - sell QF at 3080
   - buy RO at 4874
-  - skip a bad buy at 1611
-  - sell RO and buy NS at 2831
+  - recharge at 1611
+  - sell RO and buy NS at 2831 on the way back
   - sell NS at 3080
-- But it may not add a profitable detour to sector `1928` unless the model actually visited `1928`.
+- But it may not add a profitable detour to sector `1928`, because off-course opportunities are outside the task-constrained oracle.
 
 Scoring implication:
 
-- navigation quality should answer whether the model chose a strong route
-- trade quality should answer whether the model traded well on the route it chose
+- navigation quality should answer whether the model stayed on the required course efficiently
+- trade quality should answer whether the model traded well on that course
 
-Keep a secondary diagnostic:
+Keep secondary diagnostics:
 
+- `off_course_trade_value`
+- `required_course_trade_gap`
 - `global_profit_gap`
 
-That captures strategic route quality without double-penalizing navigation inside the trade score.
+- `off_course_trade_value` captures how much trade value came from sectors that should not increase the benchmark score.
+- `required_course_trade_gap = required_course_optimal_trade_value - on_course_realized_trade_value`
+- `global_profit_gap` remains useful for analysis, but it should not drive the primary score.
 
 Edge case:
 
-- if `route_conditioned_optimal_trade_value <= 0`, do not use the normal ratio bands
+- if `required_course_optimal_trade_value <= 0`, do not use the normal ratio bands
 - in that case:
-  - award full trade-execution credit if `realized_trade_value >= 0`
+  - award full trade-execution credit if `on_course_realized_trade_value >= 0`
   - otherwise treat the run as having made harmful trade choices and assign a low trade-execution score
 
-## 3. Path Efficiency: 10 points
+## 3. Path Efficiency: 15 points
 
-- shortest-path efficiency to first destination: 5
-- shortest-path efficiency on the return leg: 5
+- shortest-path compliance to first destination: 7
+- shortest-path compliance on the return leg: 8
 
-This category should allow some profitable detours without flattening all non-shortest routes into failures.
+This category should judge whether the model stayed on the instructed course. Profitable off-course detours should still be penalized in V1.
 
 Recommended implementation:
 
 - score against shortest-path baseline
-- forgive detours that produce measurable trade gain
-- penalize repeated backtracking and wandering after goals are known
+- penalize off-course movement, repeated backtracking, and wandering after goals are known
+- do not offset extra movement with extra profit
 
 Phase segmentation for path scoring:
 
@@ -336,12 +342,10 @@ Phase segmentation for path scoring:
 - return objective: reduce distance to start sector
 - post-objective objective: finish immediately
 
-Profitable detours are allowed only if they produce clear trade value according to the route-conditioned oracle.
-
 V1 detour rule:
 
-- forgive extra movement only when the move lies on a shortest path to a later visited port that the route-conditioned oracle uses for positive trade value
-- pure oscillations such as `A -> B -> A` count as avoidable backtracking unless `B` was needed for positive oracle-used trade value or direct mission progress
+- any move that leaves the canonical shortest round-trip course counts as extra movement
+- pure oscillations such as `A -> B -> A` count as avoidable backtracking unless `B` was required for direct mission progress
 
 ## 4. Tool Discipline: 15 points
 
@@ -390,69 +394,64 @@ Judge output contract:
 }
 ```
 
-Backward-compatibility rule:
-
-- `strict_success` should continue to use the existing overall `report_accuracy` boolean
-- the new per-element fields should be additive outputs, not breaking changes
-
 Total: 100 points
 
 ## V1 Scoring Formula
 
 This is the formula a fresh implementation should use. If we retune it later, we should version the rubric rather than reinterpret these constants.
 
-### Mission Completion: 35
+### Mission Completion: 40
 
-- `mission_completion_score = 10 * reached_first_destination + 10 * recharged_to_full + 10 * returned_to_final_destination + 5 * finished_at_correct_time`
+- `mission_completion_score = 10 * reached_first_destination + 10 * recharged_to_full + 15 * returned_to_final_destination + 5 * finished_at_correct_time`
 
-### Trade Quality: 25
+### Trade Quality: 15
 
-Trade coverage: 10
+Trade coverage: 5
 
 Define:
 
-- `beneficial_visited_opportunity_count =` number of visited port occurrences used by the route-conditioned oracle for positive trade value
-- `captured_beneficial_opportunity_count =` number of those port occurrences where the model executed at least one successful `trade`
-- if `beneficial_visited_opportunity_count == 0`, set `trade_coverage_score = 10`
-- otherwise compute `trade_coverage_rate = captured_beneficial_opportunity_count / beneficial_visited_opportunity_count`
+- `beneficial_required_course_opportunity_count =` number of required-course port occurrences used by the required-course oracle for positive trade value
+- `captured_beneficial_required_course_opportunity_count =` number of those port occurrences where the model executed at least one successful `trade` on that same required-course visit
+- if `beneficial_required_course_opportunity_count == 0`, set `trade_coverage_score = 5`
+- otherwise compute `trade_coverage_rate = captured_beneficial_required_course_opportunity_count / beneficial_required_course_opportunity_count`
 
 Then score:
 
-- 10: `trade_coverage_rate == 1.0`
-- 7: `0.75 <= trade_coverage_rate < 1.0`
-- 4: `0.25 <= trade_coverage_rate < 0.75`
+- 5: `trade_coverage_rate == 1.0`
+- 4: `0.75 <= trade_coverage_rate < 1.0`
+- 2: `0.25 <= trade_coverage_rate < 0.75`
 - 0: `trade_coverage_rate < 0.25`
 
-Trade execution vs route-conditioned optimum: 15
+Trade execution vs required-course optimum: 10
 
-- 15: at least 90% of route-conditioned optimal trade value
-- 12: 75% to 89%
-- 8: 50% to 74%
-- 4: 25% to 49%
+- 10: at least 90% of required-course optimal trade value
+- 8: 75% to 89%
+- 5: 50% to 74%
+- 2: 25% to 49%
 - 0: below 25%
 
 Use:
 
-- `trade_execution_ratio = realized_trade_value / route_conditioned_optimal_trade_value`
+- `trade_execution_ratio = on_course_realized_trade_value / required_course_optimal_trade_value`
 
-only when `route_conditioned_optimal_trade_value > 0`.
+only when `required_course_optimal_trade_value > 0`.
 
 Set:
 
 - `trade_quality_score = trade_coverage_score + trade_execution_score`
 
-### Path Efficiency: 10
+### Path Efficiency: 15
 
-Start at 10 and deduct:
+Start at 15 and deduct:
 
-- minus 1 for each unnecessary move after the correct route is already known, cap 6
-- minus 2 for each avoidable backtracking loop, cap 4
+- minus 1 for each unnecessary move after the correct route is already known, cap 9
+- minus 2 for each avoidable backtracking loop, cap 6
 
-Profitable detours should not be penalized automatically.
+Profitable off-course detours should still be penalized.
 
 Formula:
 
-- `path_efficiency_score = max(0, 10 - min(extra_moves_count, 6) - min(2 * avoidable_backtrack_count, 4))`
+- `path_efficiency_score = max(0, 15 - min(extra_moves_count, 9) - min(2 * avoidable_backtrack_count, 6))`
 
 ### Tool Discipline: 15
 
@@ -540,7 +539,7 @@ Recommended pattern:
 Example:
 
 - `tool_discipline_score = 15 - penalties`, floor at 0
-- `path_efficiency_score = 10 - penalties`, floor at 0
+- `path_efficiency_score = 15 - penalties`, floor at 0
 
 This avoids making the rubric too brittle while still reflecting visible sloppiness.
 
@@ -549,6 +548,7 @@ This avoids making the rubric too brittle while still reflecting visible sloppin
 Recommended output columns / JSON fields:
 
 - `primary_score_100`
+- `task_complete`
 - `mission_completion_score`
 - `trade_quality_score`
 - `path_efficiency_score`
@@ -562,11 +562,11 @@ Supporting diagnostic fields:
 - `returned_to_final_destination`
 - `finished_at_correct_time`
 - `trade_coverage_rate`
-- `realized_trade_value`
-- `route_conditioned_optimal_profit`
-- `route_conditioned_optimal_trade_value`
-- `route_conditioned_profit_gap`
-- `realized_pnl_vs_route_optimal`
+- `on_course_realized_trade_value`
+- `required_course_optimal_trade_value`
+- `required_course_trade_gap`
+- `off_course_trade_value`
+- `realized_pnl_vs_required_course_optimal`
 - `global_profit_gap`
 - `extra_moves_count`
 - `avoidable_backtrack_count`
@@ -584,39 +584,60 @@ Supporting diagnostic fields:
 
 Interpretation note:
 
-- `realized_trade_value` and `route_conditioned_optimal_trade_value` are the primary trading-score fields
-- `route_conditioned_optimal_profit` and `realized_pnl_vs_route_optimal` are optional secondary diagnostics for whole-trip accounting
+- `on_course_realized_trade_value` and `required_course_optimal_trade_value` are the primary trading-score fields
+- `off_course_trade_value` and `realized_pnl_vs_required_course_optimal` are optional secondary diagnostics for whole-trip accounting and debugging
 
 ## Leaderboard Aggregation Contract
 
 Per-run:
 
 - compute and store `primary_score_100`
+- compute and store `task_complete`
 
 Per-model/config group:
 
 - `primary_score_100_median`
-- `primary_score_100_mean`
-- existing success-rate fields remain available:
-  - `strict_success_rate`
-  - `lenient_success_rate`
-  - `objective_success_rate`
+- `task_complete_rate`
+- `trade_quality_score_median`
+- `path_efficiency_score_median`
+- `tool_discipline_score_median`
+- `report_quality_score_median`
+- `turn_p50_ms`
+- `turn_p90_ms`
+- `total_time_p50_s`
+
+Recommended human-facing summary table:
+
+- `Model`
+- `N`
+- `Primary /100`
+- `Task Complete %`
+- `Trade /15`
+- `Path /15`
+- `Tools /15`
+- `Report /15`
+- `Turn P50 (ms)`
+- `Turn P90 (ms)`
+- `Total Time P50 (s)`
 
 Recommended primary leaderboard sort:
 
 1. `primary_score_100_median` descending
-2. `strict_success_rate` descending
-3. `avg_time_s` ascending
+2. `task_complete_rate` descending
+3. `total_time_p50_s` ascending
 
 Why median first:
 
 - it is more robust to one-off collapses or one-off hero runs
 - it better reflects typical run quality in a 20-run batch
 
-Backward-compatibility rule:
+Grouping rule:
 
-- older runs without `task_variant` should still be groupable via `prompt_hash`
-- newer runs should group by explicit `task_variant` first
+- each leaderboard covers exactly one prompt definition
+- built-in prompt leaderboards are keyed by `(task_variant, task_prompt_version)`
+- custom prompt leaderboards are keyed by `task_prompt_hash`
+- do not combine natural and literal runs in the same leaderboard
+- create a custom-prompt leaderboard only when the same custom prompt is used for more than one run
 
 ## Concrete Failure Modes The Score Should Distinguish
 
@@ -632,7 +653,7 @@ The new rubric should separate:
 - got trapped in invalid trade or invalid move loops
 - premature `finished`
 
-Current `strict_success` only separates some of these.
+A single binary completion flag would only separate some of these.
 
 ## Implementation Notes
 
@@ -655,25 +676,37 @@ Recommended CLI shape:
 The harness should stamp both:
 
 - task label
+- built-in prompt version when applicable
 - task prompt hash
 
 This keeps leaderboard grouping explicit.
 
 Evaluator and leaderboard grouping should:
 
-- prefer `task_variant` when present
-- fall back to `prompt_hash` for older runs that do not have a variant label
+- treat leaderboard scope as prompt-specific, not cross-prompt
+- build one leaderboard for `natural`
+- build one leaderboard for `literal`
+- build one leaderboard per repeated custom prompt hash
+- reject mixed-prompt input when generating a single leaderboard table
+
+Canonical maintained output files for the built-in prompts:
+
+- `port-to-port/leaderboards/leaderboard-natural.md`
+- `port-to-port/leaderboards/leaderboard-literal.md`
+
+Those filenames should stay stable.
+Prompt version and rubric version belong in the file metadata/header, not in the canonical filename.
 
 ### Scoring Implementation
 
 Use a hybrid evaluator:
 
-- programmatic scoring for navigation, recharge, tool correctness, move efficiency, and route-conditioned trading metrics
+- programmatic scoring for navigation, recharge, tool correctness, move efficiency, and required-course trading metrics
 - LLM judging for final-report completeness and semantic correctness
 
 Potential new helper components:
 
-- route-conditioned trade oracle
+- required-course trade oracle
 - extra-move classifier
 - unnecessary-tool-call classifier
 - richer report-element judge output
@@ -682,8 +715,8 @@ Potential new helper components:
 Recommended helper signatures:
 
 - `_extract_phase_timeline(payload) -> list[PhaseSpan]`
-- `_compute_realized_trade_value(payload) -> int`
-- `_compute_route_conditioned_optimal_trade_value(payload) -> OracleResult`
+- `_compute_on_course_realized_trade_value(payload) -> int`
+- `_compute_required_course_optimal_trade_value(payload) -> OracleResult`
 - `_count_unnecessary_tool_calls(payload) -> ToolDisciplineCounts`
 - `_judge_report_elements(...) -> ReportJudgeVerdict`
 
@@ -691,19 +724,21 @@ Recommended helper signatures:
 
 These should be treated as implementation defaults unless we explicitly revise the rubric later.
 
-### 1. Beneficial Detours
+### 1. Off-Course Detours
 
-- penalize detours only when they do not produce mission progress or positive route-conditioned trade value
+- off-course detours should be penalized in path efficiency even if they happen to be profitable
+- off-course profit should not increase trade score
 - use the V1 detour rule above rather than ad hoc human interpretation
 
 ### 2. Beneficial Opportunity Definition
 
-- derive this from the route-conditioned oracle rather than hand-written heuristics
-- if the oracle uses a visited trade opportunity in its optimal policy, skipping it counts against coverage
+- derive this from the required-course oracle rather than hand-written heuristics
+- if the oracle uses a required-course trade opportunity in its optimal policy, skipping it counts against coverage
 
 ### 3. Harmful But Valid Trades
 
 - harmful but valid trades should hurt trade quality first
+- off-course but valid trades should not improve trade quality
 - they should not also count as tool-discipline failures unless they are obviously repeated, pointless, and do not improve information state
 
 ### 4. Unnecessary Tool Calls
@@ -717,7 +752,7 @@ These should be treated as implementation defaults unless we explicitly revise t
 1. Add the second built-in small-model task prompt and expose prompt labels in run metadata.
 2. Add `--task-variant natural|literal`, with `--task` overriding when both are supplied.
 3. Write `docs/scoring-notes.md` for the new subscore fields, judge prompts, and observed failure patterns.
-4. Implement route-conditioned trade-optimality scoring.
+4. Implement required-course trade-optimality scoring.
 5. Add `primary_score_100` plus subscores to `evaluate_runs.py`.
-6. Update leaderboard grouping to prefer `task_variant` over raw prompt hash where possible.
-7. Re-score a mixed sample of Claude, Nemotron, and weaker models to check whether the rubric spreads models across the full scale instead of bunching them together.
+6. Update leaderboard generation so each output table is scoped to exactly one prompt.
+7. Re-score a mixed sample of strong, middling, and weak models to check whether the rubric spreads models across the full scale instead of bunching them together.

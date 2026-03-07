@@ -19,6 +19,7 @@ import urllib.request
 from collections import Counter, defaultdict
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from functools import lru_cache
 from pathlib import Path
 from statistics import median
 from typing import Any, Optional
@@ -27,6 +28,7 @@ DEFAULT_START_SECTOR = 3080
 MEGA_PORT_SECTOR = 1611
 MEGA_PORT_NAME = "MEGA SSS"
 RUN_SCHEMA_VERSION = "mini_rl_run.v3"
+SCORE_RUBRIC_VERSION = "port_to_port_primary_v1"
 
 GRAPH: dict[int, list[int]] = {
     0: [4874],
@@ -303,6 +305,556 @@ def _bfs_hops(start: int, target: int) -> Optional[int]:
                 nxt_frontier.append(nbr)
         frontier = nxt_frontier
     return None
+
+
+def _bfs_path(start: int, target: int) -> Optional[list[int]]:
+    if start == target:
+        return [start]
+    frontier = [start]
+    parent: dict[int, Optional[int]] = {start: None}
+    while frontier:
+        nxt_frontier: list[int] = []
+        for node in frontier:
+            for nbr in GRAPH.get(node, []):
+                if nbr in parent:
+                    continue
+                parent[nbr] = node
+                if nbr == target:
+                    path = [target]
+                    while parent[path[-1]] is not None:
+                        path.append(parent[path[-1]])
+                    path.reverse()
+                    return path
+                nxt_frontier.append(nbr)
+        frontier = nxt_frontier
+    return None
+
+
+def _canonical_required_course_sectors(start_sector: int) -> list[int]:
+    outbound = _bfs_path(start_sector, MEGA_PORT_SECTOR)
+    if not outbound:
+        return [start_sector]
+    return outbound + list(reversed(outbound[:-1]))
+
+
+def _required_course_port_visits(start_sector: int) -> list[int]:
+    return [sector for sector in _canonical_required_course_sectors(start_sector) if sector in PORT_MARKETS]
+
+
+def _cargo_tuple_from_dict(cargo: dict[str, Any]) -> tuple[int, int, int]:
+    return tuple(max(0, _to_int(cargo.get(name)) or 0) for name in ("quantum_foam", "retro_organics", "neuro_symbolics"))
+
+
+def _cargo_used_holds(cargo: tuple[int, int, int]) -> int:
+    return sum(cargo)
+
+
+@lru_cache(maxsize=None)
+def _enumerate_port_trade_outcomes_cached(
+    sector: int,
+    start_cargo: tuple[int, int, int],
+    start_credits: int,
+    holds_total: int,
+) -> tuple[tuple[tuple[int, int, int], int], ...]:
+    market = PORT_MARKETS.get(sector)
+    if market is None:
+        return ((start_cargo, start_credits),)
+
+    best_by_cargo: dict[tuple[int, int, int], int] = {start_cargo: start_credits}
+    queue: list[tuple[int, int, int]] = [start_cargo]
+
+    while queue:
+        cargo = queue.pop()
+        credits = best_by_cargo[cargo]
+        used_holds = _cargo_used_holds(cargo)
+        for idx, commodity in enumerate(("quantum_foam", "retro_organics", "neuro_symbolics")):
+            qty = cargo[idx]
+            buy_price = market["buys"].get(commodity)
+            if buy_price is not None and qty > 0:
+                for amount in range(1, qty + 1):
+                    next_cargo = list(cargo)
+                    next_cargo[idx] -= amount
+                    next_cargo_key = tuple(next_cargo)
+                    next_credits = credits + (buy_price * amount)
+                    if next_credits > best_by_cargo.get(next_cargo_key, -1):
+                        best_by_cargo[next_cargo_key] = next_credits
+                        queue.append(next_cargo_key)
+
+            sell_price = market["sells"].get(commodity)
+            if sell_price is not None:
+                max_buy_qty = min(holds_total - used_holds, credits // sell_price)
+                for amount in range(1, max_buy_qty + 1):
+                    next_cargo = list(cargo)
+                    next_cargo[idx] += amount
+                    next_cargo_key = tuple(next_cargo)
+                    next_credits = credits - (sell_price * amount)
+                    if next_credits > best_by_cargo.get(next_cargo_key, -1):
+                        best_by_cargo[next_cargo_key] = next_credits
+                        queue.append(next_cargo_key)
+
+    return tuple(sorted(best_by_cargo.items()))
+
+
+def _enumerate_port_trade_outcomes(
+    *,
+    sector: int,
+    start_cargo: tuple[int, int, int],
+    start_credits: int,
+    holds_total: int,
+) -> dict[tuple[int, int, int], int]:
+    market = PORT_MARKETS.get(sector)
+    if market is None:
+        return {start_cargo: start_credits}
+    max_unit_price = max(market["sells"].values(), default=0)
+    if max_unit_price > 0:
+        capped_credits = min(start_credits, holds_total * max_unit_price)
+    else:
+        capped_credits = start_credits
+    return dict(
+        _enumerate_port_trade_outcomes_cached(
+            sector,
+            start_cargo,
+            capped_credits,
+            holds_total,
+        )
+    )
+
+
+def _compute_required_course_trade_oracle(
+    *,
+    start_sector: int,
+    initial_state: dict[str, Any],
+    turns: list[dict[str, Any]],
+) -> dict[str, Any]:
+    required_port_visits = _required_course_port_visits(start_sector)
+    if not required_port_visits:
+        return {
+            "required_course_port_visits": [],
+            "required_course_optimal_trade_value": 0,
+            "beneficial_visit_indexes": [],
+            "required_course_recharge_cost": 0,
+        }
+
+    first_before = turns[0].get("state_before") if turns else {}
+    start_credits = _to_int(initial_state.get("credits"))
+    if start_credits is None:
+        start_credits = _to_int((first_before or {}).get("credits")) or 0
+
+    initial_cargo = initial_state.get("cargo") if isinstance(initial_state.get("cargo"), dict) else {}
+    if not initial_cargo and isinstance(first_before, dict):
+        initial_cargo = first_before.get("cargo") if isinstance(first_before.get("cargo"), dict) else {}
+    cargo_tuple = _cargo_tuple_from_dict(initial_cargo if isinstance(initial_cargo, dict) else {})
+
+    empty_holds = _to_int(initial_state.get("empty_holds"))
+    used_holds = _to_int(initial_state.get("used_holds"))
+    holds_total = None
+    if empty_holds is not None and used_holds is not None:
+        holds_total = empty_holds + used_holds
+    if holds_total is None and isinstance(first_before, dict):
+        cargo_before = first_before.get("cargo") if isinstance(first_before.get("cargo"), dict) else {}
+        empty_before = _to_int(first_before.get("empty_holds"))
+        if empty_before is not None:
+            holds_total = empty_before + sum(_cargo_tuple_from_dict(cargo_before))
+    if holds_total is None:
+        holds_total = max(30, _cargo_used_holds(cargo_tuple))
+
+    start_warp = _to_int(initial_state.get("warp"))
+    max_warp = _to_int(initial_state.get("max_warp"))
+    if start_warp is None and isinstance(first_before, dict):
+        start_warp = _to_int(first_before.get("warp"))
+    if max_warp is None and isinstance(first_before, dict):
+        max_warp = _to_int(first_before.get("max_warp"))
+    if start_warp is None:
+        start_warp = 500
+    if max_warp is None:
+        max_warp = max(start_warp, 500)
+
+    outbound = _bfs_path(start_sector, MEGA_PORT_SECTOR) or [start_sector]
+    outbound_hops = max(0, len(outbound) - 1)
+    warp_at_mega = max(0, start_warp - (3 * outbound_hops))
+    required_course_recharge_cost = max(0, max_warp - warp_at_mega) * 2
+
+    # Fast path for the current benchmark world. The required course is fixed and
+    # the optimal on-course policy is exact and easy to compute directly:
+    # sell starting QF/NS at 3080, then fill holds with NS at 4874/1611 and
+    # liquidate at 2831/3080. RO has no profitable on-course exit.
+    if required_port_visits == [3080, 4874, 2831, 1611, 2831, 4874, 3080]:
+        credits = start_credits
+        qf, ro, ns = cargo_tuple
+        beneficial_visit_indexes: list[int] = []
+        trade_value = 0
+
+        def record_trade(visit_index: int) -> None:
+            if visit_index not in beneficial_visit_indexes:
+                beneficial_visit_indexes.append(visit_index)
+
+        if qf > 0:
+            credits += 33 * qf
+            trade_value += 33 * qf
+            qf = 0
+            record_trade(0)
+        if ns > 0:
+            credits += 52 * ns
+            trade_value += 52 * ns
+            ns = 0
+            record_trade(0)
+
+        for visit_index, sector in enumerate(required_port_visits[1:], start=1):
+            used_holds = qf + ro + ns
+            empty_holds_now = max(0, holds_total - used_holds)
+
+            if sector == 1611:
+                credits = max(0, credits - required_course_recharge_cost)
+
+            if sector in {4874, 1611}:
+                qty = min(empty_holds_now, credits // 30)
+                if qty > 0:
+                    ns += qty
+                    credits -= 30 * qty
+                    trade_value -= 30 * qty
+                    record_trade(visit_index)
+                continue
+
+            if sector == 2831:
+                if ns > 0:
+                    credits += 52 * ns
+                    trade_value += 52 * ns
+                    ns = 0
+                    record_trade(visit_index)
+                continue
+
+            if sector == 3080:
+                sold_any = False
+                if ns > 0:
+                    credits += 52 * ns
+                    trade_value += 52 * ns
+                    ns = 0
+                    sold_any = True
+                if qf > 0:
+                    credits += 33 * qf
+                    trade_value += 33 * qf
+                    qf = 0
+                    sold_any = True
+                if sold_any:
+                    record_trade(visit_index)
+
+        return {
+            "required_course_port_visits": required_port_visits,
+            "required_course_optimal_trade_value": trade_value,
+            "beneficial_visit_indexes": beneficial_visit_indexes,
+            "required_course_recharge_cost": required_course_recharge_cost,
+        }
+
+    states: dict[tuple[int, int, int], tuple[int, int]] = {cargo_tuple: (start_credits, 0)}
+    traces: list[dict[tuple[int, int, int], tuple[tuple[int, int, int], bool]]] = []
+
+    for sector in required_port_visits:
+        next_states: dict[tuple[int, int, int], tuple[int, int]] = {}
+        next_trace: dict[tuple[int, int, int], tuple[tuple[int, int, int], bool]] = {}
+
+        for prior_cargo, (prior_credits, prior_trade_visit_count) in states.items():
+            outcomes = _enumerate_port_trade_outcomes(
+                sector=sector,
+                start_cargo=prior_cargo,
+                start_credits=prior_credits,
+                holds_total=holds_total,
+            )
+            for next_cargo, credits_after_trade in outcomes.items():
+                used_trade = next_cargo != prior_cargo or credits_after_trade != prior_credits
+                next_credits = credits_after_trade
+                if sector == MEGA_PORT_SECTOR:
+                    if next_credits < required_course_recharge_cost:
+                        continue
+                    next_credits -= required_course_recharge_cost
+                candidate = (next_credits, prior_trade_visit_count + (1 if used_trade else 0))
+                best = next_states.get(next_cargo)
+                if best is None or candidate[0] > best[0] or (
+                    candidate[0] == best[0] and candidate[1] > best[1]
+                ):
+                    next_states[next_cargo] = candidate
+                    next_trace[next_cargo] = (prior_cargo, used_trade)
+
+        states = next_states
+        traces.append(next_trace)
+
+    if not states:
+        return {
+            "required_course_port_visits": required_port_visits,
+            "required_course_optimal_trade_value": 0,
+            "beneficial_visit_indexes": [],
+            "required_course_recharge_cost": required_course_recharge_cost,
+        }
+
+    best_cargo, (best_final_credits, _) = max(
+        states.items(),
+        key=lambda item: (item[1][0], item[1][1], -_cargo_used_holds(item[0])),
+    )
+
+    beneficial_visit_indexes: list[int] = []
+    current_cargo = best_cargo
+    for visit_index in range(len(traces) - 1, -1, -1):
+        prior_cargo, used_trade = traces[visit_index][current_cargo]
+        if used_trade:
+            beneficial_visit_indexes.append(visit_index)
+        current_cargo = prior_cargo
+    beneficial_visit_indexes.reverse()
+
+    required_course_optimal_trade_value = best_final_credits - start_credits + required_course_recharge_cost
+    return {
+        "required_course_port_visits": required_port_visits,
+        "required_course_optimal_trade_value": required_course_optimal_trade_value,
+        "beneficial_visit_indexes": beneficial_visit_indexes,
+        "required_course_recharge_cost": required_course_recharge_cost,
+    }
+
+
+def _trade_pnl_for_call(call: dict[str, Any]) -> Optional[int]:
+    args = call.get("args") if isinstance(call.get("args"), dict) else {}
+    trade_type = str(args.get("trade_type") or "").strip().lower()
+    commodity = _normalize_commodity(args.get("commodity"))
+    quantity = _to_int(args.get("quantity"))
+    sector = _to_int(call.get("sector_before"))
+    if trade_type not in {"buy", "sell"} or commodity is None or quantity is None or sector is None:
+        return None
+    market = PORT_MARKETS.get(sector)
+    if market is None:
+        return None
+    if trade_type == "buy":
+        price = market["sells"].get(commodity)
+        if price is None:
+            return None
+        return -(price * quantity)
+    price = market["buys"].get(commodity)
+    if price is None:
+        return None
+    return price * quantity
+
+
+def _compute_actual_trade_value_by_course(
+    *,
+    start_sector: int,
+    turn_call_contexts: list[list[dict[str, Any]]],
+    required_port_visits: list[int],
+) -> dict[str, Any]:
+    active_visit_index = 0 if required_port_visits and required_port_visits[0] == start_sector else None
+    final_visit_index = len(required_port_visits) - 1
+    course_closed = False
+    on_course_realized_trade_value = 0
+    off_course_trade_value = 0
+    traded_visit_indexes: set[int] = set()
+
+    for call in [call for contexts in turn_call_contexts for call in contexts]:
+        if (
+            call.get("name") == "move"
+            and str(call.get("result_status") or "") in {"acknowledged", "success"}
+        ):
+            if active_visit_index == final_visit_index and _to_int(call.get("sector_before")) == start_sector:
+                course_closed = True
+            if not course_closed:
+                next_visit_index = 0 if active_visit_index is None else active_visit_index + 1
+                sector_after = _to_int(call.get("sector_after"))
+                if (
+                    sector_after is not None
+                    and next_visit_index < len(required_port_visits)
+                    and sector_after == required_port_visits[next_visit_index]
+                ):
+                    active_visit_index = next_visit_index
+            continue
+
+        if (
+            call.get("name") == "trade"
+            and str(call.get("result_status") or "") in {"acknowledged", "success"}
+        ):
+            pnl = _trade_pnl_for_call(call)
+            if pnl is None:
+                continue
+            is_on_course = bool(
+                not course_closed
+                and active_visit_index is not None
+                and _to_int(call.get("sector_before")) == required_port_visits[active_visit_index]
+            )
+            if is_on_course:
+                traded_visit_indexes.add(active_visit_index)
+                on_course_realized_trade_value += pnl
+            else:
+                off_course_trade_value += pnl
+
+    return {
+        "on_course_realized_trade_value": on_course_realized_trade_value,
+        "off_course_trade_value": off_course_trade_value,
+        "traded_visit_indexes": sorted(traded_visit_indexes),
+    }
+
+
+def _count_avoidable_tool_calls(turn_call_contexts: list[list[dict[str, Any]]]) -> dict[str, int]:
+    repeated_query_tools = {"my_status", "local_map_region", "list_known_ports", "load_game_info", "plot_course"}
+    state_changing_tools = {
+        "move",
+        "trade",
+        "recharge_warp_power",
+        "dump_cargo",
+        "salvage_collect",
+        "transfer_warp_power",
+        "purchase_fighters",
+        "place_fighters",
+        "collect_fighters",
+        "create_corporation",
+        "join_corporation",
+        "leave_corporation",
+        "kick_corporation_member",
+        "purchase_ship",
+        "rename_ship",
+        "bank_deposit",
+        "bank_withdraw",
+        "transfer_credits",
+        "combat_initiate",
+        "combat_action",
+    }
+    redundant_info_call_count = 0
+    unnecessary_tool_call_count = 0
+    state_revision = 0
+    seen_at_revision: dict[tuple[str, str, str], int] = {}
+
+    for call in [call for contexts in turn_call_contexts for call in contexts]:
+        name = str(call.get("name") or "")
+        result_status = str(call.get("result_status") or "")
+        args = call.get("args") if isinstance(call.get("args"), dict) else {}
+        signature = (
+            name,
+            str(_to_int(call.get("sector_before")) or ""),
+            json.dumps(args, sort_keys=True),
+        )
+        if name in repeated_query_tools and result_status in {"acknowledged", "success"}:
+            if seen_at_revision.get(signature) == state_revision:
+                redundant_info_call_count += 1
+                unnecessary_tool_call_count += 1
+            else:
+                seen_at_revision[signature] = state_revision
+        if name in state_changing_tools and result_status in {"acknowledged", "success"}:
+            state_revision += 1
+
+    return {
+        "redundant_info_call_count": redundant_info_call_count,
+        "unnecessary_tool_call_count": unnecessary_tool_call_count,
+    }
+
+
+def _message_mentions_number_window(message: str, *, keywords: tuple[str, ...], target: int) -> bool:
+    lowered = message.lower()
+    for keyword in keywords:
+        start = 0
+        while True:
+            idx = lowered.find(keyword, start)
+            if idx == -1:
+                break
+            window = message[max(0, idx - 32) : idx + len(keyword) + 48]
+            numbers = [int(match.group(0)) for match in re.finditer(r"-?\d+", window)]
+            if target in numbers:
+                return True
+            start = idx + len(keyword)
+    return False
+
+
+def _message_mentions_profit_value(message: str, target: Optional[int]) -> tuple[bool, bool]:
+    if target is None:
+        return False, False
+    lowered = message.lower()
+    keywords = ("profit", "net", "result", "gain", "loss")
+    present = any(keyword in lowered for keyword in keywords)
+    if not present:
+        return False, False
+    if _message_mentions_number_window(message, keywords=keywords, target=target):
+        return True, True
+    if target < 0 and _message_mentions_number_window(message, keywords=("loss",), target=abs(target)):
+        return True, True
+    if target > 0 and _message_mentions_number_window(message, keywords=("profit", "gain"), target=target):
+        return True, True
+    if target == 0 and re.search(r"\b0\b", message):
+        return True, True
+    return True, False
+
+
+def _message_mentions_recharge_cost_value(message: str, target: Optional[int]) -> tuple[bool, bool]:
+    if target is None:
+        return False, False
+    lowered = message.lower()
+    recharge_keywords = ("recharg", "warp", "topped off", "topped up")
+    cost_keywords = ("cost", "spent", "pay", "paid", "price", "for")
+    present = False
+
+    for keyword in recharge_keywords:
+        start = 0
+        while True:
+            idx = lowered.find(keyword, start)
+            if idx == -1:
+                break
+            window = message[max(0, idx - 40) : idx + len(keyword) + 80]
+            window_lower = window.lower()
+            if any(cost_keyword in window_lower for cost_keyword in cost_keywords):
+                present = True
+                numbers = [int(match.group(0)) for match in re.finditer(r"-?\d+", window)]
+                if target in numbers:
+                    return True, True
+            start = idx + len(keyword)
+
+    return present, False
+
+
+def _compute_report_element_verdicts(
+    *,
+    finished_message: str,
+    report_truth: dict[str, Any],
+) -> dict[str, dict[str, bool]]:
+    if not finished_message.strip():
+        return {
+            "mega_port_used": {"present": False, "accurate": False},
+            "recharge_amount": {"present": False, "accurate": False},
+            "recharge_cost": {"present": False, "accurate": False},
+            "ports_traded": {"present": False, "accurate": False},
+            "total_profit": {"present": False, "accurate": False},
+        }
+
+    lowered = finished_message.lower()
+    mega_present = (
+        "mega" in lowered
+        or "mega sss" in lowered
+        or str(report_truth.get("mega_port_sector") or MEGA_PORT_SECTOR) in lowered
+    )
+    mega_accurate = mega_present
+
+    recharge_units = _to_int(report_truth.get("recharge_units")) or 0
+    recharge_cost = _to_int(report_truth.get("recharge_cost")) or 0
+    ports_traded = _to_int(report_truth.get("trade_port_count")) or 0
+    total_profit = _to_int(report_truth.get("total_profit_credits"))
+
+    recharge_amount_present = any(token in lowered for token in ("recharg", "warp", "topped off", "topped up"))
+    recharge_amount_accurate = recharge_amount_present and _message_mentions_number_window(
+        finished_message,
+        keywords=("recharg", "warp", "topped off", "topped up"),
+        target=recharge_units,
+    )
+
+    recharge_cost_present, recharge_cost_accurate = _message_mentions_recharge_cost_value(
+        finished_message,
+        recharge_cost,
+    )
+
+    ports_present = ("port" in lowered or "ports" in lowered) and ("trade" in lowered or "traded" in lowered)
+    ports_accurate = ports_present and _message_mentions_number_window(
+        finished_message,
+        keywords=("port", "ports", "trade", "traded"),
+        target=ports_traded,
+    )
+
+    profit_present, profit_accurate = _message_mentions_profit_value(finished_message, total_profit)
+
+    return {
+        "mega_port_used": {"present": mega_present, "accurate": mega_accurate},
+        "recharge_amount": {"present": recharge_amount_present, "accurate": recharge_amount_accurate},
+        "recharge_cost": {"present": recharge_cost_present, "accurate": recharge_cost_accurate},
+        "ports_traded": {"present": ports_present, "accurate": ports_accurate},
+        "total_profit": {"present": profit_present, "accurate": profit_accurate},
+    }
 
 
 def _extract_json_object(text: str) -> Optional[dict[str, Any]]:
@@ -736,7 +1288,19 @@ def _derive_run_metrics(
     openai_base_url = _normalize_openai_base_url(
         config.get("openai_base_url", summary.get("openai_base_url"))
     )
+    task_variant = str(metadata.get("task_variant") or config.get("task_variant") or "").strip() or None
+    task_prompt_version = (
+        str(metadata.get("task_prompt_version") or config.get("task_prompt_version") or "").strip() or None
+    )
     prompt_hash = str(metadata.get("task_prompt_hash") or "")
+    leaderboard_prompt_id = str(metadata.get("leaderboard_prompt_id") or "").strip() or None
+    if leaderboard_prompt_id is None:
+        if task_variant in {"natural", "literal"}:
+            leaderboard_prompt_id = task_variant
+        elif task_variant == "custom" and prompt_hash:
+            leaderboard_prompt_id = f"custom:{prompt_hash}"
+        elif prompt_hash:
+            leaderboard_prompt_id = f"custom:{prompt_hash}"
 
     initial_state = metadata.get("initial_state") if isinstance(metadata.get("initial_state"), dict) else {}
     start_sector = _to_int(summary.get("start_sector"))
@@ -1077,6 +1641,156 @@ def _derive_run_metrics(
     elif finished_called:
         report_accuracy_method = "llm_unavailable"
 
+    required_course_sectors = _canonical_required_course_sectors(start_sector)
+    required_course_move_targets = required_course_sectors[1:]
+    required_course_backtrack_triplets = {
+        tuple(required_course_sectors[idx : idx + 3])
+        for idx in range(len(required_course_sectors) - 2)
+        if required_course_sectors[idx] == required_course_sectors[idx + 2]
+    }
+    successful_move_sectors = [
+        sector_after
+        for call in all_calls
+        if call.get("name") == "move"
+        and call.get("result_status") in {"acknowledged", "success"}
+        and (sector_after := _to_int(call.get("sector_after"))) is not None
+    ]
+    actual_positions = [start_sector, *successful_move_sectors]
+    extra_moves_count = 0
+    next_required_move_index = 0
+    for sector in successful_move_sectors:
+        if (
+            next_required_move_index < len(required_course_move_targets)
+            and sector == required_course_move_targets[next_required_move_index]
+        ):
+            next_required_move_index += 1
+        else:
+            extra_moves_count += 1
+    avoidable_backtrack_count = sum(
+        1
+        for idx in range(2, len(actual_positions))
+        if actual_positions[idx] == actual_positions[idx - 2]
+        and tuple(actual_positions[idx - 2 : idx + 1]) not in required_course_backtrack_triplets
+    )
+
+    reached_first_destination = start_sector == MEGA_PORT_SECTOR
+    recharged_to_full = False
+    returned_to_final_destination = False
+    finished_at_correct_time = False
+    finished_seen = False
+
+    for turn, call_contexts in zip(turns, turn_call_contexts):
+        turn_state_after = turn.get("state_after") if isinstance(turn.get("state_after"), dict) else {}
+        turn_after_warp = _to_int(turn_state_after.get("warp"))
+        turn_after_max_warp = _to_int(turn_state_after.get("max_warp"))
+        turn_recharge_to_full = (
+            turn_after_warp is not None
+            and turn_after_max_warp is not None
+            and turn_after_warp >= turn_after_max_warp
+        )
+        for call in call_contexts:
+            result_status = str(call.get("result_status") or "")
+            if (
+                call.get("name") == "move"
+                and result_status in {"acknowledged", "success"}
+                and _to_int(call.get("sector_after")) == MEGA_PORT_SECTOR
+            ):
+                reached_first_destination = True
+            if (
+                call.get("name") == "recharge_warp_power"
+                and result_status in {"acknowledged", "success"}
+                and _to_int(call.get("sector_before")) == MEGA_PORT_SECTOR
+                and turn_recharge_to_full
+            ):
+                recharged_to_full = True
+            if (
+                call.get("name") == "move"
+                and result_status in {"acknowledged", "success"}
+                and _to_int(call.get("sector_after")) == expected_finish_sector
+                and recharged_to_full
+            ):
+                returned_to_final_destination = True
+            if call.get("name") == "finished" and not finished_seen:
+                finished_seen = True
+                finished_at_correct_time = bool(
+                    reached_first_destination and recharged_to_full and returned_to_final_destination
+                )
+
+    reached_first_destination = bool(reached_first_destination or reached_mega_anytime)
+    recharged_to_full = bool(recharged_to_full or recharge_to_full_at_mega)
+
+    trade_oracle = _compute_required_course_trade_oracle(
+        start_sector=start_sector,
+        initial_state=initial_state,
+        turns=turns,
+    )
+    actual_trade_by_course = _compute_actual_trade_value_by_course(
+        start_sector=start_sector,
+        turn_call_contexts=turn_call_contexts,
+        required_port_visits=trade_oracle["required_course_port_visits"],
+    )
+    beneficial_visit_indexes = trade_oracle["beneficial_visit_indexes"]
+    beneficial_visit_index_set = set(beneficial_visit_indexes)
+    traded_visit_index_set = set(actual_trade_by_course["traded_visit_indexes"])
+    beneficial_required_course_opportunity_count = len(beneficial_visit_indexes)
+    captured_beneficial_required_course_opportunity_count = len(
+        beneficial_visit_index_set & traded_visit_index_set
+    )
+    trade_coverage_rate = (
+        captured_beneficial_required_course_opportunity_count / beneficial_required_course_opportunity_count
+        if beneficial_required_course_opportunity_count > 0
+        else None
+    )
+    if beneficial_required_course_opportunity_count == 0:
+        trade_coverage_score = 5
+    elif trade_coverage_rate == 1.0:
+        trade_coverage_score = 5
+    elif trade_coverage_rate >= 0.75:
+        trade_coverage_score = 4
+    elif trade_coverage_rate >= 0.25:
+        trade_coverage_score = 2
+    else:
+        trade_coverage_score = 0
+
+    on_course_realized_trade_value = int(actual_trade_by_course["on_course_realized_trade_value"])
+    off_course_trade_value = int(actual_trade_by_course["off_course_trade_value"])
+    required_course_optimal_trade_value = int(trade_oracle["required_course_optimal_trade_value"])
+    if required_course_optimal_trade_value > 0:
+        trade_execution_ratio = on_course_realized_trade_value / required_course_optimal_trade_value
+        if trade_execution_ratio >= 0.90:
+            trade_execution_score = 10
+        elif trade_execution_ratio >= 0.75:
+            trade_execution_score = 8
+        elif trade_execution_ratio >= 0.50:
+            trade_execution_score = 5
+        elif trade_execution_ratio >= 0.25:
+            trade_execution_score = 2
+        else:
+            trade_execution_score = 0
+    else:
+        trade_execution_ratio = None
+        trade_execution_score = 10 if on_course_realized_trade_value >= 0 else 0
+
+    trade_quality_score = trade_coverage_score + trade_execution_score
+    required_course_trade_gap = required_course_optimal_trade_value - on_course_realized_trade_value
+
+    avoidable_tool_counts = _count_avoidable_tool_calls(turn_call_contexts)
+    redundant_info_call_count = avoidable_tool_counts["redundant_info_call_count"]
+    unnecessary_tool_call_count = avoidable_tool_counts["unnecessary_tool_call_count"]
+    hallucinated_tool_count = unknown_action_count
+    incorrect_tool_arg_count = invalid_move_count + invalid_trade_count
+
+    report_element_verdicts = _compute_report_element_verdicts(
+        finished_message=finished_message,
+        report_truth=report_truth,
+    )
+    report_presence_score = sum(1 for verdict in report_element_verdicts.values() if verdict["present"])
+    report_accuracy_score = sum(2 for verdict in report_element_verdicts.values() if verdict["accurate"])
+    if report_accuracy is True:
+        report_presence_score = 5
+        report_accuracy_score = 10
+    report_quality_score = report_presence_score + report_accuracy_score
+
     # Navigation quality metrics.
     total_moves = 0
     backtracking_count = 0
@@ -1129,6 +1843,39 @@ def _derive_run_metrics(
         and recharge_to_full_at_mega
     )
 
+    mission_completion_score = (
+        10 * int(reached_first_destination)
+        + 10 * int(recharged_to_full)
+        + 15 * int(returned_to_final_destination)
+        + 5 * int(finished_at_correct_time)
+    )
+    task_complete = bool(
+        reached_first_destination
+        and recharged_to_full
+        and returned_to_final_destination
+        and finished_at_correct_time
+    )
+    path_efficiency_score = max(
+        0,
+        15 - min(extra_moves_count, 9) - min(2 * avoidable_backtrack_count, 6),
+    )
+    tool_discipline_score = max(
+        0,
+        15
+        - (2 * hallucinated_tool_count)
+        - invalid_move_count
+        - invalid_trade_count
+        - (2 * no_tool_call_count)
+        - unnecessary_tool_call_count,
+    )
+    primary_score_100 = (
+        mission_completion_score
+        + trade_quality_score
+        + path_efficiency_score
+        + tool_discipline_score
+        + report_quality_score
+    )
+
     # Success classes.
     strict_success = bool(
         objective_success
@@ -1156,7 +1903,10 @@ def _derive_run_metrics(
 
     group_key = (
         f"{provider}|{model}|th={thinking}|tb={thinking_budget}|mt={max_tokens}|"
-        f"base={openai_base_url or 'default'}|prompt={prompt_hash or 'unknown'}"
+        f"base={openai_base_url or 'default'}|"
+        f"prompt_id={leaderboard_prompt_id or 'unknown'}|"
+        f"prompt_version={task_prompt_version or 'none'}|"
+        f"prompt_hash={prompt_hash or 'unknown'}"
     )
 
     total_tool_calls = len(all_calls)
@@ -1183,6 +1933,17 @@ def _derive_run_metrics(
         "openai_base_url": openai_base_url,
         "turns_executed": turns_executed,
         "elapsed_ms": elapsed_ms,
+        "score_rubric_version": SCORE_RUBRIC_VERSION,
+        "task_variant": task_variant,
+        "task_prompt_version": task_prompt_version,
+        "leaderboard_prompt_id": leaderboard_prompt_id,
+        "task_complete": task_complete,
+        "primary_score_100": primary_score_100,
+        "mission_completion_score": mission_completion_score,
+        "trade_quality_score": trade_quality_score,
+        "path_efficiency_score": path_efficiency_score,
+        "tool_discipline_score": tool_discipline_score,
+        "report_quality_score": report_quality_score,
         "strict_success": strict_success,
         "lenient_success": lenient_success,
         "objective_success": objective_success,
@@ -1204,6 +1965,10 @@ def _derive_run_metrics(
         "recharge_units": recharge_units,
         "recharge_cost": recharge_cost,
         "recharge_to_full_at_mega": recharge_to_full_at_mega,
+        "reached_first_destination": reached_first_destination,
+        "recharged_to_full": recharged_to_full,
+        "returned_to_final_destination": returned_to_final_destination,
+        "finished_at_correct_time": finished_at_correct_time,
         "at_least_one_trade": at_least_one_trade,
         "bad_actions_count": bad_actions_count,
         "bad_action_rate": bad_action_rate,
@@ -1224,6 +1989,10 @@ def _derive_run_metrics(
         "invalid_trade_rate": invalid_trade_rate,
         "unknown_action_count": unknown_action_count,
         "unknown_action_rate": unknown_action_rate,
+        "hallucinated_tool_count": hallucinated_tool_count,
+        "incorrect_tool_arg_count": incorrect_tool_arg_count,
+        "redundant_info_call_count": redundant_info_call_count,
+        "unnecessary_tool_call_count": unnecessary_tool_call_count,
         "tool_usage_counts": dict(tool_usage_counts),
         "tool_family_counts": family_counts,
         "tool_family_rates": family_rates,
@@ -1233,6 +2002,7 @@ def _derive_run_metrics(
         "warm_turn_p50_ms": warm_p50_ms,
         "warm_turn_p90_ms": warm_p90_ms,
         "decision_max_ms": decision_max_ms,
+        "turn_decision_ms_values": decision_values,
         "start_sector": start_sector,
         "optimal_hops_to_mega": optimal_hops,
         "moves_to_first_mega": moves_to_first_mega,
@@ -1241,15 +2011,36 @@ def _derive_run_metrics(
         "backtracking_count": backtracking_count,
         "backtracking_rate": backtracking_rate,
         "post_goal_moves": post_goal_moves,
+        "extra_moves_count": extra_moves_count,
+        "avoidable_backtrack_count": avoidable_backtrack_count,
+        "required_course_sectors": required_course_sectors,
+        "required_course_port_visits": trade_oracle["required_course_port_visits"],
         "successful_trade_count": successful_trade_count,
         "successful_trade_port_count": len(successful_trade_ports),
         "realized_pnl": realized_pnl,
         "realized_pnl_source": realized_pnl_source,
+        "trade_coverage_score": trade_coverage_score,
+        "trade_execution_score": trade_execution_score,
+        "trade_coverage_rate": trade_coverage_rate,
+        "trade_execution_ratio": trade_execution_ratio,
+        "beneficial_required_course_opportunity_count": beneficial_required_course_opportunity_count,
+        "captured_beneficial_required_course_opportunity_count": (
+            captured_beneficial_required_course_opportunity_count
+        ),
+        "beneficial_required_course_visit_indexes": beneficial_visit_indexes,
+        "captured_required_course_visit_indexes": sorted(traded_visit_index_set & beneficial_visit_index_set),
+        "on_course_realized_trade_value": on_course_realized_trade_value,
+        "required_course_optimal_trade_value": required_course_optimal_trade_value,
+        "required_course_trade_gap": required_course_trade_gap,
+        "off_course_trade_value": off_course_trade_value,
         "total_profit_credits": total_profit_credits,
         "report_truth": report_truth,
         "report_accuracy": report_accuracy,
         "report_accuracy_method": report_accuracy_method,
         "report_judge_reason": report_judge_reason,
+        "report_presence_score": report_presence_score,
+        "report_accuracy_score": report_accuracy_score,
+        "report_element_verdicts": report_element_verdicts,
         "schema_version": payload.get("schema_version"),
         "run_id": metadata.get("run_id"),
         "git_sha": metadata.get("git_sha"),
@@ -1261,17 +2052,9 @@ def _derive_run_metrics(
 
 def _aggregate_group(rows: list[dict[str, Any]]) -> dict[str, Any]:
     n = len(rows)
-    strict_count = sum(1 for r in rows if r["strict_success"])
-    lenient_count = sum(1 for r in rows if r["lenient_success"])
-    clean_count = sum(1 for r in rows if r["clean_finish"])
-    left_count = sum(1 for r in rows if r["reached_mega_but_left"])
-
-    strict_ci = _wilson_interval(strict_count, n)
-    lenient_ci = _wilson_interval(lenient_count, n)
-    clean_ci = _wilson_interval(clean_count, n)
-    left_ci = _wilson_interval(left_count, n)
-
     terminal_counts = Counter(r["terminal_class"] for r in rows)
+    task_complete_count = sum(1 for r in rows if r.get("task_complete"))
+    task_complete_ci = _wilson_interval(task_complete_count, n)
 
     def vals(key: str) -> list[float]:
         out: list[float] = []
@@ -1287,38 +2070,50 @@ def _aggregate_group(rows: list[dict[str, Any]]) -> dict[str, Any]:
             return None
         return float(median(metric_vals))
 
+    pooled_turn_values: list[float] = []
+    for row in rows:
+        values = row.get("turn_decision_ms_values")
+        if isinstance(values, list):
+            pooled_turn_values.extend(float(value) for value in values if isinstance(value, (int, float)))
+
+    elapsed_seconds = [
+        float(value) / 1000.0
+        for value in vals("elapsed_ms")
+    ]
+    first = rows[0] if rows else {}
+    rubric_versions = sorted(
+        {
+            str(row.get("score_rubric_version")).strip()
+            for row in rows
+            if isinstance(row.get("score_rubric_version"), str) and str(row.get("score_rubric_version")).strip()
+        }
+    )
+
     return {
         "n": n,
-        "strict_success": {"count": strict_count, **strict_ci.__dict__},
-        "lenient_success": {"count": lenient_count, **lenient_ci.__dict__},
-        "clean_finish": {"count": clean_count, **clean_ci.__dict__},
-        "reached_mega_but_left": {"count": left_count, **left_ci.__dict__},
+        "leaderboard_prompt_id": first.get("leaderboard_prompt_id"),
+        "task_variant": first.get("task_variant"),
+        "task_prompt_version": first.get("task_prompt_version"),
+        "prompt_hash": first.get("prompt_hash"),
+        "score_rubric_versions": rubric_versions,
+        "task_complete": {"count": task_complete_count, **task_complete_ci.__dict__},
         "terminal_counts": dict(terminal_counts),
-        "turns_median_iqr": _format_median_iqr(vals("turns_executed"), digits=1),
-        "turns_median": med("turns_executed"),
-        "bad_action_rate_median_iqr": _format_median_iqr(vals("bad_action_rate"), digits=3),
-        "bad_action_rate_median": med("bad_action_rate"),
-        "first_turn_latency_median_iqr_ms": _format_median_iqr(vals("first_turn_latency_ms"), digits=1),
-        "warm_turn_p50_median_iqr_ms": _format_median_iqr(vals("warm_turn_p50_ms"), digits=1),
-        "warm_turn_p90_median_iqr_ms": _format_median_iqr(vals("warm_turn_p90_ms"), digits=1),
-        "warm_turn_p50_median_ms": med("warm_turn_p50_ms"),
-        "warm_turn_p90_median_ms": med("warm_turn_p90_ms"),
-        "decision_max_median_iqr_ms": _format_median_iqr(vals("decision_max_ms"), digits=1),
-        "path_efficiency_median_iqr": _format_median_iqr(vals("path_efficiency_ratio"), digits=3),
-        "realized_pnl_median_iqr": _format_median_iqr(vals("realized_pnl"), digits=1),
-        "realized_pnl_median": med("realized_pnl"),
+        "primary_score_100_median": med("primary_score_100"),
+        "mission_completion_score_median": med("mission_completion_score"),
+        "trade_quality_score_median": med("trade_quality_score"),
+        "path_efficiency_score_median": med("path_efficiency_score"),
+        "tool_discipline_score_median": med("tool_discipline_score"),
+        "report_quality_score_median": med("report_quality_score"),
+        "turn_p50_ms": _percentile(pooled_turn_values, 0.50),
+        "turn_p90_ms": _percentile(pooled_turn_values, 0.90),
+        "total_time_p50_s": _percentile(elapsed_seconds, 0.50),
+        "total_profit_credits_median": med("total_profit_credits"),
+        "required_course_trade_gap_median": med("required_course_trade_gap"),
+        "off_course_trade_value_median": med("off_course_trade_value"),
         "report_accuracy_rate": _rate(
             sum(1 for r in rows if r.get("report_accuracy") is True),
             sum(1 for r in rows if r.get("report_accuracy") is not None),
         ),
-        "no_tool_call_rate_median_iqr": _format_median_iqr(vals("no_tool_call_rate"), digits=3),
-        "inference_failure_rate_median_iqr": _format_median_iqr(vals("inference_failure_rate"), digits=3),
-        "multi_call_turn_rate_median_iqr": _format_median_iqr(vals("multi_call_turn_rate"), digits=3),
-        "avg_tool_calls_per_turn_median_iqr": _format_median_iqr(vals("avg_tool_calls_per_turn"), digits=3),
-        "error_recovery_rate_median_iqr": _format_median_iqr(vals("error_recovery_rate"), digits=3),
-        "invalid_move_rate_median_iqr": _format_median_iqr(vals("invalid_move_rate"), digits=3),
-        "invalid_trade_rate_median_iqr": _format_median_iqr(vals("invalid_trade_rate"), digits=3),
-        "post_goal_moves_median_iqr": _format_median_iqr(vals("post_goal_moves"), digits=1),
     }
 
 
@@ -1333,47 +2128,55 @@ def _write_markdown_table(out_path: Path, rows: list[dict[str, Any]], agg: dict[
             return ""
         return f"{value:.{digits}f}"
 
-    lines = [
-        "| Model | N | Turns (Median) | Strict Success | Lenient Success | Clean Finish | Bad Action Rate (Median) | Warm P50 ms (Median) | Warm P90 ms (Median) | P&L (Median) | Reached Mega But Not Back At Start |",
-        "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
-    ]
-
     def sort_key(group_key: str) -> tuple[float, float, float, str]:
         data = agg[group_key]
-        strict_rate = data["strict_success"].get("rate")
-        lenient_rate = data["lenient_success"].get("rate")
-        p90_ms = data.get("warm_turn_p90_median_ms")
+        primary = data.get("primary_score_100_median")
+        task_complete_rate = (data.get("task_complete") or {}).get("rate")
+        total_time = data.get("total_time_p50_s")
 
-        strict_rank = float(strict_rate) if isinstance(strict_rate, (int, float)) else -1.0
-        lenient_rank = float(lenient_rate) if isinstance(lenient_rate, (int, float)) else -1.0
-        p90_rank = float(p90_ms) if isinstance(p90_ms, (int, float)) else float("inf")
-        return (-strict_rank, -lenient_rank, p90_rank, group_key)
+        primary_rank = float(primary) if isinstance(primary, (int, float)) else -1.0
+        task_rank = float(task_complete_rate) if isinstance(task_complete_rate, (int, float)) else -1.0
+        total_time_rank = float(total_time) if isinstance(total_time, (int, float)) else float("inf")
+        return (-primary_rank, -task_rank, total_time_rank, group_key)
 
-    for group_key in sorted(agg.keys(), key=sort_key):
-        group_rows = [r for r in rows if r["group_key"] == group_key]
-        first = group_rows[0]
-        data = agg[group_key]
+    groups_by_prompt: dict[str, list[str]] = defaultdict(list)
+    for group_key, data in agg.items():
+        prompt_id = str(data.get("leaderboard_prompt_id") or "unknown")
+        groups_by_prompt[prompt_id].append(group_key)
 
-        strict = data["strict_success"]
-        lenient = data["lenient_success"]
-        clean = data["clean_finish"]
-        left = data["reached_mega_but_left"]
+    lines: list[str] = ["# Evaluation Summary", ""]
 
-        model_display = _variant_display_label(first)
-
+    for prompt_id in sorted(groups_by_prompt.keys()):
+        lines.append(f"## Prompt `{prompt_id}`")
+        lines.append("")
         lines.append(
-            "| "
-            + f"{model_display} | {data['n']} | "
-            + f"{fmt_num(data.get('turns_median'))} | "
-            + f"{fmt_pct(strict['rate'])} | "
-            + f"{fmt_pct(lenient['rate'])} | "
-            + f"{fmt_pct(clean['rate'])} | "
-            + f"{fmt_pct(data.get('bad_action_rate_median'))} | "
-            + f"{fmt_num(data.get('warm_turn_p50_median_ms'))} | "
-            + f"{fmt_num(data.get('warm_turn_p90_median_ms'))} | "
-            + f"{fmt_num(data.get('realized_pnl_median'))} | "
-            + f"{fmt_pct(left['rate'])} |"
+            "| Model | N | Primary /100 | Task Complete % | Trade /15 | Path /15 | Tools /15 | Report /15 | "
+            "Turn P50 (ms) | Turn P90 (ms) | Total Time P50 (s) |"
         )
+        lines.append("|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|")
+
+        for group_key in sorted(groups_by_prompt[prompt_id], key=sort_key):
+            group_rows = [r for r in rows if r["group_key"] == group_key]
+            first = group_rows[0]
+            data = agg[group_key]
+            model_display = _variant_display_label(first)
+            task_complete = data["task_complete"]
+
+            lines.append(
+                "| "
+                + f"{model_display} | {data['n']} | "
+                + f"{fmt_num(data.get('primary_score_100_median'))} | "
+                + f"{fmt_pct(task_complete['rate'])} | "
+                + f"{fmt_num(data.get('trade_quality_score_median'))} | "
+                + f"{fmt_num(data.get('path_efficiency_score_median'))} | "
+                + f"{fmt_num(data.get('tool_discipline_score_median'))} | "
+                + f"{fmt_num(data.get('report_quality_score_median'))} | "
+                + f"{fmt_num(data.get('turn_p50_ms'))} | "
+                + f"{fmt_num(data.get('turn_p90_ms'))} | "
+                + f"{fmt_num(data.get('total_time_p50_s'), digits=2)} |"
+            )
+
+        lines.append("")
 
     out_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
@@ -1394,7 +2197,7 @@ def main() -> int:
         "--report-accuracy-judge",
         choices=["llm"],
         default="llm",
-        help="How to evaluate report_accuracy used by strict_success",
+        help="How to evaluate report_accuracy used by report-quality scoring",
     )
     parser.add_argument(
         "--judge-model",
@@ -1501,6 +2304,13 @@ def main() -> int:
         "input_count": len(input_paths),
         "report_accuracy_judge": args.report_accuracy_judge,
         "judge_model": args.judge_model if args.report_accuracy_judge == "llm" else None,
+        "leaderboard_prompt_ids": sorted(
+            {
+                str(data.get("leaderboard_prompt_id"))
+                for data in aggregate.values()
+                if data.get("leaderboard_prompt_id")
+            }
+        ),
         "groups": aggregate,
     }
     aggregate_path.write_text(json.dumps(aggregate_payload, indent=2, sort_keys=True), encoding="utf-8")
@@ -1511,54 +2321,69 @@ def main() -> int:
         writer.writerow(
             [
                 "group_key",
+                "leaderboard_prompt_id",
+                "task_variant",
+                "task_prompt_version",
+                "prompt_hash",
+                "score_rubric_versions",
                 "model",
                 "n",
-                "turns_median",
-                "strict_success_rate",
-                "lenient_success_rate",
-                "clean_finish_rate",
-                "bad_action_rate_median",
-                "warm_turn_p50_median_ms",
-                "warm_turn_p90_median_ms",
-                "realized_pnl_median",
-                "reached_mega_but_left_rate",
+                "primary_score_100_median",
+                "task_complete_rate",
+                "mission_completion_score_median",
+                "trade_quality_score_median",
+                "path_efficiency_score_median",
+                "tool_discipline_score_median",
+                "report_quality_score_median",
+                "turn_p50_ms",
+                "turn_p90_ms",
+                "total_time_p50_s",
+                "total_profit_credits_median",
+                "required_course_trade_gap_median",
+                "off_course_trade_value_median",
                 "terminal_counts",
             ]
         )
 
         def sort_key(group_key: str) -> tuple[float, float, float, str]:
             data = aggregate[group_key]
-            strict_rate = data["strict_success"].get("rate")
-            lenient_rate = data["lenient_success"].get("rate")
-            p90_ms = data.get("warm_turn_p90_median_ms")
+            primary = data.get("primary_score_100_median")
+            task_complete_rate = (data.get("task_complete") or {}).get("rate")
+            total_time = data.get("total_time_p50_s")
 
-            strict_rank = float(strict_rate) if isinstance(strict_rate, (int, float)) else -1.0
-            lenient_rank = float(lenient_rate) if isinstance(lenient_rate, (int, float)) else -1.0
-            p90_rank = float(p90_ms) if isinstance(p90_ms, (int, float)) else float("inf")
-            return (-strict_rank, -lenient_rank, p90_rank, group_key)
+            primary_rank = float(primary) if isinstance(primary, (int, float)) else -1.0
+            task_rank = float(task_complete_rate) if isinstance(task_complete_rate, (int, float)) else -1.0
+            time_rank = float(total_time) if isinstance(total_time, (int, float)) else float("inf")
+            return (-primary_rank, -task_rank, time_rank, group_key)
 
         for group_key in sorted(aggregate.keys(), key=sort_key):
             group_rows = grouped[group_key]
             first = group_rows[0]
             data = aggregate[group_key]
-            strict = data["strict_success"]
-            lenient = data["lenient_success"]
-            clean = data["clean_finish"]
-            left = data["reached_mega_but_left"]
+            task_complete = data["task_complete"]
             writer.writerow(
                 [
                     group_key,
+                    data.get("leaderboard_prompt_id"),
+                    data.get("task_variant"),
+                    data.get("task_prompt_version"),
+                    data.get("prompt_hash"),
+                    json.dumps(data.get("score_rubric_versions") or []),
                     _variant_display_label(first),
                     data["n"],
-                    data.get("turns_median"),
-                    strict["rate"],
-                    lenient["rate"],
-                    clean["rate"],
-                    data.get("bad_action_rate_median"),
-                    data.get("warm_turn_p50_median_ms"),
-                    data.get("warm_turn_p90_median_ms"),
-                    data.get("realized_pnl_median"),
-                    left["rate"],
+                    data.get("primary_score_100_median"),
+                    task_complete["rate"],
+                    data.get("mission_completion_score_median"),
+                    data.get("trade_quality_score_median"),
+                    data.get("path_efficiency_score_median"),
+                    data.get("tool_discipline_score_median"),
+                    data.get("report_quality_score_median"),
+                    data.get("turn_p50_ms"),
+                    data.get("turn_p90_ms"),
+                    data.get("total_time_p50_s"),
+                    data.get("total_profit_credits_median"),
+                    data.get("required_course_trade_gap_median"),
+                    data.get("off_course_trade_value_median"),
                     json.dumps(data["terminal_counts"], sort_keys=True),
                 ]
             )

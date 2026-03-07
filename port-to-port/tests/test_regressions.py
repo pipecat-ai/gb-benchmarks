@@ -209,6 +209,150 @@ class EvaluateRunsRegressionTests(unittest.TestCase):
         self.assertEqual(metrics["moves_to_first_mega"], 2)
         self.assertEqual(metrics["post_goal_moves"], 2)
 
+    def test_canonical_required_course_turnaround_does_not_count_as_backtrack(self) -> None:
+        route = evaluate_runs._canonical_required_course_sectors(evaluate_runs.DEFAULT_START_SECTOR)
+        turns = []
+        credits = 1000
+        warp = 500
+        max_warp = 500
+        llm_turn = 1
+
+        for idx, next_sector in enumerate(route[1:], start=1):
+            current_sector = route[idx - 1]
+            turns.append(
+                {
+                    "llm_turn": llm_turn,
+                    "decision_ms": 1.0,
+                    "tool_calls": [{"name": "move", "args": {"to_sector": next_sector}, "result_status": "acknowledged"}],
+                    "state_before": {
+                        "sector": current_sector,
+                        "warp": warp,
+                        "max_warp": max_warp,
+                        "credits": credits,
+                        "cargo": {},
+                        "empty_holds": 30,
+                        "used_holds": 0,
+                    },
+                    "state_after": {
+                        "sector": next_sector,
+                        "warp": max(0, warp - 3),
+                        "max_warp": max_warp,
+                        "credits": credits,
+                        "cargo": {},
+                        "empty_holds": 30,
+                        "used_holds": 0,
+                    },
+                }
+            )
+            warp = max(0, warp - 3)
+            llm_turn += 1
+
+            if next_sector == evaluate_runs.MEGA_PORT_SECTOR:
+                turns.append(
+                    {
+                        "llm_turn": llm_turn,
+                        "decision_ms": 1.0,
+                        "tool_calls": [
+                            {
+                                "name": "recharge_warp_power",
+                                "args": {"units": max_warp - warp},
+                                "result_status": "success",
+                            }
+                        ],
+                        "state_before": {
+                            "sector": next_sector,
+                            "warp": warp,
+                            "max_warp": max_warp,
+                            "credits": credits,
+                            "cargo": {},
+                            "empty_holds": 30,
+                            "used_holds": 0,
+                        },
+                        "state_after": {
+                            "sector": next_sector,
+                            "warp": max_warp,
+                            "max_warp": max_warp,
+                            "credits": credits - 66,
+                            "cargo": {},
+                            "empty_holds": 30,
+                            "used_holds": 0,
+                        },
+                    }
+                )
+                credits -= 66
+                warp = max_warp
+                llm_turn += 1
+
+        turns.append(
+            {
+                "llm_turn": llm_turn,
+                "decision_ms": 1.0,
+                "tool_calls": [
+                    {
+                        "name": "finished",
+                        "args": {
+                            "message": (
+                                "Used mega-port sector 1611, recharged 33 units for 66 credits, "
+                                "traded at 0 ports, total profit -66 credits."
+                            )
+                        },
+                        "result_status": "success",
+                    }
+                ],
+                "state_before": {
+                    "sector": evaluate_runs.DEFAULT_START_SECTOR,
+                    "warp": warp,
+                    "max_warp": max_warp,
+                    "credits": credits,
+                    "cargo": {},
+                    "empty_holds": 30,
+                    "used_holds": 0,
+                },
+                "state_after": {
+                    "sector": evaluate_runs.DEFAULT_START_SECTOR,
+                    "warp": warp,
+                    "max_warp": max_warp,
+                    "credits": credits,
+                    "cargo": {},
+                    "empty_holds": 30,
+                    "used_holds": 0,
+                },
+            }
+        )
+
+        payload = {
+            "metadata": {
+                "initial_state": {
+                    "sector": evaluate_runs.DEFAULT_START_SECTOR,
+                    "warp": 500,
+                    "max_warp": 500,
+                    "credits": 1000,
+                    "cargo": {},
+                    "empty_holds": 30,
+                    "used_holds": 0,
+                }
+            },
+            "summary": {
+                "final_sector": evaluate_runs.DEFAULT_START_SECTOR,
+                "reached_mega_anytime": True,
+                "recharge_to_full_at_mega": True,
+            },
+            "termination": {
+                "finished_called": True,
+                "finished_message": (
+                    "Used mega-port sector 1611, recharged 33 units for 66 credits, "
+                    "traded at 0 ports, total profit -66 credits."
+                ),
+            },
+            "turns": turns,
+        }
+
+        metrics = evaluate_runs._derive_run_metrics(Path("synthetic.json"), payload, report_judge=None)
+
+        self.assertEqual(metrics["extra_moves_count"], 0)
+        self.assertEqual(metrics["avoidable_backtrack_count"], 0)
+        self.assertEqual(metrics["path_efficiency_score"], 15)
+
     def test_mixed_trade_and_recharge_turn_uses_action_replay_for_trade_pnl(self) -> None:
         payload = {
             "metadata": {
@@ -424,6 +568,132 @@ class EvaluateRunsRegressionTests(unittest.TestCase):
         self.assertEqual(metrics["report_truth"]["final_credits"], 980)
         self.assertEqual(metrics["report_truth"]["total_profit_credits"], -20)
 
+    def test_required_course_trade_oracle_matches_current_world(self) -> None:
+        oracle = evaluate_runs._compute_required_course_trade_oracle(
+            start_sector=3080,
+            initial_state={
+                "sector": 3080,
+                "credits": 16564,
+                "cargo": {"quantum_foam": 10, "retro_organics": 0, "neuro_symbolics": 0},
+                "empty_holds": 20,
+                "used_holds": 10,
+                "warp": 500,
+                "max_warp": 500,
+            },
+            turns=[],
+        )
+
+        self.assertEqual(oracle["required_course_port_visits"], [3080, 4874, 2831, 1611, 2831, 4874, 3080])
+        self.assertEqual(oracle["required_course_optimal_trade_value"], 2310)
+        self.assertEqual(oracle["beneficial_visit_indexes"], [0, 1, 2, 3, 4, 5, 6])
+        self.assertEqual(oracle["required_course_recharge_cost"], 66)
+
+    def test_derive_run_metrics_stamps_prompt_scope_and_primary_score(self) -> None:
+        payload = {
+            "metadata": {
+                "initial_state": {
+                    "sector": 3080,
+                    "credits": 16564,
+                    "cargo": {"quantum_foam": 10, "retro_organics": 0, "neuro_symbolics": 0},
+                    "empty_holds": 20,
+                    "used_holds": 10,
+                    "warp": 500,
+                    "max_warp": 500,
+                },
+                "task_variant": "natural",
+                "task_prompt_version": "v1",
+                "task_prompt_hash": "prompt-a",
+            },
+            "summary": {
+                "final_sector": 3080,
+                "final_credits": 17000,
+                "reached_mega_anytime": True,
+                "recharge_to_full_at_mega": True,
+                "recharge_units_total": 33,
+                "recharge_cost_total": 66,
+                "recharge_sector": 1611,
+                "finished_called": True,
+                "coherent_report": True,
+                "elapsed_ms": 1000,
+            },
+            "termination": {
+                "finished_called": True,
+                "finished_message": (
+                    "Used MEGA SSS, recharged 33 units for 66 credits, "
+                    "traded at 3 ports, total profit 436 credits."
+                ),
+                "reason": "finished_tool",
+            },
+            "config": {
+                "provider": "openai",
+                "model": "demo",
+                "thinking": "medium",
+                "task_variant": "natural",
+                "task_prompt_version": "v1",
+            },
+            "turns": [],
+        }
+
+        metrics = evaluate_runs._derive_run_metrics(Path("synthetic.json"), payload, report_judge=None)
+
+        self.assertEqual(metrics["leaderboard_prompt_id"], "natural")
+        self.assertEqual(metrics["task_variant"], "natural")
+        self.assertEqual(metrics["task_prompt_version"], "v1")
+        self.assertEqual(metrics["score_rubric_version"], "port_to_port_primary_v1")
+        self.assertIn("primary_score_100", metrics)
+        self.assertIn("trade_quality_score", metrics)
+        self.assertIn("report_quality_score", metrics)
+
+    def test_aggregate_group_uses_primary_summary_metrics(self) -> None:
+        agg = evaluate_runs._aggregate_group(
+            [
+                {
+                    "leaderboard_prompt_id": "natural",
+                    "task_variant": "natural",
+                    "task_prompt_version": "v1",
+                    "prompt_hash": "prompt-a",
+                    "score_rubric_version": "port_to_port_primary_v1",
+                    "task_complete": True,
+                    "primary_score_100": 80,
+                    "mission_completion_score": 40,
+                    "trade_quality_score": 10,
+                    "path_efficiency_score": 12,
+                    "tool_discipline_score": 13,
+                    "report_quality_score": 5,
+                    "elapsed_ms": 1000,
+                    "turn_decision_ms_values": [100.0, 200.0],
+                    "terminal_class": "strict_success",
+                    "report_accuracy": True,
+                },
+                {
+                    "leaderboard_prompt_id": "natural",
+                    "task_variant": "natural",
+                    "task_prompt_version": "v1",
+                    "prompt_hash": "prompt-a",
+                    "score_rubric_version": "port_to_port_primary_v1",
+                    "task_complete": False,
+                    "primary_score_100": 90,
+                    "mission_completion_score": 35,
+                    "trade_quality_score": 12,
+                    "path_efficiency_score": 14,
+                    "tool_discipline_score": 15,
+                    "report_quality_score": 14,
+                    "elapsed_ms": 2000,
+                    "turn_decision_ms_values": [300.0],
+                    "terminal_class": "other_failure",
+                    "report_accuracy": False,
+                },
+            ]
+        )
+
+        self.assertEqual(agg["leaderboard_prompt_id"], "natural")
+        self.assertEqual(agg["score_rubric_versions"], ["port_to_port_primary_v1"])
+        self.assertEqual(agg["primary_score_100_median"], 85.0)
+        self.assertEqual(agg["task_complete"]["count"], 1)
+        self.assertAlmostEqual(agg["task_complete"]["rate"], 0.5)
+        self.assertEqual(agg["turn_p50_ms"], 200.0)
+        self.assertEqual(agg["total_time_p50_s"], 1.5)
+
     def test_group_key_includes_prompt_hash(self) -> None:
         payload_a = {
             "metadata": {
@@ -448,6 +718,40 @@ class EvaluateRunsRegressionTests(unittest.TestCase):
         row_b = evaluate_runs._derive_run_metrics(Path("b.json"), payload_b, report_judge=None)
 
         self.assertNotEqual(row_a["group_key"], row_b["group_key"])
+
+    def test_group_key_separates_builtin_prompt_revisions(self) -> None:
+        def payload_for(version: str, prompt_hash: str) -> dict[str, object]:
+            return {
+                "metadata": {
+                    "initial_state": {"sector": 3080, "credits": 1000},
+                    "task_variant": "natural",
+                    "task_prompt_version": version,
+                    "task_prompt_hash": prompt_hash,
+                    "leaderboard_prompt_id": "natural",
+                },
+                "summary": {"final_sector": 3080},
+                "config": {
+                    "provider": "openai",
+                    "model": "demo",
+                    "thinking": "medium",
+                    "task_variant": "natural",
+                    "task_prompt_version": version,
+                },
+                "turns": [],
+            }
+
+        row_v1 = evaluate_runs._derive_run_metrics(
+            Path("v1.json"),
+            payload_for("v1", "prompt-a"),
+            report_judge=None,
+        )
+        row_v2 = evaluate_runs._derive_run_metrics(
+            Path("v2.json"),
+            payload_for("v2", "prompt-b"),
+            report_judge=None,
+        )
+
+        self.assertNotEqual(row_v1["group_key"], row_v2["group_key"])
 
     def test_group_key_normalizes_equivalent_openai_base_urls(self) -> None:
         def payload_for(base_url: str) -> dict[str, object]:
@@ -509,6 +813,27 @@ class EvaluateRunsRegressionTests(unittest.TestCase):
         )
 
         self.assertTrue(evaluate_runs._is_coherent_finished_report(message))
+
+    def test_report_element_verdicts_require_recharge_context_for_recharge_cost(self) -> None:
+        verdicts = evaluate_runs._compute_report_element_verdicts(
+            finished_message=(
+                "Used MEGA SSS, recharged 33 units, traded at 3 ports, total profit 66 credits."
+            ),
+            report_truth={
+                "mega_port_sector": 1611,
+                "recharge_units": 33,
+                "recharge_cost": 66,
+                "trade_port_count": 3,
+                "total_profit_credits": 66,
+            },
+        )
+
+        self.assertTrue(verdicts["recharge_amount"]["present"])
+        self.assertTrue(verdicts["recharge_amount"]["accurate"])
+        self.assertFalse(verdicts["recharge_cost"]["present"])
+        self.assertFalse(verdicts["recharge_cost"]["accurate"])
+        self.assertTrue(verdicts["total_profit"]["present"])
+        self.assertTrue(verdicts["total_profit"]["accurate"])
 
     def test_report_judge_prompt_accepts_semantic_whole_trip_profit(self) -> None:
         judge = evaluate_runs.AnthropicReportJudge(
@@ -904,6 +1229,85 @@ class MiniRLEnvRegressionTests(unittest.TestCase):
 
         asyncio.run(_run())
 
+    def test_response_tracker_logs_turn_progress(self) -> None:
+        async def _run() -> None:
+            state = {"sector": 3080, "credits": 1000, "warp": 20, "max_warp": 20}
+            world = types.SimpleNamespace(
+                bad_actions_count=0,
+                state_snapshot=lambda: dict(state),
+                increment_bad_action=mock.Mock(),
+            )
+            runtime = types.SimpleNamespace(
+                stop_requested=False,
+                inference_suppressed=False,
+                no_tool_call_count=0,
+                last_error_event=None,
+                turn_logs=[],
+                turn_count=0,
+                max_turns=50,
+                request_stop=mock.Mock(),
+                world=world,
+                async_completion_timeout_count=0,
+                has_async_dependency_waiters=lambda: False,
+                resolve_async_dependency_waiters=mock.Mock(),
+                maybe_finalize_deferred_stop=mock.Mock(),
+            )
+            controller = mini_rl_env._BenchmarkInferenceController(runtime)
+            tracker = mini_rl_env._BenchmarkResponseTracker(runtime, controller)
+            runtime.controller = controller
+            runtime.response_tracker = tracker
+
+            clock = SystemClock()
+            clock.start()
+            task_manager = TaskManager()
+            task_manager.setup(TaskManagerParams(loop=asyncio.get_running_loop()))
+            await tracker.setup(FrameProcessorSetup(clock=clock, task_manager=task_manager))
+            await asyncio.sleep(0)
+
+            function_call = FunctionCallFromLLM(
+                function_name="my_status",
+                tool_call_id="status-1",
+                arguments={},
+                context=None,
+            )
+
+            with mock.patch.object(mini_rl_env.logger, "info") as info_mock:
+                await tracker.process_frame(
+                    StartFrame(enable_metrics=True, enable_usage_metrics=True),
+                    mini_rl_env.FrameDirection.DOWNSTREAM,
+                )
+                await tracker.process_frame(
+                    mini_rl_env.LLMFullResponseStartFrame(),
+                    mini_rl_env.FrameDirection.DOWNSTREAM,
+                )
+                await tracker.process_frame(
+                    mini_rl_env.FunctionCallsStartedFrame([function_call]),
+                    mini_rl_env.FrameDirection.DOWNSTREAM,
+                )
+                await tracker.process_frame(
+                    mini_rl_env.LLMFullResponseEndFrame(),
+                    mini_rl_env.FrameDirection.DOWNSTREAM,
+                )
+                await tracker.process_frame(
+                    mini_rl_env.FunctionCallResultFrame(
+                        function_name="my_status",
+                        tool_call_id="status-1",
+                        arguments={},
+                        result={"status": "success"},
+                    ),
+                    mini_rl_env.FrameDirection.DOWNSTREAM,
+                )
+
+            log_messages = [call.args[0] for call in info_mock.call_args_list]
+            self.assertTrue(any("LLM_RESPONSE_START" in message for message in log_messages))
+            self.assertTrue(any("TURN_TOOL_CALLS" in message for message in log_messages))
+            self.assertTrue(any("TURN_COMPLETE" in message for message in log_messages))
+            await tracker.cleanup()
+            controller.close()
+            await asyncio.sleep(0)
+
+        asyncio.run(_run())
+
     def test_apply_benchmark_thinking_mode_prefers_exact_budget_on_vllm(self) -> None:
         llm_service = types.SimpleNamespace(_settings={})
 
@@ -919,6 +1323,21 @@ class MiniRLEnvRegressionTests(unittest.TestCase):
         extra = llm_service._settings["extra"]
         self.assertEqual(extra["extra_body"]["vllm_xargs"]["thinking_budget"], 1536)
         self.assertEqual(policy, "openai-compatible:vllm thinking_budget=1536")
+
+    def test_apply_benchmark_thinking_mode_disables_adaptive_claude_when_none(self) -> None:
+        llm_service = types.SimpleNamespace(_settings={})
+
+        policy = mini_rl_env._apply_benchmark_thinking_mode(
+            llm_service=llm_service,
+            provider=mini_rl_env.LLMProvider.ANTHROPIC,
+            model="claude-sonnet-4-6",
+            thinking="none",
+            thinking_budget=None,
+            openai_base_url=None,
+        )
+
+        self.assertEqual(policy, "anthropic:adaptive disabled")
+        self.assertEqual(llm_service._settings["extra"], {})
 
     def test_validate_generation_controls_rejects_max_tokens_for_non_openai(self) -> None:
         parser = argparse.ArgumentParser()
@@ -1056,21 +1475,10 @@ class MiniRLEnvRegressionTests(unittest.TestCase):
 
 
 class LeaderboardRegressionTests(unittest.TestCase):
-    def test_partial_success_uses_round_trip_objective_for_v3(self) -> None:
+    def test_resolve_leaderboard_prompt_id_requires_explicit_scope_for_hash_only_runs(self) -> None:
         payload = {
             "schema_version": "mini_rl_run.v3",
-            "summary": {
-                "model": "demo",
-                "thinking": "medium",
-                "max_tokens": None,
-                "finished_called": True,
-                "final_sector_matches_start": True,
-                "reached_mega_anytime": True,
-                "recharge_to_full_at_mega": True,
-                "final_sector_is_mega": False,
-                "elapsed_ms": 1000,
-                "turns_executed": 2,
-            },
+            "summary": {"model": "demo"},
             "config": {},
             "turns": [],
             "metadata": {"task_prompt_hash": "prompt-a"},
@@ -1080,16 +1488,122 @@ class LeaderboardRegressionTests(unittest.TestCase):
             run_path = Path(tmpdir) / "run.json"
             run_path.write_text(json.dumps(payload), encoding="utf-8")
 
-            rows = build_primary_leaderboard._build_rows(
+            with self.assertRaisesRegex(ValueError, "Pass --leaderboard-prompt-id explicitly"):
+                build_primary_leaderboard._resolve_leaderboard_prompt_id(
+                    [run_path],
+                    explicit_prompt_id=None,
+                )
+
+            prompt_id, prompt_hash = build_primary_leaderboard._resolve_leaderboard_prompt_id(
                 [run_path],
-                strict_by_file={},
-                model_name_aliases={},
-                prompt_hash_labels={},
+                explicit_prompt_id="natural",
             )
 
+        self.assertEqual(prompt_id, "natural")
+        self.assertEqual(prompt_hash, "prompt-a")
+
+    def test_resolve_leaderboard_prompt_id_rejects_mixed_prompt_hashes(self) -> None:
+        payload_a = {
+            "schema_version": "mini_rl_run.v3",
+            "summary": {"model": "demo"},
+            "config": {},
+            "turns": [],
+            "metadata": {"task_prompt_hash": "prompt-a"},
+        }
+        payload_b = {
+            "schema_version": "mini_rl_run.v3",
+            "summary": {"model": "demo"},
+            "config": {},
+            "turns": [],
+            "metadata": {"task_prompt_hash": "prompt-b"},
+        }
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            run_a = Path(tmpdir) / "a.json"
+            run_b = Path(tmpdir) / "b.json"
+            run_a.write_text(json.dumps(payload_a), encoding="utf-8")
+            run_b.write_text(json.dumps(payload_b), encoding="utf-8")
+
+            with self.assertRaisesRegex(ValueError, "Mixed prompt hashes"):
+                build_primary_leaderboard._resolve_leaderboard_prompt_id(
+                    [run_a, run_b],
+                    explicit_prompt_id="natural",
+                )
+
+    def test_resolve_leaderboard_prompt_id_rejects_conflicting_explicit_variant(self) -> None:
+        payload = {
+            "schema_version": "mini_rl_run.v3",
+            "summary": {"model": "demo"},
+            "config": {},
+            "turns": [],
+            "metadata": {
+                "task_prompt_hash": "prompt-a",
+                "task_variant": "literal",
+            },
+        }
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            run_path = Path(tmpdir) / "run.json"
+            run_path.write_text(json.dumps(payload), encoding="utf-8")
+
+            with self.assertRaisesRegex(ValueError, "does not match metadata.task_variant"):
+                build_primary_leaderboard._resolve_leaderboard_prompt_id(
+                    [run_path],
+                    explicit_prompt_id="natural",
+                )
+
+    def test_default_output_path_uses_canonical_built_in_files(self) -> None:
+        natural_path = build_primary_leaderboard._default_output_path("natural", "hash-a")
+        literal_path = build_primary_leaderboard._default_output_path("literal", "hash-b")
+        custom_path = build_primary_leaderboard._default_output_path("custom:abcdef1234567890", "abcdef1234567890")
+
+        self.assertEqual(natural_path, PORT_TO_PORT_DIR / "leaderboards" / "leaderboard-natural.md")
+        self.assertEqual(literal_path, PORT_TO_PORT_DIR / "leaderboards" / "leaderboard-literal.md")
+        self.assertEqual(custom_path, PORT_TO_PORT_DIR / "leaderboards" / "leaderboard-custom-abcdef1234567890.md")
+
+    def test_build_rows_aggregates_primary_and_task_complete(self) -> None:
+        payload = {
+            "schema_version": "mini_rl_run.v3",
+            "summary": {
+                "model": "demo",
+                "thinking": "medium",
+                "max_tokens": None,
+                "elapsed_ms": 1000,
+                "turns_executed": 2,
+            },
+            "config": {"openai_base_url": "http://host:8000"},
+            "turns": [{"decision_ms": 100.0}, {"decision_ms": 200.0}],
+            "metadata": {"task_prompt_hash": "prompt-a"},
+        }
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            run_path = Path(tmpdir) / "run.json"
+            run_path.write_text(json.dumps(payload), encoding="utf-8")
+
+            rows, rubric_versions = build_primary_leaderboard._build_rows(
+                [run_path],
+                enriched_by_file={
+                    str(run_path.resolve()): {
+                        "file": str(run_path),
+                        "score_rubric_version": "port_to_port_primary_v1",
+                        "primary_score_100": 87,
+                        "task_complete": True,
+                        "trade_quality_score": 14,
+                        "path_efficiency_score": 13,
+                        "tool_discipline_score": 15,
+                        "report_quality_score": 12,
+                    }
+                },
+                model_name_aliases={},
+            )
+
+        self.assertEqual(rubric_versions, {"port_to_port_primary_v1"})
         self.assertEqual(len(rows), 1)
-        self.assertEqual(rows[0]["partial_success_count"], 1)
-        self.assertEqual(rows[0]["partial_success_rate"], 100.0)
+        self.assertEqual(rows[0]["primary_score_100_median"], 87.0)
+        self.assertEqual(rows[0]["task_complete_rate"], 100.0)
+        self.assertEqual(rows[0]["turn_p50_ms"], 150.0)
+        self.assertEqual(rows[0]["turn_p90_ms"], 190.0)
+        self.assertEqual(rows[0]["total_time_p50_s"], 1.0)
 
     def test_aliases_do_not_merge_distinct_raw_models(self) -> None:
         payload_a = {
@@ -1127,17 +1641,37 @@ class LeaderboardRegressionTests(unittest.TestCase):
             run_a.write_text(json.dumps(payload_a), encoding="utf-8")
             run_b.write_text(json.dumps(payload_b), encoding="utf-8")
 
-            rows = build_primary_leaderboard._build_rows(
+            rows, _rubric_versions = build_primary_leaderboard._build_rows(
                 [run_a, run_b],
-                strict_by_file={},
+                enriched_by_file={
+                    str(run_a.resolve()): {
+                        "file": str(run_a),
+                        "score_rubric_version": "port_to_port_primary_v1",
+                        "primary_score_100": 80,
+                        "task_complete": True,
+                        "trade_quality_score": 12,
+                        "path_efficiency_score": 13,
+                        "tool_discipline_score": 14,
+                        "report_quality_score": 11,
+                    },
+                    str(run_b.resolve()): {
+                        "file": str(run_b),
+                        "score_rubric_version": "port_to_port_primary_v1",
+                        "primary_score_100": 82,
+                        "task_complete": True,
+                        "trade_quality_score": 12,
+                        "path_efficiency_score": 13,
+                        "tool_discipline_score": 14,
+                        "report_quality_score": 11,
+                    },
+                },
                 model_name_aliases={"raw-a": "Alias", "raw-b": "Alias"},
-                prompt_hash_labels={"prompt-a": "prompt1", "prompt-b": "prompt2"},
             )
 
         self.assertEqual(len(rows), 2)
         labels = {row["model_label"] for row in rows}
-        self.assertIn("Alias [raw-a] (th=medium, tb=1536, mt=4608, prompt1, base=one.example)", labels)
-        self.assertIn("Alias [raw-b] (th=medium, tb=1536, mt=4608, prompt2, base=two.example)", labels)
+        self.assertIn("Alias [raw-a] (th=medium, tb=1536, mt=4608, base=one.example)", labels)
+        self.assertIn("Alias [raw-b] (th=medium, tb=1536, mt=4608, base=two.example)", labels)
 
     def test_equivalent_openai_base_urls_merge_into_one_leaderboard_row(self) -> None:
         payload_a = {
@@ -1171,11 +1705,31 @@ class LeaderboardRegressionTests(unittest.TestCase):
             run_a.write_text(json.dumps(payload_a), encoding="utf-8")
             run_b.write_text(json.dumps(payload_b), encoding="utf-8")
 
-            rows = build_primary_leaderboard._build_rows(
+            rows, _rubric_versions = build_primary_leaderboard._build_rows(
                 [run_a, run_b],
-                strict_by_file={},
+                enriched_by_file={
+                    str(run_a.resolve()): {
+                        "file": str(run_a),
+                        "score_rubric_version": "port_to_port_primary_v1",
+                        "primary_score_100": 80,
+                        "task_complete": True,
+                        "trade_quality_score": 12,
+                        "path_efficiency_score": 13,
+                        "tool_discipline_score": 14,
+                        "report_quality_score": 11,
+                    },
+                    str(run_b.resolve()): {
+                        "file": str(run_b),
+                        "score_rubric_version": "port_to_port_primary_v1",
+                        "primary_score_100": 82,
+                        "task_complete": False,
+                        "trade_quality_score": 11,
+                        "path_efficiency_score": 12,
+                        "tool_discipline_score": 14,
+                        "report_quality_score": 10,
+                    },
+                },
                 model_name_aliases={},
-                prompt_hash_labels={},
             )
 
         self.assertEqual(len(rows), 1)

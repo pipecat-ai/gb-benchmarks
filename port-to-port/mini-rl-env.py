@@ -76,14 +76,75 @@ from tool_catalog import (  # noqa: E402
 )
 
 
-DEFAULT_BENCHMARK_TASK = (
-    "Go round-trip from our current location to the nearest mega-port. "
-    "At the mega-port, recharge to full warp power. "
-    "While traveling there and back, trade at every port that provides a trading opportunity. "
-    "Make as much money as possible. "
-    "Be sure you know how to trade well. "
-    "When you're back where you started, give me a quick summary with the mega-port you used, how much warp you recharged and what it cost, how many ports you traded at, and total profit from the whole trip."
-)
+DEFAULT_TASK_VARIANT = "natural"
+TASK_PROMPTS: dict[str, dict[str, str]] = {
+    "natural": {
+        "version": "v1",
+        "text": (
+            "Go round-trip from our current location to the nearest mega-port. "
+            "At the mega-port, recharge to full warp power. "
+            "While traveling there and back, make as much money as possible by trading optimally "
+            "at profitable ports on your route without going off-course. "
+            "When you're back where you started, give me a quick summary with the mega-port you used, "
+            "how much warp you recharged and what it cost, how many distinct ports you traded at, "
+            "and total profit or loss from the whole trip."
+        ),
+    },
+    "literal": {
+        "version": "v7",
+        "text": (
+            "Use this procedure exactly.\n"
+            "1. Mission priority:\n"
+            "   - reach the nearest mega-port that is not your current sector\n"
+            "   - recharge to full there\n"
+            "   - return to your starting sector\n"
+            "   - only then call `finished`\n"
+            "2. Response rule:\n"
+            "   - every response must contain exactly one tool call\n"
+            "   - do not output explanation text, JSON snippets, pseudo-calls, or thoughts\n"
+            "   - if you know the next action, call the tool immediately\n"
+            "3. Trading rule:\n"
+            "   - a profitable sale means the current port pays more credits than you paid for that cargo\n"
+            "   - a profitable buy means the current port sells a commodity for fewer credits than a later port on your already plotted route pays for it\n"
+            "   - treat cargo already in your hold at the start of the run as having cost 0, so any positive sale price is profitable\n"
+            "   - only free hold space by making profitable sales\n"
+            "   - do not make an unprofitable sale and do not use `dump_cargo` just to create empty holds for a later buy\n"
+            "   - if your holds are empty and the current port has a profitable buy on the plotted route, take that buy before moving\n"
+            "   - do not skip an available profitable buy just because moving is also allowed\n"
+            "   - if a port is both a profitable sell and a profitable buy, do the profitable sell first, then use the next turn for the profitable buy if hold space is available\n"
+            "4. Outbound setup:\n"
+            "   - identify the nearest mega-port that is not your current sector\n"
+            "   - plot a route to it\n"
+            "5. Outbound policy: repeat until you arrive at the mega-port:\n"
+            "   - if the current sector has no port, move to the next sector on the plotted route\n"
+            "   - otherwise, if the port pays more for cargo you carry than you paid for it, sell that cargo\n"
+            "   - otherwise, if this port sells a commodity and a later port on the already plotted route pays more for that commodity, buy that commodity\n"
+            "   - otherwise, move to the next sector on the plotted route\n"
+            "   - if you were already at this same port on the previous turn and no successful trade happened there, move to the next sector on the plotted route\n"
+            "6. Mega-port policy:\n"
+            "   - recharge to full immediately when you arrive\n"
+            "   - then plot a route back to your starting sector\n"
+            "   - if you already have empty holds and the plotted return route has a later buyer that pays more, take exactly one profitable buy turn at the mega-port before leaving\n"
+            "   - after that one trade turn, leave the mega-port by moving to the next sector on the plotted return route\n"
+            "7. Return policy:\n"
+            "   - if the current sector is not your starting sector, do not call `finished`\n"
+            "   - if the current sector has no profitable sale or profitable buy on the plotted return route right now, move to the next sector on the plotted return route\n"
+            "   - if a trade attempt failed on the previous turn at this port, move on this turn\n"
+            "   - otherwise, repeat the same sell/buy/move policy on the plotted return route until you reach your starting sector\n"
+            "8. Starting-sector finish rule:\n"
+            "   - when you are back at your starting sector, first sell any profitable cargo there\n"
+            "   - do not buy new cargo at your starting sector on the return leg\n"
+            "   - when no profitable sale remains at your starting sector, call `finished` immediately\n"
+            "9. `finished` message requirements:\n"
+            "   - which mega-port you used\n"
+            "   - how much warp you recharged\n"
+            "   - the recharge cost\n"
+            "   - how many distinct ports you traded at\n"
+            "   - the total profit or loss from the whole trip"
+        ),
+    },
+}
+DEFAULT_BENCHMARK_TASK = TASK_PROMPTS[DEFAULT_TASK_VARIANT]["text"]
 
 MEGA_PORT_NAME = "MEGA SSS"
 RUN_SCHEMA_VERSION = "mini_rl_run.v3"
@@ -112,6 +173,25 @@ def _iso_utc_now() -> str:
 
 def _sha256_text(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def _resolve_task_prompt(
+    *,
+    task: Optional[str],
+    task_variant: str,
+) -> tuple[str, str, Optional[str]]:
+    if task:
+        return task, "custom", None
+    prompt = TASK_PROMPTS.get(task_variant)
+    if prompt is None:
+        raise ValueError(f"Unsupported task variant: {task_variant}")
+    return prompt["text"], task_variant, prompt["version"]
+
+
+def _leaderboard_prompt_id_for_task(*, task_variant: str, task: str) -> str:
+    if task_variant in TASK_PROMPTS:
+        return task_variant
+    return f"custom:{_sha256_text(task)}"
 
 
 def _git_sha(repo_root: Path) -> Optional[str]:
@@ -306,6 +386,27 @@ def _to_json_compatible(value: Any) -> Any:
             pass
 
     return repr(value)
+
+
+def _state_log_label(state: Any) -> str:
+    if not isinstance(state, dict):
+        return "sector=? credits=? warp=?/?"
+
+    sector = state.get("sector", "?")
+    credits = state.get("credits", "?")
+    warp = state.get("warp", "?")
+    max_warp = state.get("max_warp", "?")
+    return f"sector={sector} credits={credits} warp={warp}/{max_warp}"
+
+
+def _tool_calls_log_label(tool_calls: list[dict[str, Any]]) -> str:
+    if not tool_calls:
+        return "none"
+
+    return ", ".join(
+        f"{str(call.get('name') or 'unknown')}:{str(call.get('result_status') or 'unknown')}"
+        for call in tool_calls
+    )
 
 
 def _serialize_llm_usage_metrics(metric_data: LLMUsageMetricsData) -> dict[str, Any]:
@@ -543,8 +644,10 @@ def _apply_benchmark_thinking_mode(
         from pipecat.services.anthropic.llm import AnthropicLLMService
 
         if "claude-opus-4-6" in model_lower or "claude-sonnet-4-6" in model_lower:
-            effort = "low" if normalized_thinking == "none" else normalized_thinking
             settings["thinking"] = None
+            if normalized_thinking == "none":
+                return "anthropic:adaptive disabled"
+            effort = normalized_thinking
             extra["thinking"] = {"type": "adaptive"}
             extra["output_config"] = {"effort": effort}
             return f"anthropic:adaptive effort={effort}"
@@ -815,6 +918,12 @@ class _BenchmarkInferenceController:
     async def on_event(self, event_name: str) -> None:
         matched = self._clear_pending_for_event(event_name)
         had_waiters = self._runtime.has_async_dependency_waiters()
+        logger.info(
+            "EVENT event={} matched_async={} state={}",
+            event_name,
+            matched,
+            _state_log_label(self._runtime.world.state_snapshot()),
+        )
         if matched and not self._pending_async:
             await self._runtime.response_tracker.finalize_pending_response()
             self._runtime.resolve_async_dependency_waiters(allow_execution=True)
@@ -829,6 +938,12 @@ class _BenchmarkInferenceController:
             return
         if not self._pipeline_task or self._pipeline_task.has_finished():
             return
+        logger.info(
+            "LLM_RUN turn={} reasons={} state={}",
+            self._runtime.turn_count + 1,
+            ["initial_run"],
+            _state_log_label(self._runtime.world.state_snapshot()),
+        )
         self._runtime.capture_inference_input(["initial_run"])
         self._llm_inflight = True
         await self._pipeline_task.queue_frames([LLMRunFrame()])
@@ -894,6 +1009,12 @@ class _BenchmarkInferenceController:
         if "no_tool_nudge" not in reasons_snapshot:
             self._no_tool_nudge_count = 0
 
+        logger.info(
+            "LLM_RUN turn={} reasons={} state={}",
+            self._runtime.turn_count + 1,
+            reasons_snapshot,
+            _state_log_label(self._runtime.world.state_snapshot()),
+        )
         self._runtime.capture_inference_input(reasons_snapshot)
         self._llm_inflight = True
         try:
@@ -992,6 +1113,11 @@ class _BenchmarkResponseTracker(FrameProcessor):
             self._response_state_before = self._runtime.world.state_snapshot()
             self._bad_before = self._runtime.world.bad_actions_count
             self._controller.on_response_start()
+            logger.info(
+                "LLM_RESPONSE_START turn={} state={}",
+                self._runtime.turn_count + 1,
+                _state_log_label(self._response_state_before),
+            )
 
         elif isinstance(frame, LLMTextFrame):
             self._response_text_raw += frame.text
@@ -1020,6 +1146,11 @@ class _BenchmarkResponseTracker(FrameProcessor):
                 }
                 self._tool_calls.append(entry)
                 self._tool_call_by_id[function_call.tool_call_id] = idx
+            logger.info(
+                "TURN_TOOL_CALLS turn={} tools={}",
+                self._runtime.turn_count + 1,
+                ", ".join(str(function_call.function_name) for function_call in function_calls) or "none",
+            )
 
         elif isinstance(frame, FunctionCallResultFrame):
             index = self._tool_call_by_id.get(frame.tool_call_id)
@@ -1109,6 +1240,15 @@ class _BenchmarkResponseTracker(FrameProcessor):
 
         self._runtime.turn_logs.append(turn_log)
         self._runtime.turn_count += 1
+        logger.info(
+            "TURN_COMPLETE turn={} decision_ms={} tools={} failure={} before={} after={}",
+            turn_log["llm_turn"],
+            self._decision_ms,
+            _tool_calls_log_label(tool_calls),
+            failure_class,
+            _state_log_label(self._response_state_before),
+            _state_log_label(state_after),
+        )
 
         if self._runtime.turn_count >= self._runtime.max_turns and not self._runtime.stop_requested:
             self._runtime.request_stop("max_turns_exhausted", wait_for_pending_async=True)
@@ -1662,6 +1802,10 @@ class _BenchmarkRuntime:
         summary = self.build_summary()
         ended_at_utc = _iso_utc_now()
         git_sha = _git_sha(REPO_ROOT)
+        leaderboard_prompt_id = _leaderboard_prompt_id_for_task(
+            task_variant=self.args.task_variant,
+            task=self.args.task,
+        )
 
         config_snapshot = {
             "provider": self.args.provider,
@@ -1675,6 +1819,9 @@ class _BenchmarkRuntime:
             "function_call_timeout_secs": self.args.function_call_timeout_secs,
             "capture_inference_inputs": self.args.capture_inference_inputs,
             "task": self.args.task,
+            "task_variant": self.args.task_variant,
+            "task_prompt_version": self.args.task_prompt_version,
+            "leaderboard_prompt_id": leaderboard_prompt_id,
         }
         metadata = {
             "run_id": self.run_id,
@@ -1685,6 +1832,9 @@ class _BenchmarkRuntime:
             "git_sha": git_sha,
             "system_instruction_path": str(self.system_instruction_path),
             "system_instruction_hash": _sha256_text(self.system_instruction),
+            "task_variant": self.args.task_variant,
+            "task_prompt_version": self.args.task_prompt_version,
+            "leaderboard_prompt_id": leaderboard_prompt_id,
             "task_prompt_hash": _sha256_text(self.args.task),
             "initial_state": self.initial_state_snapshot,
         }
@@ -1874,8 +2024,14 @@ def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Run standalone mini RL benchmark harness")
     parser.add_argument(
         "--task",
-        default=DEFAULT_BENCHMARK_TASK,
-        help="Task prompt for the benchmark",
+        default=None,
+        help="Custom task prompt override. If provided, it overrides --task-variant.",
+    )
+    parser.add_argument(
+        "--task-variant",
+        default=DEFAULT_TASK_VARIANT,
+        choices=sorted(TASK_PROMPTS.keys()),
+        help="Built-in task prompt variant to use when --task is not provided.",
     )
     parser.add_argument(
         "--provider",
@@ -1962,6 +2118,16 @@ def main() -> int:
     except ValueError as exc:
         parser.error(str(exc))
     _validate_generation_controls(args, parser)
+    try:
+        resolved_task, resolved_task_variant, resolved_task_prompt_version = _resolve_task_prompt(
+            task=args.task,
+            task_variant=args.task_variant,
+        )
+    except ValueError as exc:
+        parser.error(str(exc))
+    args.task = resolved_task
+    args.task_variant = resolved_task_variant
+    args.task_prompt_version = resolved_task_prompt_version
     try:
         return asyncio.run(_run_benchmark(args))
     except KeyboardInterrupt:

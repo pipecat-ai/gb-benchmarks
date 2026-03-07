@@ -26,8 +26,8 @@ TS="$(date -u +%Y%m%dT%H%M%SZ)"
 uv run --project port-to-port python port-to-port/mini-rl-env.py \
   --provider anthropic \
   --model claude-sonnet-4-6 \
-  --thinking-budget 1024 \
-  --max-turns 40 \
+  --thinking medium \
+  --max-turns 50 \
   --log-json "port-to-port/runs/claude-sonnet-4-6-${TS}.json" \
   > "port-to-port/runs/claude-sonnet-4-6-${TS}.log" 2>&1
 ```

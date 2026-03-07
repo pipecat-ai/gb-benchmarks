@@ -4,7 +4,7 @@ This document translates the planning rubric into implementation-facing notes.
 
 Related doc:
 
-- [prompt-and-primary-score-plan.md](/Users/khkramer/src/gb-benchmarks/port-to-port/docs/prompt-and-primary-score-plan.md)
+- [prompt-and-primary-score-plan.md](./prompt-and-primary-score-plan.md)
 
 ## Purpose
 
@@ -23,7 +23,8 @@ An implementation from scratch should assume `mini_rl_run.v3` input and rely on 
 
 - `metadata.initial_state`
 - `metadata.task_prompt_hash`
-- `metadata.task_variant` when present
+- `metadata.task_prompt_version` for built-in prompts
+- `metadata.task_variant`
 - `summary`
 - `termination`
 - `turns[*].tool_calls`
@@ -32,6 +33,9 @@ An implementation from scratch should assume `mini_rl_run.v3` input and rely on 
 - `turns[*].bad_action_increment`
 
 Everything else should be derived from those fields where possible.
+
+Evaluator outputs should also stamp `score_rubric_version` so rescoring and leaderboard grouping stay explicit when the rubric changes.
+Evaluator outputs should also stamp `leaderboard_prompt_id` so summary tables can stay single-prompt by construction.
 
 Minimum clean-room artifact requirements:
 
@@ -53,14 +57,9 @@ Minimum clean-room artifact requirements:
 
 If a fresh implementation cannot preserve `mini_rl_run.v3` exactly, it should still preserve those semantics.
 
-## Representative Runs
+## Representative Patterns
 
-Strong runs:
-
-- [sonnet46-medium-r10.json](/Users/khkramer/src/gb-benchmarks/port-to-port/runs/data-collection-20260226T070342Z/json/sonnet46-medium-r10.json)
-- [sonnet46-medium-r02.json](/Users/khkramer/src/gb-benchmarks/port-to-port/runs/data-collection-20260226T070342Z/json/sonnet46-medium-r02.json)
-
-Observed pattern:
+Observed strong pattern:
 
 - complete route execution
 - recharge at the correct mega-port
@@ -69,12 +68,7 @@ Observed pattern:
 - profitable multi-hop trading
 - accurate and internally consistent finished message
 
-Middling runs:
-
-- [run-05.json](/Users/khkramer/src/gb-benchmarks/port-to-port/runs/nemotron3-super-120b-th512-20x-20260305T225007Z/run-05.json)
-- [run-14.json](/Users/khkramer/src/gb-benchmarks/port-to-port/runs/nemotron3-super-120b-th512-20x-20260305T225007Z/run-14.json)
-
-Observed pattern:
+Observed middling pattern:
 
 - route completion is often correct
 - recharge is often correct
@@ -82,12 +76,7 @@ Observed pattern:
 - some invalid calls occur
 - final summary may be contradictory or numerically wrong even when the route is complete
 
-Poor but benchmark-valid runs:
-
-- [run-001.json](/Users/khkramer/src/gb-benchmarks/port-to-port/runs/supernova-low-20-batch4-20260226T234711Z/run-001.json)
-- [run-008.json](/Users/khkramer/src/gb-benchmarks/port-to-port/runs/gpt-5-mini-20x3-batch12-instrfix-20260227T185757Z/minimal/run-008.json)
-
-Observed pattern:
+Observed poor-but-valid pattern:
 
 - premature `finished` before final objective completion
 - repeated invalid trade attempts
@@ -100,7 +89,7 @@ Observed pattern:
 The rubric should separate these dimensions:
 
 1. Did the model complete the route objectives?
-2. Did it trade well on the path it actually took?
+2. Did it trade well on the required course?
 3. Did it move efficiently?
 4. Did it use tools correctly and economically?
 5. Did it produce a correct final message?
@@ -113,9 +102,26 @@ That yields the five score families from the planning doc:
 - tool discipline
 - final report quality
 
+V1 weight split:
+
+- mission completion: 40
+- trade quality: 15
+- path efficiency: 15
+- tool discipline: 15
+- final report quality: 15
+
+Human-facing summary metric:
+
+- `task_complete` is the one binary completion metric we should surface in summary tables
+- `task_complete` means: reached the mega-port, recharged to full, returned to the start sector, and first `finished` happened only after those conditions were satisfied
+
 ## Mission Completion Notes
 
 This category should be high-weight and simple.
+
+V1 weighting note:
+
+- mission completion is the heaviest category at 40 points
 
 Important distinctions:
 
@@ -123,11 +129,6 @@ Important distinctions:
 - reached mega-port but did not recharge
 - recharged but did not get home
 - got home but called `finished` at the wrong time
-
-Representative examples:
-
-- clean success: [sonnet46-medium-r10.json](/Users/khkramer/src/gb-benchmarks/port-to-port/runs/data-collection-20260226T070342Z/json/sonnet46-medium-r10.json)
-- premature-finish failure: [run-001.json](/Users/khkramer/src/gb-benchmarks/port-to-port/runs/supernova-low-20-batch4-20260226T234711Z/run-001.json)
 
 Implementation note:
 
@@ -150,7 +151,11 @@ Ground-truth accounting definitions used by scoring and report judging:
 
 ## Trade Quality Notes
 
-Trade quality should use route-conditioned optimality as the primary measure.
+Trade quality should use required-course optimality as the primary measure.
+
+V1 weighting note:
+
+- trade quality is intentionally lower-weight than mission because off-course route creativity is no longer part of the score
 
 Two separate things matter:
 
@@ -161,20 +166,20 @@ Two separate things matter:
 
 Question:
 
-- when the model visited a port where a beneficial trade was available on its actual route, did it take that opportunity?
+- when the model reached a required-course port visit where a beneficial trade was available, did it take that opportunity?
 
 This should not be scored with naive "did any trade happen?" logic.
 
 Instead:
 
-- compute the route-conditioned oracle policy
-- identify the beneficial visited opportunities the oracle actually uses
+- compute the required-course oracle policy
+- identify the beneficial required-course opportunities the oracle actually uses
 - compare model behavior to that opportunity set
 
 V1 coverage counting rule:
 
-- count a beneficial visited opportunity at the port-visit level, not just the sector level
-- a port visit counts as captured if the model made at least one successful `trade` on that same oracle-used visit
+- count a beneficial required-course opportunity at the port-visit level, not just the sector level
+- a port visit counts as captured if the model made at least one successful `trade` on that same oracle-used required-course visit
 
 This avoids arbitrary hand-written definitions of "should have traded here."
 
@@ -182,51 +187,61 @@ This avoids arbitrary hand-written definitions of "should have traded here."
 
 Question:
 
-- given the route and visit order the model actually chose, how much of the available trade value did it capture?
-
-Representative examples:
-
-- strong execution: Claude Sonnet runs, especially [sonnet46-medium-r02.json](/Users/khkramer/src/gb-benchmarks/port-to-port/runs/data-collection-20260226T070342Z/json/sonnet46-medium-r02.json)
-- middling execution: [run-05.json](/Users/khkramer/src/gb-benchmarks/port-to-port/runs/nemotron3-super-120b-th512-20x-20260305T225007Z/run-05.json)
-- collapse after partial success: [run-008.json](/Users/khkramer/src/gb-benchmarks/port-to-port/runs/gpt-5-mini-20x3-batch12-instrfix-20260227T185757Z/minimal/run-008.json)
+- given the benchmark's required course, how much of the available trade value did it capture without going off-course?
 
 Implementation note:
 
-- use route-conditioned optimum for primary score
+- use required-course optimum for primary score
 - keep global optimum as a secondary diagnostic only
 
 Definitions:
 
-`realized_trade_value`
+`on_course_realized_trade_value`
 
-- net credits gained or lost from successful `trade` calls only
+- net credits gained or lost from successful `trade` calls at required-course port visits only
 - do not include recharge cost, movement cost, or other non-trade costs
+- off-course trades do not increase this value
 
-`route_conditioned_optimal_trade_value`
+`required_course_optimal_trade_value`
 
-- maximum achievable `realized_trade_value` on the model's actual visited port sequence and visit order
+- maximum achievable `on_course_realized_trade_value` on the benchmark's canonical required-course port sequence and visit order
+
+`off_course_trade_value`
+
+- net credits gained or lost from successful `trade` calls outside required-course port visits
+- diagnostic only; this should not increase trade score
+
+`required_course_trade_gap`
+
+- `required_course_optimal_trade_value - on_course_realized_trade_value`
+- diagnostic only; useful for inspecting how much on-course trade value the run left on the table
 
 Oracle implementation rule:
 
-- implement this as a dynamic program over the visited-port sequence
+- implement this as a dynamic program over the required-course port sequence
 - oracle state should include at least:
   - visit index
   - credits
   - cargo inventory by commodity
   - remaining free holds
-- the oracle may choose any valid buy, sell, or skip action at a visited port
+- the oracle may choose any valid buy, sell, or skip action at a required-course port visit
 - the oracle may not change route, visit order, recharge behavior, or any non-trade world event
+- in the current synthetic world the required course is unique; if a future environment introduces tied shortest valid courses, add a canonical tie-breaker and version the benchmark explicitly
 
 Edge case:
 
-- if `route_conditioned_optimal_trade_value <= 0`, do not use the normal ratio bands
+- if `required_course_optimal_trade_value <= 0`, do not use the normal ratio bands
 - in that case:
-  - award full trade-execution credit if `realized_trade_value >= 0`
+  - award full trade-execution credit if `on_course_realized_trade_value >= 0`
   - otherwise treat the run as having made harmful trade choices
 
 ## Path Efficiency Notes
 
-Path efficiency should score route quality without wiping out profitable detours.
+Path efficiency should score route compliance and efficiency. Profitable off-course detours should still be penalized.
+
+V1 weighting note:
+
+- path efficiency has the same weight as trade quality because staying on the required course is part of task execution, not just a small cleanup penalty
 
 We want to distinguish:
 
@@ -239,14 +254,14 @@ We want to distinguish:
 
 `extra_moves_count`
 
-- moves beyond the minimum required for the route actually being attempted, excluding moves that clearly produced value through trade or goal progress
+- moves beyond the minimum required for the benchmark's canonical shortest round trip
 
 `avoidable_backtrack_count`
 
 - repeated sector revisits that do not appear necessary for:
   - reaching the mega-port
   - returning home
-  - taking a clearly profitable trade detour
+  - recovering from direct mission progress on the required course
 
 Path-efficiency phase segmentation:
 
@@ -263,14 +278,14 @@ Path-efficiency phase segmentation:
 
 V1 detour rule:
 
-- forgive an extra move only when it lies on a shortest path to a later visited port that the route-conditioned oracle uses for positive trade value
-- pure oscillations such as `A -> B -> A` count as avoidable backtracking unless `B` contributed direct mission progress or positive oracle-used trade value
+- any move that leaves the canonical shortest round-trip course counts as extra movement
+- pure oscillations such as `A -> B -> A` count as avoidable backtracking unless `B` contributed direct mission progress
 
-Representative examples:
+Representative cases:
 
-- efficient route with profitable detour: Claude Sonnet runs
-- noisy but recoverable route: Nemotron middling runs
-- premature finish with incomplete return leg: [run-001.json](/Users/khkramer/src/gb-benchmarks/port-to-port/runs/supernova-low-20-batch4-20260226T234711Z/run-001.json)
+- efficient route with strong on-course trading
+- noisy but recoverable route
+- premature finish with incomplete return leg
 
 Implementation note:
 
@@ -288,9 +303,9 @@ Important because:
 - one invalid trade is a small mistake
 - eighteen invalid trades is a collapse
 
-Representative example:
+Representative failure shape:
 
-- [run-008.json](/Users/khkramer/src/gb-benchmarks/port-to-port/runs/gpt-5-mini-20x3-batch12-instrfix-20260227T185757Z/minimal/run-008.json) has repeated invalid `trade` attempts and one invalid `salvage_collect`, with `bad_actions_count=18`
+- repeated invalid `trade` attempts and occasional hallucinated side actions can drive `bad_actions_count` into the high teens
 
 ### Definitions
 
@@ -367,10 +382,10 @@ Required elements:
 - number of distinct ports traded
 - whole-trip total profit or loss
 
-Representative examples:
+Representative cases:
 
-- strong report: [sonnet46-medium-r10.json](/Users/khkramer/src/gb-benchmarks/port-to-port/runs/data-collection-20260226T070342Z/json/sonnet46-medium-r10.json)
-- contradictory report despite route success: [run-14.json](/Users/khkramer/src/gb-benchmarks/port-to-port/runs/nemotron3-super-120b-th512-20x-20260305T225007Z/run-14.json)
+- strong report
+- contradictory report despite route success
 
 Important distinction:
 
@@ -427,11 +442,7 @@ Reason:
 
 These are not exact frozen scores yet. They are interpretation targets for the final rubric.
 
-### Strong Claude Run
-
-Example:
-
-- [sonnet46-medium-r10.json](/Users/khkramer/src/gb-benchmarks/port-to-port/runs/data-collection-20260226T070342Z/json/sonnet46-medium-r10.json)
+### Strong Run
 
 Expected shape:
 
@@ -445,11 +456,7 @@ Expected band:
 
 - roughly `90-100`
 
-### Middling Nemotron Run
-
-Example:
-
-- [run-05.json](/Users/khkramer/src/gb-benchmarks/port-to-port/runs/nemotron3-super-120b-th512-20x-20260305T225007Z/run-05.json)
+### Middling Run
 
 Expected shape:
 
@@ -464,10 +471,6 @@ Expected band:
 
 ### Route Success But Bad Report
 
-Example:
-
-- [run-14.json](/Users/khkramer/src/gb-benchmarks/port-to-port/runs/nemotron3-super-120b-th512-20x-20260305T225007Z/run-14.json)
-
 Expected shape:
 
 - high mission completion
@@ -481,10 +484,6 @@ Expected band:
 
 ### Premature Finish
 
-Example:
-
-- [run-001.json](/Users/khkramer/src/gb-benchmarks/port-to-port/runs/supernova-low-20-batch4-20260226T234711Z/run-001.json)
-
 Expected shape:
 
 - some completion credit for reaching mega and recharging
@@ -495,10 +494,6 @@ Expected shape:
 This run should score above a total collapse, but far below a true success.
 
 ### Tool-Use Collapse
-
-Example:
-
-- [run-008.json](/Users/khkramer/src/gb-benchmarks/port-to-port/runs/gpt-5-mini-20x3-batch12-instrfix-20260227T185757Z/minimal/run-008.json)
 
 Expected shape:
 
@@ -517,8 +512,11 @@ Examples:
 
 - store `invalid_trade_count`
 - store `redundant_info_call_count`
-- store `realized_trade_value`
-- store `route_conditioned_optimal_trade_value`
+- store `on_course_realized_trade_value`
+- store `required_course_optimal_trade_value`
+- store `off_course_trade_value`
+- store `required_course_trade_gap`
+- store `score_rubric_version`
 
 Then derive:
 
@@ -534,15 +532,24 @@ Storage recommendation:
 - store derived subscores alongside them
 - keep primary-score computation pure and reproducible from the stored raw fields
 
+Leaderboard recommendation:
+
+- the human-facing summary table should surface `primary_score_100`, `task_complete_rate`, subscore medians for trade/path/tools/report, and timing columns
+- it should not surface extra boolean report-accuracy columns as primary summary metrics
+- each leaderboard should cover exactly one prompt definition
+- maintain separate summary tables for `natural`, `literal`, and any repeated custom prompt
+- leaderboard generation should fail fast if the input run set contains more than one leaderboard prompt id
+- the canonical maintained markdown outputs should be `port-to-port/leaderboards/leaderboard-natural.md` and `port-to-port/leaderboards/leaderboard-literal.md`
+
 ## Immediate Implementation Targets
 
-1. Add built-in prompt variants and persist `task_variant`
+1. Add built-in prompt variants and persist `task_variant` plus `task_prompt_version`
 2. Add `docs/scoring-notes.md` to the implementation sequence
-3. Implement route-conditioned trade oracle
+3. Implement required-course trade oracle
 4. Add raw count fields needed for:
    - unnecessary tool calls
    - redundant info calls
    - avoidable backtracks
    - extra moves
 5. Add per-element report verdicts from the judge
-6. Combine those into subscores and `primary_score_100`
+6. Combine those into subscores, `primary_score_100`, `task_complete`, and a prompt-specific leaderboard key
