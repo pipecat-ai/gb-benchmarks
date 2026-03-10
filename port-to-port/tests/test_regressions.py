@@ -10,6 +10,7 @@ import tempfile
 import time
 import types
 import unittest
+from collections import deque
 from pathlib import Path
 from unittest import mock
 
@@ -38,6 +39,7 @@ evaluate_runs = _load_module("evaluate_runs_test", "evaluate_runs.py")
 llm_factory = _load_module("llm_factory_test", "llm_factory.py")
 mini_rl_env = _load_module("mini_rl_env_test", "mini-rl-env.py")
 build_primary_leaderboard = _load_module("build_primary_leaderboard_test", "build_primary_leaderboard.py")
+openai_responses_service = _load_module("openai_responses_service_test", "openai_responses_service.py")
 tool_catalog = _load_module("tool_catalog_test", "tool_catalog.py")
 synthetic_world = _load_module("synthetic_world_test", "synthetic_world.py")
 
@@ -873,6 +875,41 @@ class EvaluateRunsRegressionTests(unittest.TestCase):
 
 
 class MiniRLEnvRegressionTests(unittest.TestCase):
+    def _bind_capture_runtime_methods(
+        self,
+        runtime: types.SimpleNamespace,
+        *,
+        inference_inputs: list[dict[str, object]] | None = None,
+        pending_capture_indexes: list[int] | None = None,
+    ) -> None:
+        runtime.inference_inputs = list(inference_inputs or [])
+        runtime._pending_inference_capture_indexes = deque(pending_capture_indexes or [])
+        runtime._active_inference_capture_index = None
+        runtime._ensure_inference_capture_state = types.MethodType(
+            mini_rl_env._BenchmarkRuntime._ensure_inference_capture_state,
+            runtime,
+        )
+        runtime._inference_input_entry = types.MethodType(
+            mini_rl_env._BenchmarkRuntime._inference_input_entry,
+            runtime,
+        )
+        runtime.claim_next_inference_capture = types.MethodType(
+            mini_rl_env._BenchmarkRuntime.claim_next_inference_capture,
+            runtime,
+        )
+        runtime.activate_next_inference_capture = types.MethodType(
+            mini_rl_env._BenchmarkRuntime.activate_next_inference_capture,
+            runtime,
+        )
+        runtime.attach_active_inference_capture = types.MethodType(
+            mini_rl_env._BenchmarkRuntime.attach_active_inference_capture,
+            runtime,
+        )
+        runtime.discard_pending_inference_capture = types.MethodType(
+            mini_rl_env._BenchmarkRuntime.discard_pending_inference_capture,
+            runtime,
+        )
+
     def test_serialize_llm_usage_metrics_includes_reasoning_and_cached_tokens(self) -> None:
         metric = mini_rl_env.LLMUsageMetricsData(
             processor="llm",
@@ -910,6 +947,9 @@ class MiniRLEnvRegressionTests(unittest.TestCase):
             runtime._deferred_stop_reason = None
             runtime.done_event = asyncio.Event()
             runtime.pipeline_task = None
+            runtime.world = types.SimpleNamespace(
+                state_snapshot=lambda: {"sector": 3080, "credits": 1000},
+            )
             runtime.async_completion_timeout_count = 0
             runtime._async_dependency_waiters = []
             runtime.controller = mini_rl_env._BenchmarkInferenceController(runtime)
@@ -962,6 +1002,38 @@ class MiniRLEnvRegressionTests(unittest.TestCase):
         first_handle.cancel.assert_called_once_with()
         second_handle.cancel.assert_not_called()
 
+    def test_schedule_pending_inference_discards_capture_when_queue_fails(self) -> None:
+        async def _run() -> None:
+            async def failing_queue_frames(_frames) -> None:
+                raise RuntimeError("queue failed")
+
+            runtime = types.SimpleNamespace(
+                stop_requested=False,
+                inference_suppressed=False,
+                turn_count=3,
+                world=types.SimpleNamespace(state_snapshot=lambda: {"sector": 1611, "credits": 1200}),
+                queue_inference_capture=mock.Mock(return_value=7),
+                discard_pending_inference_capture=mock.Mock(),
+            )
+            controller = mini_rl_env._BenchmarkInferenceController(runtime)
+            controller.bind_pipeline_task(
+                types.SimpleNamespace(
+                    has_finished=lambda: False,
+                    queue_frames=failing_queue_frames,
+                )
+            )
+            controller._inference_reasons = ["event:movement.complete"]
+
+            with self.assertRaisesRegex(RuntimeError, "queue failed"):
+                await controller._schedule_pending_inference()
+
+            runtime.queue_inference_capture.assert_called_once_with(["event:movement.complete"])
+            runtime.discard_pending_inference_capture.assert_called_once_with(7)
+            self.assertEqual(controller._inference_reasons, ["event:movement.complete"])
+            self.assertFalse(controller._llm_inflight)
+
+        asyncio.run(_run())
+
     def test_response_tracker_logs_turn_usage_from_metrics_frame(self) -> None:
         async def _run() -> None:
             world = types.SimpleNamespace(
@@ -979,6 +1051,11 @@ class MiniRLEnvRegressionTests(unittest.TestCase):
                 max_turns=50,
                 request_stop=mock.Mock(),
                 world=world,
+            )
+            self._bind_capture_runtime_methods(
+                runtime,
+                inference_inputs=[{"inference_index": 1}],
+                pending_capture_indexes=[1],
             )
             controller = mini_rl_env._BenchmarkInferenceController(runtime)
             tracker = mini_rl_env._BenchmarkResponseTracker(runtime, controller)
@@ -1048,10 +1125,57 @@ class MiniRLEnvRegressionTests(unittest.TestCase):
             self.assertEqual(usage["reasoning_tokens"], 17)
             self.assertEqual(usage["processor"], "llm")
             self.assertEqual(usage["model"], "demo-model")
+            self.assertEqual(runtime.turn_logs[0]["inference_index"], 1)
+            self.assertEqual(runtime.inference_inputs[0]["response_start_llm_turn"], 1)
+            self.assertEqual(runtime.inference_inputs[0]["finalized_llm_turn"], 1)
             await tracker.cleanup()
             await asyncio.sleep(0)
 
         asyncio.run(_run())
+
+    def test_runtime_queue_inference_capture_binds_by_inference_index(self) -> None:
+        class FakeContext:
+            def get_messages(self, llm_specific_filter=None):
+                if llm_specific_filter == "provider-filter":
+                    return [{"role": "user", "content": "filtered"}]
+                return [{"role": "user", "content": "full"}]
+
+        class FakeAdapter:
+            id_for_llm_specific_messages = "provider-filter"
+
+            def get_llm_invocation_params(self, context):
+                return {"messages": context.get_messages()}
+
+        runtime = mini_rl_env._BenchmarkRuntime.__new__(mini_rl_env._BenchmarkRuntime)
+        runtime.args = types.SimpleNamespace(capture_inference_inputs=True)
+        runtime.turn_count = 21
+        runtime.world = types.SimpleNamespace(state_snapshot=lambda: {"sector": 2058, "credits": 16588})
+        runtime.llm_context = FakeContext()
+        runtime.llm_service = types.SimpleNamespace(
+            get_llm_adapter=lambda: FakeAdapter(),
+            _settings={"extra": {"reasoning": {"effort": "medium"}}},
+        )
+        runtime.inference_inputs = []
+        runtime._pending_inference_capture_indexes = deque()
+        runtime._active_inference_capture_index = None
+
+        inference_index = runtime.queue_inference_capture(["event:status.update"])
+
+        self.assertEqual(inference_index, 1)
+        self.assertEqual(list(runtime._pending_inference_capture_indexes), [1])
+        self.assertEqual(runtime.inference_inputs[0]["llm_turn"], 22)
+        self.assertEqual(runtime.inference_inputs[0]["messages"][0]["content"], "full")
+        self.assertEqual(runtime.inference_inputs[0]["messages_for_llm"][0]["content"], "filtered")
+
+        runtime.activate_next_inference_capture()
+        turn_log = {"llm_turn": 22}
+        runtime.attach_active_inference_capture(turn_log)
+
+        self.assertEqual(turn_log["inference_index"], 1)
+        self.assertEqual(runtime.inference_inputs[0]["response_start_llm_turn"], 22)
+        self.assertEqual(runtime.inference_inputs[0]["finalized_llm_turn"], 22)
+        self.assertEqual(list(runtime._pending_inference_capture_indexes), [])
+        self.assertIsNone(runtime._active_inference_capture_index)
 
     def test_response_tracker_waits_for_async_completion_before_finalizing_turn(self) -> None:
         async def _run() -> None:
@@ -1076,6 +1200,7 @@ class MiniRLEnvRegressionTests(unittest.TestCase):
                 resolve_async_dependency_waiters=mock.Mock(),
                 maybe_finalize_deferred_stop=mock.Mock(),
             )
+            self._bind_capture_runtime_methods(runtime)
             controller = mini_rl_env._BenchmarkInferenceController(runtime)
             tracker = mini_rl_env._BenchmarkResponseTracker(runtime, controller)
             runtime.controller = controller
@@ -1163,6 +1288,7 @@ class MiniRLEnvRegressionTests(unittest.TestCase):
                 resolve_async_dependency_waiters=mock.Mock(),
                 maybe_finalize_deferred_stop=mock.Mock(),
             )
+            self._bind_capture_runtime_methods(runtime)
             controller = mini_rl_env._BenchmarkInferenceController(runtime)
             tracker = mini_rl_env._BenchmarkResponseTracker(runtime, controller)
             runtime.controller = controller
@@ -1252,6 +1378,7 @@ class MiniRLEnvRegressionTests(unittest.TestCase):
                 resolve_async_dependency_waiters=mock.Mock(),
                 maybe_finalize_deferred_stop=mock.Mock(),
             )
+            self._bind_capture_runtime_methods(runtime)
             controller = mini_rl_env._BenchmarkInferenceController(runtime)
             tracker = mini_rl_env._BenchmarkResponseTracker(runtime, controller)
             runtime.controller = controller
@@ -1339,6 +1466,141 @@ class MiniRLEnvRegressionTests(unittest.TestCase):
         self.assertEqual(policy, "anthropic:adaptive disabled")
         self.assertEqual(llm_service._settings["extra"], {})
 
+    def test_apply_benchmark_thinking_mode_uses_responses_reasoning_for_gpt54(self) -> None:
+        llm_service = types.SimpleNamespace(_settings={})
+
+        policy = mini_rl_env._apply_benchmark_thinking_mode(
+            llm_service=llm_service,
+            provider=mini_rl_env.LLMProvider.OPENAI,
+            model="gpt-5.4",
+            thinking="medium",
+            thinking_budget=None,
+            openai_base_url=None,
+        )
+
+        self.assertEqual(policy, "openai:gpt-5.4 responses reasoning.effort=medium")
+        self.assertEqual(llm_service._settings["extra"]["reasoning"], {"effort": "medium"})
+
+    def test_apply_benchmark_thinking_mode_maps_none_to_none_for_gpt54(self) -> None:
+        llm_service = types.SimpleNamespace(_settings={})
+
+        policy = mini_rl_env._apply_benchmark_thinking_mode(
+            llm_service=llm_service,
+            provider=mini_rl_env.LLMProvider.OPENAI,
+            model="gpt-5.4",
+            thinking="none",
+            thinking_budget=None,
+            openai_base_url=None,
+        )
+
+        self.assertEqual(policy, "openai:gpt-5.4 responses reasoning.effort=none")
+        self.assertEqual(llm_service._settings["extra"]["reasoning"], {"effort": "none"})
+
+    def test_apply_benchmark_thinking_mode_sets_qwen35_4b_enable_thinking_toggle(self) -> None:
+        llm_service = types.SimpleNamespace(_settings={})
+
+        policy = mini_rl_env._apply_benchmark_thinking_mode(
+            llm_service=llm_service,
+            provider=mini_rl_env.LLMProvider.OPENAI,
+            model="qwen3.5-4b",
+            thinking="none",
+            thinking_budget=None,
+            openai_base_url="https://daily--qwen35-sglang-serve-4b.modal.run",
+        )
+
+        self.assertEqual(policy, "openai-compatible:sglang qwen3.5 enable_thinking=False")
+        self.assertEqual(
+            llm_service._settings["extra"]["extra_body"]["chat_template_kwargs"]["enable_thinking"],
+            False,
+        )
+
+    def test_apply_benchmark_thinking_mode_sets_qwen35_27b_enable_thinking_toggle(self) -> None:
+        llm_service = types.SimpleNamespace(_settings={})
+
+        policy = mini_rl_env._apply_benchmark_thinking_mode(
+            llm_service=llm_service,
+            provider=mini_rl_env.LLMProvider.OPENAI,
+            model="qwen3.5-27b",
+            thinking="none",
+            thinking_budget=None,
+            openai_base_url="https://daily--qwen35-sglang-serve-27b.modal.run",
+        )
+
+        self.assertEqual(policy, "openai-compatible:sglang qwen3.5 enable_thinking=False")
+        self.assertEqual(
+            llm_service._settings["extra"]["extra_body"]["chat_template_kwargs"]["enable_thinking"],
+            False,
+        )
+
+    def test_apply_benchmark_thinking_mode_leaves_qwen35_9b_default_reasoning_unmodified(self) -> None:
+        llm_service = types.SimpleNamespace(_settings={})
+
+        policy = mini_rl_env._apply_benchmark_thinking_mode(
+            llm_service=llm_service,
+            provider=mini_rl_env.LLMProvider.OPENAI,
+            model="qwen3.5-9b",
+            thinking="high",
+            thinking_budget=None,
+            openai_base_url="https://daily--qwen35-sglang-serve-9b.modal.run",
+        )
+
+        self.assertEqual(policy, "openai-compatible:qwen3.5 default reasoning only")
+        self.assertEqual(llm_service._settings["extra"], {})
+
+    def test_apply_benchmark_thinking_mode_sets_qwen35_35b_enable_thinking_toggle(self) -> None:
+        llm_service = types.SimpleNamespace(_settings={})
+
+        policy = mini_rl_env._apply_benchmark_thinking_mode(
+            llm_service=llm_service,
+            provider=mini_rl_env.LLMProvider.OPENAI,
+            model="qwen3.5-35b",
+            thinking="high",
+            thinking_budget=None,
+            openai_base_url="https://daily--qwen35-sglang-serve-35b.modal.run",
+        )
+
+        self.assertEqual(policy, "openai-compatible:sglang qwen3.5 enable_thinking=True")
+        self.assertEqual(
+            llm_service._settings["extra"]["extra_body"]["chat_template_kwargs"]["enable_thinking"],
+            True,
+        )
+
+    def test_apply_benchmark_thinking_mode_sets_glm47_enable_thinking_toggle(self) -> None:
+        llm_service = types.SimpleNamespace(_settings={})
+
+        policy = mini_rl_env._apply_benchmark_thinking_mode(
+            llm_service=llm_service,
+            provider=mini_rl_env.LLMProvider.OPENAI,
+            model="glm-4.7-flash",
+            thinking="none",
+            thinking_budget=None,
+            openai_base_url="https://daily--glm47-sglang-serve.modal.run",
+        )
+
+        self.assertEqual(policy, "openai-compatible:sglang glm enable_thinking=False")
+        self.assertEqual(
+            llm_service._settings["extra"]["extra_body"]["chat_template_kwargs"]["enable_thinking"],
+            False,
+        )
+
+    def test_apply_benchmark_thinking_mode_sets_glm5_enable_thinking_toggle(self) -> None:
+        llm_service = types.SimpleNamespace(_settings={})
+
+        policy = mini_rl_env._apply_benchmark_thinking_mode(
+            llm_service=llm_service,
+            provider=mini_rl_env.LLMProvider.OPENAI,
+            model="glm-5-fp8",
+            thinking="high",
+            thinking_budget=None,
+            openai_base_url="https://daily--glm5-sglang-serve.modal.run",
+        )
+
+        self.assertEqual(policy, "openai-compatible:sglang glm enable_thinking=True")
+        self.assertEqual(
+            llm_service._settings["extra"]["extra_body"]["chat_template_kwargs"]["enable_thinking"],
+            True,
+        )
+
     def test_validate_generation_controls_rejects_max_tokens_for_non_openai(self) -> None:
         parser = argparse.ArgumentParser()
         args = types.SimpleNamespace(
@@ -1353,6 +1615,87 @@ class MiniRLEnvRegressionTests(unittest.TestCase):
         with self.assertRaises(SystemExit):
             mini_rl_env._validate_generation_controls(args, parser)
 
+    def test_validate_generation_controls_allows_binary_qwen35_4b_reasoning(self) -> None:
+        parser = argparse.ArgumentParser()
+        args = types.SimpleNamespace(
+            provider="openai",
+            model="qwen3.5-4b",
+            openai_base_url="https://daily--qwen35-sglang-serve-4b.modal.run",
+            thinking="none",
+            thinking_budget=None,
+            max_tokens=4096,
+        )
+
+        mini_rl_env._validate_generation_controls(args, parser)
+
+    def test_validate_generation_controls_allows_binary_qwen35_27b_reasoning(self) -> None:
+        parser = argparse.ArgumentParser()
+        args = types.SimpleNamespace(
+            provider="openai",
+            model="qwen3.5-27b",
+            openai_base_url="https://daily--qwen35-sglang-serve-27b.modal.run",
+            thinking="none",
+            thinking_budget=None,
+            max_tokens=4096,
+        )
+
+        mini_rl_env._validate_generation_controls(args, parser)
+
+    def test_validate_generation_controls_allows_binary_qwen35_35b_reasoning(self) -> None:
+        parser = argparse.ArgumentParser()
+        args = types.SimpleNamespace(
+            provider="openai",
+            model="qwen3.5-35b",
+            openai_base_url="https://daily--qwen35-sglang-serve-35b.modal.run",
+            thinking="none",
+            thinking_budget=None,
+            max_tokens=4096,
+        )
+
+        mini_rl_env._validate_generation_controls(args, parser)
+
+    def test_validate_generation_controls_rejects_nondefault_qwen35_9b_reasoning(self) -> None:
+        parser = argparse.ArgumentParser()
+        args = types.SimpleNamespace(
+            provider="openai",
+            model="qwen3.5-9b",
+            openai_base_url="https://daily--qwen35-sglang-serve-9b.modal.run",
+            thinking="none",
+            thinking_budget=None,
+            max_tokens=4096,
+        )
+
+        with self.assertRaises(SystemExit):
+            mini_rl_env._validate_generation_controls(args, parser)
+
+    def test_validate_generation_controls_rejects_nonbinary_glm47_reasoning(self) -> None:
+        parser = argparse.ArgumentParser()
+        args = types.SimpleNamespace(
+            provider="openai",
+            model="glm-4.7-flash",
+            openai_base_url="https://daily--glm47-sglang-serve.modal.run",
+            thinking="medium",
+            thinking_budget=None,
+            max_tokens=4096,
+        )
+
+        with self.assertRaises(SystemExit):
+            mini_rl_env._validate_generation_controls(args, parser)
+
+    def test_validate_generation_controls_rejects_nonbinary_glm5_reasoning(self) -> None:
+        parser = argparse.ArgumentParser()
+        args = types.SimpleNamespace(
+            provider="openai",
+            model="glm-5-fp8",
+            openai_base_url="https://daily--glm5-sglang-serve.modal.run",
+            thinking="medium",
+            thinking_budget=None,
+            max_tokens=4096,
+        )
+
+        with self.assertRaises(SystemExit):
+            mini_rl_env._validate_generation_controls(args, parser)
+
     def test_later_batched_call_waits_for_async_completion(self) -> None:
         async def _run() -> None:
             async def result_callback(payload: dict[str, object], properties=None) -> None:
@@ -1361,6 +1704,7 @@ class MiniRLEnvRegressionTests(unittest.TestCase):
             payloads: list[dict[str, object]] = []
             world = types.SimpleNamespace(
                 increment_bad_action=mock.Mock(),
+                state_snapshot=lambda: {"sector": 3080, "credits": 1000},
                 execute_tool=mock.Mock(
                     return_value=synthetic_world.ToolExecution(
                         payload={"status": "success"},
@@ -1736,8 +2080,303 @@ class LeaderboardRegressionTests(unittest.TestCase):
         self.assertEqual(rows[0]["n"], 2)
         self.assertEqual(rows[0]["openai_base_url"], "http://host:8000/v1")
 
+    def test_distinct_thinking_placeholders_keep_distinct_labels_when_budget_matches(self) -> None:
+        payload_low = {
+            "schema_version": "mini_rl_run.v3",
+            "summary": {
+                "model": "demo",
+                "thinking": "low",
+                "thinking_budget": 1536,
+                "elapsed_ms": 1000,
+                "turns_executed": 1,
+            },
+            "config": {"openai_base_url": "http://host:8000"},
+            "turns": [],
+            "metadata": {"task_prompt_hash": "prompt-a"},
+        }
+        payload_medium = {
+            "schema_version": "mini_rl_run.v3",
+            "summary": {
+                "model": "demo",
+                "thinking": "medium",
+                "thinking_budget": 1536,
+                "elapsed_ms": 1000,
+                "turns_executed": 1,
+            },
+            "config": {"openai_base_url": "http://host:8000"},
+            "turns": [],
+            "metadata": {"task_prompt_hash": "prompt-a"},
+        }
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            run_low = Path(tmpdir) / "low.json"
+            run_medium = Path(tmpdir) / "medium.json"
+            run_low.write_text(json.dumps(payload_low), encoding="utf-8")
+            run_medium.write_text(json.dumps(payload_medium), encoding="utf-8")
+
+            rows, _rubric_versions = build_primary_leaderboard._build_rows(
+                [run_low, run_medium],
+                enriched_by_file={
+                    str(run_low.resolve()): {
+                        "file": str(run_low),
+                        "score_rubric_version": "port_to_port_primary_v1",
+                        "primary_score_100": 80,
+                        "task_complete": True,
+                        "trade_quality_score": 12,
+                        "path_efficiency_score": 13,
+                        "tool_discipline_score": 14,
+                        "report_quality_score": 11,
+                    },
+                    str(run_medium.resolve()): {
+                        "file": str(run_medium),
+                        "score_rubric_version": "port_to_port_primary_v1",
+                        "primary_score_100": 82,
+                        "task_complete": True,
+                        "trade_quality_score": 12,
+                        "path_efficiency_score": 13,
+                        "tool_discipline_score": 14,
+                        "report_quality_score": 11,
+                    },
+                },
+                model_name_aliases={},
+            )
+
+        self.assertEqual(len(rows), 2)
+        labels = {row["model_label"] for row in rows}
+        self.assertEqual(
+            labels,
+            {
+                "demo (th=low, tb=1536, base=host:8000)",
+                "demo (th=medium, tb=1536, base=host:8000)",
+            },
+        )
+
+    def test_default_only_nemotron_endpoint_does_not_display_inferred_budget(self) -> None:
+        payload = {
+            "schema_version": "mini_rl_run.v3",
+            "summary": {
+                "model": "nemotron-3-super-120b",
+                "thinking": "high",
+                "thinking_budget": None,
+                "elapsed_ms": 1000,
+                "turns_executed": 1,
+            },
+            "config": {"openai_base_url": "https://daily--nemotron-vllm-017-super.modal.run"},
+            "turns": [],
+            "metadata": {"task_prompt_hash": "prompt-a"},
+        }
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            run_path = Path(tmpdir) / "run.json"
+            run_path.write_text(json.dumps(payload), encoding="utf-8")
+
+            rows, _rubric_versions = build_primary_leaderboard._build_rows(
+                [run_path],
+                enriched_by_file={
+                    str(run_path.resolve()): {
+                        "file": str(run_path),
+                        "score_rubric_version": "port_to_port_primary_v1",
+                        "primary_score_100": 80,
+                        "task_complete": True,
+                        "trade_quality_score": 12,
+                        "path_efficiency_score": 13,
+                        "tool_discipline_score": 14,
+                        "report_quality_score": 11,
+                    }
+                },
+                model_name_aliases={},
+            )
+
+        self.assertEqual(len(rows), 1)
+        self.assertIn("th=high", rows[0]["model_label"])
+        self.assertNotIn("tb=", rows[0]["model_label"])
+
 
 class ScriptRegressionTests(unittest.TestCase):
+    def test_rebuild_leaderboard_input_dir_removes_stale_json_links(self) -> None:
+        script_text = (PORT_TO_PORT_DIR / "run_natural_leaderboard_sweep.sh").read_text(encoding="utf-8")
+        prefix, separator, _suffix = script_text.partition("\nANTHROPIC_LABELS=(")
+        self.assertTrue(separator, "failed to isolate helper section from run_natural_leaderboard_sweep.sh")
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tempdir = Path(tmpdir)
+            script_path = tempdir / "run_natural_leaderboard_sweep.sh"
+            script_path.write_text(
+                prefix
+                + """
+printf '{}' > "$RUN_DIR/current-source.json"
+ln -sfn "$(pwd)/$RUN_DIR/current-source.json" "$JUDGEABLE_DIR/current.json"
+mkdir -p runs/leaderboard-natural-v1-input
+printf '{}' > runs/stale-source.json
+ln -sfn "$(pwd)/runs/stale-source.json" runs/leaderboard-natural-v1-input/stale.json
+rebuild_leaderboard_input_dir runs/leaderboard-natural-v1-input
+find runs/leaderboard-natural-v1-input -maxdepth 1 -mindepth 1 -name '*.json' -printf '%f\\n' | sort
+""",
+                encoding="utf-8",
+            )
+            script_path.chmod(0o755)
+
+            env = os.environ.copy()
+            env["ANTHROPIC_API_KEY"] = "test-anthropic"
+            env["OPENAI_API_KEY"] = "test-openai"
+            env["GOOGLE_API_KEY"] = "test-google"
+
+            completed = subprocess.run(
+                ["bash", str(script_path), "20260310T000000Z"],
+                cwd=tempdir,
+                env=env,
+                capture_output=True,
+                text=True,
+            )
+
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertEqual(completed.stdout.strip(), "current.json")
+
+    def test_rebuild_leaderboard_input_dir_includes_failed_but_judgeable_jsons(self) -> None:
+        script_text = (PORT_TO_PORT_DIR / "run_natural_leaderboard_sweep.sh").read_text(encoding="utf-8")
+        prefix, separator, _suffix = script_text.partition("\nANTHROPIC_LABELS=(")
+        self.assertTrue(separator, "failed to isolate helper section from run_natural_leaderboard_sweep.sh")
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tempdir = Path(tmpdir)
+            script_path = tempdir / "run_natural_leaderboard_sweep.sh"
+            script_path.write_text(
+                prefix
+                + """
+printf '{}' > "$RUN_DIR/clean-source.json"
+printf '{}' > "$RUN_DIR/failed-source.json"
+ln -sfn "$(pwd)/$RUN_DIR/clean-source.json" "$ACCEPTED_DIR/clean.json"
+ln -sfn "$(pwd)/$RUN_DIR/clean-source.json" "$JUDGEABLE_DIR/clean.json"
+ln -sfn "$(pwd)/$RUN_DIR/failed-source.json" "$JUDGEABLE_DIR/failed.json"
+rebuild_leaderboard_input_dir runs/leaderboard-natural-v1-input
+find runs/leaderboard-natural-v1-input -maxdepth 1 -mindepth 1 -name '*.json' -printf '%f\\n' | sort
+""",
+                encoding="utf-8",
+            )
+            script_path.chmod(0o755)
+
+            env = os.environ.copy()
+            env["ANTHROPIC_API_KEY"] = "test-anthropic"
+            env["OPENAI_API_KEY"] = "test-openai"
+            env["GOOGLE_API_KEY"] = "test-google"
+
+            completed = subprocess.run(
+                ["bash", str(script_path), "20260310T000000Z"],
+                cwd=tempdir,
+                env=env,
+                capture_output=True,
+                text=True,
+            )
+
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertEqual(completed.stdout.strip().splitlines(), ["clean.json", "failed.json"])
+
+    def test_refresh_leaderboard_writes_sweep_outputs_without_overwriting_canonical_files(self) -> None:
+        script_text = (PORT_TO_PORT_DIR / "run_natural_leaderboard_sweep.sh").read_text(encoding="utf-8")
+        prefix, separator, _suffix = script_text.partition("\nANTHROPIC_LABELS=(")
+        self.assertTrue(separator, "failed to isolate helper section from run_natural_leaderboard_sweep.sh")
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tempdir = Path(tmpdir)
+            script_path = tempdir / "run_natural_leaderboard_sweep.sh"
+            script_path.write_text(
+                prefix
+                + """
+mkdir -p .venv/bin leaderboards runs
+cat > .venv/bin/python <<'EOF'
+#!/usr/bin/env bash
+script="$1"
+shift
+case "$script" in
+  evaluate_runs.py)
+    out_dir=""
+    while [[ $# -gt 0 ]]; do
+      case "$1" in
+        --out-dir)
+          out_dir="$2"
+          shift 2
+          ;;
+        *)
+          shift
+          ;;
+      esac
+    done
+    mkdir -p "$out_dir"
+    printf '{"ok": true}\\n' > "$out_dir/enriched_runs.jsonl"
+    ;;
+  build_primary_leaderboard.py)
+    out=""
+    enriched=""
+    while [[ $# -gt 0 ]]; do
+      case "$1" in
+        --out)
+          out="$2"
+          shift 2
+          ;;
+        --enriched-jsonl)
+          enriched="$2"
+          shift 2
+          ;;
+        *)
+          shift
+          ;;
+      esac
+    done
+    printf 'built-from=%s\\n' "$enriched" > "$out"
+    ;;
+  *)
+    echo "unexpected script: $script" >&2
+    exit 97
+    ;;
+esac
+EOF
+chmod +x .venv/bin/python
+
+printf 'canonical jsonl\\n' > runs/leaderboard-natural-v1-input.jsonl
+printf 'canonical leaderboard\\n' > leaderboards/leaderboard-natural.md
+
+for i in $(seq 1 22); do
+  printf '{}' > "runs/source-${i}.json"
+  ln -sfn "$(pwd)/runs/source-${i}.json" "$ACCEPTED_DIR/source-${i}.json"
+  ln -sfn "$(pwd)/runs/source-${i}.json" "$JUDGEABLE_DIR/source-${i}.json"
+done
+
+refresh_leaderboard 20260310T000000Z
+
+printf 'canonical_md=%s\\n' "$(cat leaderboards/leaderboard-natural.md)"
+printf 'canonical_jsonl=%s\\n' "$(cat runs/leaderboard-natural-v1-input.jsonl)"
+printf 'refresh_md=%s\\n' "$(cat runs/leaderboard-natural-v1-refresh-20260310T000000Z.md)"
+printf 'refresh_jsonl=%s\\n' "$(cat runs/leaderboard-natural-v1-refresh-20260310T000000Z.jsonl)"
+""",
+                encoding="utf-8",
+            )
+            script_path.chmod(0o755)
+
+            env = os.environ.copy()
+            env["TARGET_PER_CONFIG"] = "1"
+            env["ANTHROPIC_API_KEY"] = "test-anthropic"
+            env["OPENAI_API_KEY"] = "test-openai"
+            env["GOOGLE_API_KEY"] = "test-google"
+
+            completed = subprocess.run(
+                ["bash", str(script_path), "20260310T000000Z"],
+                cwd=tempdir,
+                env=env,
+                capture_output=True,
+                text=True,
+            )
+
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertIn("refresh leaderboard written to runs/leaderboard-natural-v1-refresh-20260310T000000Z.md", completed.stdout)
+        self.assertIn("canonical leaderboard left untouched at leaderboards/leaderboard-natural.md", completed.stdout)
+        self.assertIn("canonical_md=canonical leaderboard", completed.stdout)
+        self.assertIn("canonical_jsonl=canonical jsonl", completed.stdout)
+        self.assertIn(
+            "refresh_md=built-from=runs/leaderboard-natural-v1-refresh-20260310T000000Z.jsonl",
+            completed.stdout,
+        )
+        self.assertIn('refresh_jsonl={"ok": true}', completed.stdout)
+
     def test_run_model_matrix_fails_fast_without_judge_key(self) -> None:
         script_path = PORT_TO_PORT_DIR / "run_model_matrix.sh"
         runs_dir = PORT_TO_PORT_DIR / "runs"
@@ -2032,6 +2671,172 @@ class LlmFactoryRegressionTests(unittest.TestCase):
         self.assertEqual(params.kwargs["max_tokens"], 2048)
         self.assertNotIn("max_completion_tokens", params.kwargs)
         self.assertEqual(params.kwargs["temperature"], 0.2)
+
+    def test_gpt54_uses_openai_responses_service(self) -> None:
+        fake_responses_module = types.ModuleType("openai_responses_service")
+
+        class FakeResponsesService:
+            class InputParams:
+                def __init__(self, **kwargs):
+                    self.kwargs = kwargs
+
+            def __init__(self, **kwargs):
+                self.kwargs = kwargs
+
+        fake_responses_module.OpenAIResponsesLLMService = FakeResponsesService
+
+        with mock.patch.dict(sys.modules, {"openai_responses_service": fake_responses_module}):
+            service = llm_factory._create_openai_service(
+                api_key="dummy",
+                model="gpt-5.4",
+                thinking=None,
+                max_tokens=4096,
+                function_call_timeout_secs=20.0,
+                openai_base_url=None,
+                openai_params={"temperature": 0.2},
+            )
+
+        self.assertIsInstance(service, FakeResponsesService)
+        self.assertEqual(service.kwargs["model"], "gpt-5.4")
+        self.assertEqual(service.kwargs["function_call_timeout_secs"], 20.0)
+        params = service.kwargs["params"]
+        self.assertEqual(params.kwargs["max_tokens"], 4096)
+        self.assertEqual(params.kwargs["temperature"], 0.2)
+
+
+class OpenAIResponsesServiceRegressionTests(unittest.TestCase):
+    def test_assistant_history_uses_input_text_when_replayed(self) -> None:
+        service = object.__new__(openai_responses_service.OpenAIResponsesLLMService)
+
+        items = service._message_to_responses_items(
+            {
+                "role": "assistant",
+                "content": [{"type": "output_text", "text": "Let me check that route."}],
+                "tool_calls": [
+                    {
+                        "id": "call_1",
+                        "function": {
+                            "name": "plot_course",
+                            "arguments": "{\"destination\": 1611}",
+                        },
+                    }
+                ],
+            }
+        )
+
+        self.assertEqual(
+            items,
+            [
+                {
+                    "type": "function_call",
+                    "call_id": "call_1",
+                    "name": "plot_course",
+                    "arguments": "{\"destination\": 1611}",
+                },
+                {
+                    "type": "message",
+                    "role": "assistant",
+                    "content": [{"type": "input_text", "text": "Let me check that route."}],
+                },
+            ],
+        )
+
+    def test_process_context_batches_multi_tool_calls_into_one_dispatch(self) -> None:
+        class FakeStream:
+            def __init__(self, events):
+                self._events = iter(events)
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, exc_type, exc, tb):
+                return False
+
+            def __aiter__(self):
+                return self
+
+            async def __anext__(self):
+                try:
+                    return next(self._events)
+                except StopIteration as exc:
+                    raise StopAsyncIteration from exc
+
+        events = [
+            types.SimpleNamespace(
+                type="response.output_item.added",
+                item=types.SimpleNamespace(type="function_call", id="item_1", call_id="call_1", name="move"),
+            ),
+            types.SimpleNamespace(
+                type="response.output_item.added",
+                item=types.SimpleNamespace(type="function_call", id="item_2", call_id="call_2", name="trade"),
+            ),
+            types.SimpleNamespace(
+                type="response.function_call_arguments.done",
+                item_id="item_1",
+                name="move",
+                arguments='{"to_sector": 1611}',
+            ),
+            types.SimpleNamespace(
+                type="response.function_call_arguments.done",
+                item_id="item_2",
+                name="trade",
+                arguments='{"commodity": "neuro_symbolics", "trade_type": "buy", "quantity": 30}',
+            ),
+            types.SimpleNamespace(
+                type="response.output_item.done",
+                item=types.SimpleNamespace(
+                    type="function_call",
+                    id="item_1",
+                    call_id="call_1",
+                    name="move",
+                    arguments='{"to_sector": 1611}',
+                ),
+            ),
+            types.SimpleNamespace(
+                type="response.output_item.done",
+                item=types.SimpleNamespace(
+                    type="function_call",
+                    id="item_2",
+                    call_id="call_2",
+                    name="trade",
+                    arguments='{"commodity": "neuro_symbolics", "trade_type": "buy", "quantity": 30}',
+                ),
+            ),
+            types.SimpleNamespace(
+                type="response.completed",
+                response=types.SimpleNamespace(model=None, usage=None),
+            ),
+        ]
+
+        service = object.__new__(openai_responses_service.OpenAIResponsesLLMService)
+        service.start_ttfb_metrics = mock.AsyncMock()
+        service.stop_ttfb_metrics = mock.AsyncMock()
+        service.start_llm_usage_metrics = mock.AsyncMock()
+        service.run_function_calls = mock.AsyncMock()
+        service.push_error = mock.AsyncMock()
+        service._responses_request_params = lambda context: {}
+        service.get_full_model_name = lambda: None
+        service.set_full_model_name = mock.Mock()
+        service._client = types.SimpleNamespace(
+            responses=types.SimpleNamespace(stream=lambda **kwargs: FakeStream(events))
+        )
+
+        asyncio.run(service._process_context(types.SimpleNamespace()))
+
+        service.run_function_calls.assert_awaited_once()
+        function_calls = service.run_function_calls.await_args.args[0]
+        self.assertEqual(len(function_calls), 2)
+        self.assertEqual(
+            [(call.tool_call_id, call.function_name, call.arguments) for call in function_calls],
+            [
+                ("call_1", "move", {"to_sector": 1611}),
+                (
+                    "call_2",
+                    "trade",
+                    {"commodity": "neuro_symbolics", "trade_type": "buy", "quantity": 30},
+                ),
+            ],
+        )
 
 
 if __name__ == "__main__":

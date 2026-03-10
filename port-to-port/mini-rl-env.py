@@ -14,7 +14,9 @@ import re
 import subprocess
 import sys
 import time
+import urllib.parse
 import uuid
+from collections import deque
 from datetime import datetime, timezone
 from pathlib import Path
 from types import MethodType, SimpleNamespace
@@ -34,7 +36,7 @@ from pipecat.frames.frames import (
     LLMThoughtTextFrame,
     MetricsFrame,
 )
-from pipecat.metrics.metrics import LLMTokenUsage, LLMUsageMetricsData
+from pipecat.metrics.metrics import LLMTokenUsage, LLMUsageMetricsData, TTFBMetricsData
 from pipecat.pipeline.pipeline import Pipeline
 from pipecat.pipeline.runner import PipelineRunner
 from pipecat.pipeline.task import PipelineParams, PipelineTask
@@ -226,6 +228,46 @@ def _is_google_thinking_level_model(model_lower: str) -> bool:
 def _is_qwen35_model(model_lower: str) -> bool:
     normalized = model_lower.strip().lower()
     return "qwen3.5" in normalized or "qwen-3.5" in normalized
+
+
+def _is_glm_sglang_binary_reasoning_model(model_lower: str) -> bool:
+    normalized = model_lower.strip().lower()
+    return (
+        normalized.startswith("glm-4.7")
+        or normalized.startswith("glm4.7")
+        or normalized.startswith("glm-5")
+        or normalized.startswith("glm5")
+    )
+
+
+QWEN35_BINARY_REASONING_HOSTS = {
+    "daily--qwen35-4b-b200-sglang-serve.modal.run",
+    "daily--qwen35-sglang-serve-4b.modal.run",
+    "daily--qwen35-sglang-serve-27b.modal.run",
+    "daily--qwen35-sglang-serve-35b.modal.run",
+}
+
+
+def _is_qwen35_default_only_endpoint(openai_base_url: Optional[str]) -> bool:
+    if not openai_base_url:
+        return False
+
+    parsed = urllib.parse.urlparse(openai_base_url)
+    host = parsed.netloc.lower()
+    if host in QWEN35_BINARY_REASONING_HOSTS:
+        return False
+    if host.startswith("daily--qwen35-vllm-017-") and host.endswith(".modal.run"):
+        return True
+    return host.startswith("daily--qwen35-") and "sglang-serve" in host and host.endswith(".modal.run")
+
+
+def _is_nemotron_vllm_017_default_only_endpoint(openai_base_url: Optional[str]) -> bool:
+    if not openai_base_url:
+        return False
+
+    parsed = urllib.parse.urlparse(openai_base_url)
+    host = parsed.netloc.lower()
+    return "nemotron-vllm-017" in host and host.endswith(".modal.run")
 
 
 def _sanitize_assistant_replay_text(text: str) -> str:
@@ -440,6 +482,26 @@ def _usage_entry_from_metrics_frame(frame: MetricsFrame) -> Optional[dict[str, A
     return usage_entry
 
 
+def _ttfb_entry_from_metrics_frame(frame: MetricsFrame) -> Optional[dict[str, Any]]:
+    ttfb_entry: Optional[dict[str, Any]] = None
+    for metric_data in frame.data:
+        if not isinstance(metric_data, TTFBMetricsData):
+            continue
+        value = float(metric_data.value)
+        if value <= 0:
+            continue
+        serialized: dict[str, Any] = {"ttfb_ms": round(value * 1000.0, 2)}
+        if metric_data.processor:
+            serialized["processor"] = metric_data.processor
+        if metric_data.model:
+            serialized["model"] = metric_data.model
+        if ttfb_entry is None:
+            ttfb_entry = serialized
+        else:
+            ttfb_entry.update(serialized)
+    return ttfb_entry
+
+
 def _serialize_context_message(message: Any) -> Any:
     if isinstance(message, LLMSpecificMessage):
         return {
@@ -516,15 +578,56 @@ def _validate_generation_controls(args: argparse.Namespace, parser: argparse.Arg
         parser.error("--max-tokens is only supported when --provider openai is selected.")
 
     if args.provider == "openai":
-        if args.openai_base_url and _is_qwen35_model(model_lower):
+        if args.openai_base_url and _is_glm_sglang_binary_reasoning_model(model_lower):
             if args.thinking not in {"none", "high"}:
                 parser.error(
-                    "For Qwen 3.5 on OpenAI-compatible vLLM, --thinking must be 'none' "
+                    "GLM on OpenAI-compatible SGLang supports only --thinking "
+                    "'none' (thinking disabled) or 'high' (thinking enabled)."
+                )
+            if thinking_budget is not None:
+                parser.error(
+                    "GLM on OpenAI-compatible SGLang does not expose an exact "
+                    "--thinking-budget control; use --thinking none|high instead."
+                )
+            return
+
+        if (
+            args.openai_base_url
+            and model_lower.startswith("nemotron")
+            and _is_nemotron_vllm_017_default_only_endpoint(args.openai_base_url)
+        ):
+            if args.thinking != "high":
+                parser.error(
+                    "This Nemotron vLLM 0.17 endpoint only supports its default reasoning mode; "
+                    "use the default --thinking high and the harness will send no override."
+                )
+            if thinking_budget is not None:
+                parser.error(
+                    "This Nemotron vLLM 0.17 endpoint does not expose an exact --thinking-budget control."
+                )
+            return
+
+        if args.openai_base_url and _is_qwen35_model(model_lower):
+            if _is_qwen35_default_only_endpoint(args.openai_base_url):
+                if args.thinking != "high":
+                    parser.error(
+                        "This Qwen 3.5 endpoint only supports its default reasoning mode; "
+                        "use the default --thinking high and the harness will send no override."
+                    )
+                if thinking_budget is not None:
+                    parser.error(
+                        "This Qwen 3.5 endpoint does not expose an exact --thinking-budget control."
+                    )
+                return
+
+            if args.thinking not in {"none", "high"}:
+                parser.error(
+                    "For Qwen 3.5 on OpenAI-compatible SGLang, --thinking must be 'none' "
                     "(thinking disabled) or 'high' (thinking enabled)."
                 )
             if thinking_budget is not None:
                 parser.error(
-                    "Qwen 3.5 on OpenAI-compatible vLLM does not expose an exact "
+                    "Qwen 3.5 on OpenAI-compatible SGLang does not expose an exact "
                     "--thinking-budget control; use --thinking none|high instead."
                 )
             return
@@ -592,6 +695,11 @@ def _apply_benchmark_thinking_mode(
         extra.pop(key, None)
 
     if provider == LLMProvider.OPENAI:
+        if model_lower.startswith("gpt-5.4"):
+            effort = "none" if thinking == "none" else ("low" if thinking == "minimal" else thinking)
+            extra["reasoning"] = {"effort": effort}
+            return f"openai:gpt-5.4 responses reasoning.effort={effort}"
+
         if model_lower.startswith("gpt-5"):
             effort = "minimal" if thinking in {"none", "minimal"} else thinking
             extra["reasoning_effort"] = effort
@@ -604,14 +712,35 @@ def _apply_benchmark_thinking_mode(
             level = _gpt_oss_reasoning_level(thinking)
             return f"openai-compatible:gpt-oss reasoning_level={level} (system_message)"
 
+        if openai_base_url and _is_glm_sglang_binary_reasoning_model(model_lower):
+            enable_thinking = thinking != "none"
+            existing_extra_body = extra.get("extra_body")
+            extra_body = dict(existing_extra_body) if isinstance(existing_extra_body, dict) else {}
+            existing_ctk = extra_body.get("chat_template_kwargs")
+            chat_template_kwargs = dict(existing_ctk) if isinstance(existing_ctk, dict) else {}
+            chat_template_kwargs["enable_thinking"] = enable_thinking
+            extra_body["chat_template_kwargs"] = chat_template_kwargs
+            extra["extra_body"] = extra_body
+            return f"openai-compatible:sglang glm enable_thinking={enable_thinking}"
+
+        if (
+            openai_base_url
+            and model_lower.startswith("nemotron")
+            and _is_nemotron_vllm_017_default_only_endpoint(openai_base_url)
+        ):
+            return "openai-compatible:nemotron vllm-017 default reasoning only"
+
         if openai_base_url and _is_qwen35_model(model_lower):
+            if _is_qwen35_default_only_endpoint(openai_base_url):
+                return "openai-compatible:qwen3.5 default reasoning only"
+
             if thinking == "none":
                 enable_thinking = False
             elif thinking == "high":
                 enable_thinking = True
             else:
                 raise ValueError(
-                    "Qwen 3.5 on OpenAI-compatible vLLM supports only thinking='none' or 'high'."
+                    "Qwen 3.5 on OpenAI-compatible SGLang supports only thinking='none' or 'high'."
                 )
 
             existing_extra_body = extra.get("extra_body")
@@ -621,7 +750,7 @@ def _apply_benchmark_thinking_mode(
             chat_template_kwargs["enable_thinking"] = enable_thinking
             extra_body["chat_template_kwargs"] = chat_template_kwargs
             extra["extra_body"] = extra_body
-            return f"openai-compatible:vllm qwen3.5 enable_thinking={enable_thinking}"
+            return f"openai-compatible:sglang qwen3.5 enable_thinking={enable_thinking}"
 
         if openai_base_url:
             budget = (
@@ -944,9 +1073,15 @@ class _BenchmarkInferenceController:
             ["initial_run"],
             _state_log_label(self._runtime.world.state_snapshot()),
         )
-        self._runtime.capture_inference_input(["initial_run"])
+        inference_index = self._runtime.queue_inference_capture(["initial_run"])
         self._llm_inflight = True
-        await self._pipeline_task.queue_frames([LLMRunFrame()])
+        try:
+            await self._pipeline_task.queue_frames([LLMRunFrame()])
+        except Exception:
+            self._llm_inflight = False
+            if inference_index is not None:
+                self._runtime.discard_pending_inference_capture(inference_index)
+            raise
 
     async def request_inference(self, reason: str) -> None:
         if self._runtime.stop_requested or self._runtime.inference_suppressed:
@@ -1015,12 +1150,14 @@ class _BenchmarkInferenceController:
             reasons_snapshot,
             _state_log_label(self._runtime.world.state_snapshot()),
         )
-        self._runtime.capture_inference_input(reasons_snapshot)
+        inference_index = self._runtime.queue_inference_capture(reasons_snapshot)
         self._llm_inflight = True
         try:
             await self._pipeline_task.queue_frames([LLMRunFrame()])
         except Exception:
             self._llm_inflight = False
+            if inference_index is not None:
+                self._runtime.discard_pending_inference_capture(inference_index)
             self._inference_reasons = reasons_snapshot + self._inference_reasons
             raise
 
@@ -1101,6 +1238,7 @@ class _BenchmarkResponseTracker(FrameProcessor):
         self._tool_calls: list[dict[str, Any]] = []
         self._tool_call_by_id: dict[str, int] = {}
         self._usage_metrics: Optional[dict[str, Any]] = None
+        self._ttfb_metrics: Optional[dict[str, Any]] = None
 
     async def process_frame(self, frame: Any, direction: FrameDirection):
         await super().process_frame(frame, direction)
@@ -1112,6 +1250,7 @@ class _BenchmarkResponseTracker(FrameProcessor):
             self._response_start_monotonic = time.perf_counter()
             self._response_state_before = self._runtime.world.state_snapshot()
             self._bad_before = self._runtime.world.bad_actions_count
+            self._runtime.activate_next_inference_capture()
             self._controller.on_response_start()
             logger.info(
                 "LLM_RESPONSE_START turn={} state={}",
@@ -1173,6 +1312,9 @@ class _BenchmarkResponseTracker(FrameProcessor):
             usage_entry = _usage_entry_from_metrics_frame(frame)
             if usage_entry is not None:
                 self._usage_metrics = usage_entry
+            ttfb_entry = _ttfb_entry_from_metrics_frame(frame)
+            if ttfb_entry is not None and self._ttfb_metrics is None:
+                self._ttfb_metrics = ttfb_entry
 
         elif isinstance(frame, LLMFullResponseEndFrame):
             self._response_end_seen = True
@@ -1237,7 +1379,11 @@ class _BenchmarkResponseTracker(FrameProcessor):
 
         if self._usage_metrics is not None:
             turn_log["usage"] = dict(self._usage_metrics)
+        if self._ttfb_metrics is not None:
+            turn_log["ttfb"] = dict(self._ttfb_metrics)
+            turn_log["ttfb_ms"] = self._ttfb_metrics.get("ttfb_ms")
 
+        self._runtime.attach_active_inference_capture(turn_log)
         self._runtime.turn_logs.append(turn_log)
         self._runtime.turn_count += 1
         logger.info(
@@ -1303,6 +1449,8 @@ class _BenchmarkRuntime:
         self.response_tracker = _BenchmarkResponseTracker(self, self.controller)
         self.event_summaries = TaskAgentEventSummaries()
         self.inference_inputs: list[dict[str, Any]] = []
+        self._pending_inference_capture_indexes: deque[int] = deque()
+        self._active_inference_capture_index: int | None = None
 
         self._event_tasks: set[asyncio.Task[Any]] = set()
         self._skip_context_events: dict[str, int] = {}
@@ -1359,11 +1507,27 @@ class _BenchmarkRuntime:
         self.controller.bind_pipeline_task(pipeline_task)
         return pipeline_task, runner_task
 
-    def capture_inference_input(self, reasons: list[str]) -> None:
+    def _ensure_inference_capture_state(self) -> None:
+        if not hasattr(self, "_pending_inference_capture_indexes"):
+            self._pending_inference_capture_indexes = deque()
+        if not hasattr(self, "_active_inference_capture_index"):
+            self._active_inference_capture_index = None
+
+    def _inference_input_entry(self, inference_index: int) -> dict[str, Any] | None:
+        if inference_index <= 0:
+            return None
+        if inference_index > len(self.inference_inputs):
+            return None
+        entry = self.inference_inputs[inference_index - 1]
+        if not isinstance(entry, dict):
+            return None
+        return entry
+
+    def capture_inference_input(self, reasons: list[str]) -> int | None:
         if not self.args.capture_inference_inputs:
-            return
+            return None
         if self.llm_context is None:
-            return
+            return None
 
         entry: dict[str, Any] = {
             "inference_index": len(self.inference_inputs) + 1,
@@ -1398,6 +1562,69 @@ class _BenchmarkRuntime:
             entry["llm_tool_config"] = _to_json_compatible(llm_tool_config)
 
         self.inference_inputs.append(entry)
+        return int(entry["inference_index"])
+
+    def queue_inference_capture(self, reasons: list[str]) -> int | None:
+        inference_index = self.capture_inference_input(reasons)
+        if inference_index is None:
+            return None
+        self._ensure_inference_capture_state()
+        self._pending_inference_capture_indexes.append(inference_index)
+        return inference_index
+
+    def activate_next_inference_capture(self) -> int | None:
+        self._ensure_inference_capture_state()
+        if self._active_inference_capture_index is not None:
+            return self._active_inference_capture_index
+        if not self._pending_inference_capture_indexes:
+            return None
+
+        inference_index = self._pending_inference_capture_indexes.popleft()
+        self._active_inference_capture_index = inference_index
+        entry = self._inference_input_entry(inference_index)
+        if entry is not None:
+            entry["response_start_llm_turn"] = self.turn_count + 1
+        return inference_index
+
+    def claim_next_inference_capture(self) -> int | None:
+        self._ensure_inference_capture_state()
+        if self._active_inference_capture_index is not None:
+            inference_index = self._active_inference_capture_index
+            self._active_inference_capture_index = None
+            return inference_index
+        if self._pending_inference_capture_indexes:
+            return self._pending_inference_capture_indexes.popleft()
+        return None
+
+    def attach_active_inference_capture(self, turn_log: dict[str, Any]) -> None:
+        inference_index = self.claim_next_inference_capture()
+        if inference_index is None:
+            return
+
+        turn_log["inference_index"] = inference_index
+        entry = self._inference_input_entry(inference_index)
+        if entry is not None:
+            entry["finalized_llm_turn"] = turn_log.get("llm_turn")
+
+    def discard_pending_inference_capture(self, inference_index: int) -> None:
+        self._ensure_inference_capture_state()
+        if inference_index <= 0:
+            return
+        if self._active_inference_capture_index == inference_index:
+            self._active_inference_capture_index = None
+        else:
+            try:
+                self._pending_inference_capture_indexes.remove(inference_index)
+            except ValueError:
+                pass
+
+        if inference_index == len(self.inference_inputs):
+            self.inference_inputs.pop()
+            return
+
+        entry = self._inference_input_entry(inference_index)
+        if entry is not None:
+            entry["discarded"] = True
 
     def _resolve_event_payload_and_response_data(self, event_plan: EventPlan) -> tuple[Any, Any]:
         if event_plan.summary_factory is not None:
@@ -1962,6 +2189,7 @@ async def _run_benchmark(args: argparse.Namespace) -> int:
                         "error_event": runtime.last_error_event,
                     }
                 )
+                runtime.attach_active_inference_capture(runtime.turn_logs[-1])
                 runtime.turn_count += 1
                 runtime.request_stop("inference_failure")
 

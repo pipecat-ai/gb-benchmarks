@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import json
 import re
+import urllib.parse
 from pathlib import Path
 from typing import Any
 
@@ -33,6 +34,88 @@ def _pct(numerator: int, denominator: int) -> float:
     return 100.0 * (numerator / denominator)
 
 
+def _mean(values: list[float]) -> float | None:
+    if not values:
+        return None
+    return sum(values) / len(values)
+
+
+def _format_primary(value: float) -> str:
+    rounded = round(value)
+    if abs(value - rounded) < 1e-9:
+        return str(int(rounded))
+    return f"{value:.1f}"
+
+
+def _effective_budget_for_display(row: dict[str, Any]) -> int | None:
+    model = str(row.get("model") or "").strip().lower()
+    thinking_budget = row.get("thinking_budget")
+    if isinstance(thinking_budget, int):
+        return thinking_budget
+    if isinstance(thinking_budget, float) and thinking_budget.is_integer():
+        return int(thinking_budget)
+
+    thinking = str(row.get("thinking") or "").strip().lower()
+    if thinking in {"", "none", "minimal"}:
+        generic_budget = 0
+    elif thinking == "low":
+        generic_budget = 128
+    elif thinking == "medium":
+        generic_budget = 512
+    elif thinking == "high":
+        generic_budget = 2048
+    else:
+        generic_budget = None
+
+    if model.startswith("gemini-2.5-flash"):
+        gemini_budget_map = {
+            "none": 0,
+            "minimal": 0,
+            "low": 1024,
+            "medium": 2048,
+            "high": 4096,
+        }
+        return gemini_budget_map.get(thinking)
+
+    if model.startswith("nemotron-3-") and _normalize_openai_base_url(row.get("openai_base_url")):
+        if _is_nemotron_vllm_017_default_only_endpoint(row.get("openai_base_url")):
+            return None
+        return generic_budget
+
+    return None
+
+
+def _coerce_int(value: Any) -> int | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float) and value.is_integer():
+        return int(value)
+    if isinstance(value, str):
+        text = value.strip()
+        if text and re.fullmatch(r"-?\d+", text):
+            return int(text)
+    return None
+
+
+def _thinking_label_for_display(row: dict[str, Any]) -> str | None:
+    thinking = row.get("thinking")
+    if thinking in {None, ""}:
+        return None
+
+    effective_budget = _effective_budget_for_display(row)
+    numeric_thinking = _coerce_int(thinking)
+    if (
+        numeric_thinking is not None
+        and effective_budget is not None
+        and numeric_thinking == effective_budget
+    ):
+        return None
+
+    return str(thinking)
+
+
 def _normalize_openai_base_url(base_url: Any) -> str | None:
     if not isinstance(base_url, str):
         return None
@@ -44,6 +127,14 @@ def _normalize_openai_base_url(base_url: Any) -> str | None:
     if not normalized.endswith("/v1"):
         normalized = f"{normalized}/v1"
     return normalized
+
+
+def _is_nemotron_vllm_017_default_only_endpoint(base_url: Any) -> bool:
+    normalized = _normalize_openai_base_url(base_url)
+    if normalized is None:
+        return False
+    host = urllib.parse.urlparse(normalized).netloc.lower()
+    return "nemotron-vllm-017" in host and host.endswith(".modal.run")
 
 
 def _display_base_url(base_url: Any) -> str | None:
@@ -194,13 +285,13 @@ def _build_model_label(row: dict[str, Any]) -> str:
         base_label = f"{base_label} [{row['model']}]"
 
     details: list[str] = []
-    thinking = row.get("thinking")
-    if thinking not in {None, ""}:
-        details.append(f"th={thinking}")
+    thinking_label = _thinking_label_for_display(row)
+    if thinking_label is not None:
+        details.append(f"th={thinking_label}")
 
-    thinking_budget = row.get("thinking_budget")
-    if thinking_budget is not None:
-        details.append(f"tb={thinking_budget}")
+    effective_budget = _effective_budget_for_display(row)
+    if effective_budget is not None:
+        details.append(f"tb={effective_budget}")
 
     max_tokens = row.get("max_tokens")
     if max_tokens is not None:
@@ -311,10 +402,10 @@ def _build_rows(
             "n": n,
             "primary_score_100_median": _percentile(rec["primary_scores"], 0.50) or 0.0,
             "task_complete_rate": _pct(rec["task_complete_count"], n),
-            "trade_quality_score_median": _percentile(rec["trade_scores"], 0.50) or 0.0,
-            "path_efficiency_score_median": _percentile(rec["path_scores"], 0.50) or 0.0,
-            "tool_discipline_score_median": _percentile(rec["tools_scores"], 0.50) or 0.0,
-            "report_quality_score_median": _percentile(rec["report_scores"], 0.50) or 0.0,
+            "trade_quality_score_mean": _mean(rec["trade_scores"]) or 0.0,
+            "path_efficiency_score_mean": _mean(rec["path_scores"]) or 0.0,
+            "tool_discipline_score_mean": _mean(rec["tools_scores"]) or 0.0,
+            "report_quality_score_mean": _mean(rec["report_scores"]) or 0.0,
             "turn_p50_ms": _percentile(rec["turn_decisions_ms"], 0.50),
             "turn_p90_ms": _percentile(rec["turn_decisions_ms"], 0.90),
             "total_time_p50_s": _percentile(rec["elapsed_s"], 0.50),
@@ -349,12 +440,13 @@ def _write_table(
     lines.append(f"- Leaderboard prompt: `{leaderboard_prompt_id}`")
     lines.append(f"- Prompt hash: `{prompt_hash}`")
     lines.append(f"- Score rubric version: `{rubric_label}`")
+    lines.append("- Aggregation: Primary=median, Task Complete=rate, Trade/Path/Tools/Report=mean")
     lines.append(f"- Source runs: `{runs_glob}`")
     lines.append(f"- Enriched scores: `{enriched_jsonl}`")
     lines.append("- Sort: Primary /100 desc, Task Complete % desc, Total Time P50 (s) asc")
     lines.append("")
     lines.append(
-        "| Model | N | Primary /100 | Task Complete % | Trade /15 | Path /15 | Tools /15 | Report /15 | "
+        "| Model | N | Primary /100 | Task Complete % | Trade /15 Avg | Path /15 Avg | Tools /15 Avg | Report /15 Avg | "
         "Turn P50 (ms) | Turn P90 (ms) | Total Time P50 (s) |"
     )
     lines.append("|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|")
@@ -362,12 +454,12 @@ def _write_table(
     for row in rows:
         lines.append(
             f"| {row['model_label']} | {row['n']} | "
-            f"{row['primary_score_100_median']:.1f} | "
+            f"{_format_primary(row['primary_score_100_median'])} | "
             f"{row['task_complete_rate']:.1f}% | "
-            f"{row['trade_quality_score_median']:.1f} | "
-            f"{row['path_efficiency_score_median']:.1f} | "
-            f"{row['tool_discipline_score_median']:.1f} | "
-            f"{row['report_quality_score_median']:.1f} | "
+            f"{row['trade_quality_score_mean']:.1f} | "
+            f"{row['path_efficiency_score_mean']:.1f} | "
+            f"{row['tool_discipline_score_mean']:.1f} | "
+            f"{row['report_quality_score_mean']:.1f} | "
             f"{(row['turn_p50_ms'] or 0.0):.1f} | "
             f"{(row['turn_p90_ms'] or 0.0):.1f} | "
             f"{(row['total_time_p50_s'] or 0.0):.2f} |"

@@ -9,6 +9,7 @@
 - Always capture console output to `runs/<run-stem>.log` or a worker log with `tee`.
 - A failed run is still benchmark data if the raw JSON exists. Judge it instead of discarding it.
 - Default benchmark settings are `--max-turns 50` and `--function-call-timeout-secs 20`.
+- If `run_repeat_clean_config.sh` is not executable on this checkout, invoke it as `bash ./run_repeat_clean_config.sh ...`.
 
 ### Environment keys
 - Do not `source` the repo `.env` wholesale. Extract only the needed key.
@@ -93,6 +94,33 @@ ANTHROPIC_API_KEY="$ANTHROPIC_API_KEY" .venv/bin/python mini-rl-env.py \
 ```
 
 #### Hosted OpenAI
+- GPT 5.4 none:
+```bash
+OPENAI_API_KEY="$OPENAI_API_KEY" .venv/bin/python mini-rl-env.py \
+  --provider openai --model gpt-5.4 \
+  --task-variant natural --thinking none --max-tokens 4096 \
+  --max-turns 50 --function-call-timeout-secs 20 \
+  --log-json runs/gpt-5.4-natural-none-<ts>.json \
+  > runs/gpt-5.4-natural-none-<ts>.log 2>&1
+```
+- GPT 5.4 low:
+```bash
+OPENAI_API_KEY="$OPENAI_API_KEY" .venv/bin/python mini-rl-env.py \
+  --provider openai --model gpt-5.4 \
+  --task-variant natural --thinking low --max-tokens 4096 \
+  --max-turns 50 --function-call-timeout-secs 20 \
+  --log-json runs/gpt-5.4-natural-low-<ts>.json \
+  > runs/gpt-5.4-natural-low-<ts>.log 2>&1
+```
+- GPT 5.4 medium:
+```bash
+OPENAI_API_KEY="$OPENAI_API_KEY" .venv/bin/python mini-rl-env.py \
+  --provider openai --model gpt-5.4 \
+  --task-variant natural --thinking medium --max-tokens 4096 \
+  --max-turns 50 --function-call-timeout-secs 20 \
+  --log-json runs/gpt-5.4-natural-medium-<ts>.json \
+  > runs/gpt-5.4-natural-medium-<ts>.log 2>&1
+```
 - GPT 5.2 medium:
 ```bash
 OPENAI_API_KEY="$OPENAI_API_KEY" .venv/bin/python mini-rl-env.py \
@@ -129,6 +157,15 @@ OPENAI_API_KEY="$OPENAI_API_KEY" .venv/bin/python mini-rl-env.py \
   --log-json runs/gpt-4.1-natural-<ts>.json \
   > runs/gpt-4.1-natural-<ts>.log 2>&1
 ```
+- Hosted OpenAI caveats:
+  - `gpt-5.4` uses the OpenAI Responses API shim in this benchmark, not Chat Completions.
+  - For `gpt-5.4`, benchmark thinking maps to Responses reasoning effort as:
+    - `none -> none`
+    - `minimal -> low`
+    - `low -> low`
+    - `medium -> medium`
+    - `high -> high`
+  - Do not map `gpt-5.4` `thinking=none` to `minimal`; the API rejects that value.
 
 #### Google
 - Gemini 3.1 Flash Lite Preview minimal:
@@ -274,6 +311,97 @@ OPENAI_API_KEY="$OPENAI_API_KEY" .venv/bin/python mini-rl-env.py \
   - On these SGLang endpoints, benchmark `--thinking` maps to exact `thinking_budget` values: `none=0`, `low=128`, `medium=512`, `high=2048`.
   - Keep one run at a time per endpoint.
   - Always pass `--max-tokens 4096` for the benchmark runs we are comparing here.
+
+#### OpenAI-compatible GLM
+- Shared GLM base URL:
+```bash
+GLM47_URL="https://daily--glm47-sglang-serve.modal.run"
+```
+- GLM 4.7 Flash thinking off:
+```bash
+OPENAI_API_KEY="$OPENAI_API_KEY" .venv/bin/python mini-rl-env.py \
+  --provider openai --model glm-4.7-flash \
+  --openai-base-url "$GLM47_URL" \
+  --task-variant natural --thinking none --max-tokens 4096 \
+  --max-turns 50 --function-call-timeout-secs 20 \
+  --log-json runs/glm-4.7-flash-natural-none-<ts>.json \
+  > runs/glm-4.7-flash-natural-none-<ts>.log 2>&1
+```
+- GLM 4.7 Flash thinking on:
+```bash
+OPENAI_API_KEY="$OPENAI_API_KEY" .venv/bin/python mini-rl-env.py \
+  --provider openai --model glm-4.7-flash \
+  --openai-base-url "$GLM47_URL" \
+  --task-variant natural --thinking high --max-tokens 4096 \
+  --max-turns 50 --function-call-timeout-secs 20 \
+  --log-json runs/glm-4.7-flash-natural-high-<ts>.json \
+  > runs/glm-4.7-flash-natural-high-<ts>.log 2>&1
+```
+- GLM caveats:
+  - For this daily SGLang deploy, treat GLM 4.7 Flash as a binary reasoning toggle only.
+  - `--thinking none` maps to `extra_body.chat_template_kwargs.enable_thinking=false`.
+  - Any enabled GLM run should use `--thinking high`, which maps to `enable_thinking=true`.
+  - Do not pass `--thinking-budget` for GLM 4.7 Flash.
+  - Keep one run at a time on the GLM endpoint.
+
+#### OpenAI-compatible Qwen 3.5 on daily SGLang
+- Shared caveat:
+  - Verified on March 8, 2026: the `qwen3.5-4b` and `qwen3.5-27b` daily endpoints honor binary `--thinking none|high` via `extra_body.chat_template_kwargs.enable_thinking=false|true`.
+  - `qwen3.5-35b` already supports the same binary `--thinking none|high` toggle.
+  - The `qwen3.5-9b` daily endpoint should still be treated as default-reasoning-only until re-tested.
+  - For default-only Qwen 3.5 daily endpoints, use `--thinking high` as the benchmark placeholder and have the harness send no reasoning override.
+  - Do not pass `--thinking-budget` to these endpoints.
+  - The `qwen3.5-122b` deploy has shown malformed/empty completions in direct synthetic tests, including `matched_stop=\"NaN happened\"` and `finish_reason=\"tool_calls\"` with `tool_calls=null`. Treat its benchmark results as deploy-provisional until that endpoint is fixed.
+- Qwen 3.5 4B thinking off:
+```bash
+OPENAI_API_KEY="$OPENAI_API_KEY" .venv/bin/python mini-rl-env.py \
+  --provider openai --model qwen3.5-4b \
+  --openai-base-url https://daily--qwen35-sglang-serve-4b.modal.run \
+  --task-variant natural --thinking none --max-tokens 4096 \
+  --max-turns 50 --function-call-timeout-secs 20 \
+  --log-json runs/qwen3.5-4b-natural-none-sglang-<ts>.json \
+  > runs/qwen3.5-4b-natural-none-sglang-<ts>.log 2>&1
+```
+- Qwen 3.5 9B default reasoning:
+```bash
+OPENAI_API_KEY="$OPENAI_API_KEY" .venv/bin/python mini-rl-env.py \
+  --provider openai --model qwen3.5-9b \
+  --openai-base-url https://daily--qwen35-sglang-serve-9b.modal.run \
+  --task-variant natural --thinking high --max-tokens 4096 \
+  --max-turns 50 --function-call-timeout-secs 20 \
+  --log-json runs/qwen3.5-9b-natural-default-sglang-<ts>.json \
+  > runs/qwen3.5-9b-natural-default-sglang-<ts>.log 2>&1
+```
+- Qwen 3.5 27B thinking off:
+```bash
+OPENAI_API_KEY="$OPENAI_API_KEY" .venv/bin/python mini-rl-env.py \
+  --provider openai --model qwen3.5-27b \
+  --openai-base-url https://daily--qwen35-sglang-serve-27b.modal.run \
+  --task-variant natural --thinking none --max-tokens 4096 \
+  --max-turns 50 --function-call-timeout-secs 20 \
+  --log-json runs/qwen3.5-27b-natural-none-sglang-<ts>.json \
+  > runs/qwen3.5-27b-natural-none-sglang-<ts>.log 2>&1
+```
+- Qwen 3.5 35B default reasoning:
+```bash
+OPENAI_API_KEY="$OPENAI_API_KEY" .venv/bin/python mini-rl-env.py \
+  --provider openai --model qwen3.5-35b \
+  --openai-base-url https://daily--qwen35-sglang-serve-35b.modal.run \
+  --task-variant natural --thinking high --max-tokens 4096 \
+  --max-turns 50 --function-call-timeout-secs 20 \
+  --log-json runs/qwen3.5-35b-natural-default-sglang-<ts>.json \
+  > runs/qwen3.5-35b-natural-default-sglang-<ts>.log 2>&1
+```
+- Qwen 3.5 122B default reasoning:
+```bash
+OPENAI_API_KEY="$OPENAI_API_KEY" .venv/bin/python mini-rl-env.py \
+  --provider openai --model qwen3.5-122b \
+  --openai-base-url https://daily--qwen35-sglang-serve-122b.modal.run \
+  --task-variant natural --thinking high --max-tokens 4096 \
+  --max-turns 50 --function-call-timeout-secs 20 \
+  --log-json runs/qwen3.5-122b-natural-default-sglang-<ts>.json \
+  > runs/qwen3.5-122b-natural-default-sglang-<ts>.log 2>&1
+```
 
 ### Monitoring
 - Prefer a live PTY session for long workers.

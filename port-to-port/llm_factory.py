@@ -62,6 +62,11 @@ def _normalize_openai_base_url(base_url: str) -> str:
     return f"{normalized}/v1"
 
 
+def _is_openai_responses_model(model: str, openai_base_url: Optional[str]) -> bool:
+    normalized = model.strip().lower()
+    return openai_base_url is None and normalized.startswith("gpt-5.4")
+
+
 def _merge_openai_extra(existing_extra: Any, *, thinking_budget: int) -> dict[str, Any]:
     merged_extra = dict(existing_extra) if isinstance(existing_extra, dict) else {}
 
@@ -205,7 +210,10 @@ def _create_openai_service(
     openai_base_url: Optional[str],
     openai_params: Optional[dict[str, Any]],
 ) -> LLMService:
-    from pipecat.services.openai.llm import OpenAILLMService
+    if _is_openai_responses_model(model, openai_base_url):
+        from openai_responses_service import OpenAIResponsesLLMService as OpenAIServiceClass
+    else:
+        from pipecat.services.openai.llm import OpenAILLMService as OpenAIServiceClass
 
     normalized_base_url = _normalize_openai_base_url(openai_base_url) if openai_base_url else None
 
@@ -228,7 +236,7 @@ def _create_openai_service(
             model,
         )
 
-    params = OpenAILLMService.InputParams(**params_kwargs) if params_kwargs else None
+    params = OpenAIServiceClass.InputParams(**params_kwargs) if params_kwargs else None
 
     kwargs: dict[str, object] = {}
     if function_call_timeout_secs is not None:
@@ -238,7 +246,7 @@ def _create_openai_service(
     if params is not None:
         kwargs["params"] = params
 
-    return OpenAILLMService(
+    return OpenAIServiceClass(
         api_key=api_key,
         model=model,
         **kwargs,
