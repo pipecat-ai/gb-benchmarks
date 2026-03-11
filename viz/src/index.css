@@ -1,0 +1,111 @@
+@import "tailwindcss";
+
+@theme {
+  --color-background: #020617;
+  --color-foreground: #f8fafc;
+}
+
+html {
+  color-scheme: dark;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  background: var(--color-background);
+  color: var(--color-foreground);
+  font-family: "Space Grotesk", "Avenir Next", "Segoe UI", sans-serif;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+code,
+pre {
+  font-family: "IBM Plex Mono", "SFMono-Regular", monospace;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: rgba(15, 23, 42, 0.6);
+}
+
+::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background: rgba(148, 163, 184, 0.35);
+}
+
+.sector-lane {
+  transition: stroke 220ms ease, stroke-width 220ms ease, opacity 220ms ease;
+}
+
+.sector-node {
+  transition: fill 220ms ease, stroke 220ms ease, opacity 220ms ease;
+}
+
+.ship-token {
+  transition: transform 620ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.floating-delta {
+  animation: floating-delta 1s ease forwards;
+}
+
+.sector-pulse {
+  fill: none;
+  stroke-width: 2.5;
+  transform-origin: center;
+  animation: sector-pulse 900ms ease-out forwards;
+}
+
+.sector-pulse-trade {
+  stroke: rgba(190, 242, 100, 0.95);
+}
+
+.sector-pulse-recharge {
+  stroke: rgba(103, 232, 249, 0.95);
+}
+
+.sector-pulse-error {
+  stroke: rgba(251, 113, 133, 0.95);
+}
+
+details summary {
+  list-style: none;
+}
+
+details summary::-webkit-details-marker {
+  display: none;
+}
+
+@keyframes sector-pulse {
+  0% {
+    opacity: 0.9;
+    transform: scale(1);
+  }
+  100% {
+    opacity: 0;
+    transform: scale(1.85);
+  }
+}
+
+@keyframes floating-delta {
+  0% {
+    opacity: 0;
+    transform: translateY(0);
+  }
+  10% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+    transform: translateY(-18px);
+  }
+}

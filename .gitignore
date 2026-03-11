@@ -5,3 +5,6 @@ __pycache__/
 .venv/
 port-to-port/.venv/
 port-to-port/runs/
+viz/dist/
+viz/*.tsbuildinfo
+viz/node_modules/

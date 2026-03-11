@@ -1601,6 +1601,36 @@ class MiniRLEnvRegressionTests(unittest.TestCase):
             True,
         )
 
+    def test_apply_benchmark_thinking_mode_sets_nemotron_enable_thinking_toggle_without_budget(self) -> None:
+        llm_service = types.SimpleNamespace(
+            _settings={
+                "extra": {
+                    "extra_body": {
+                        "vllm_xargs": {
+                            "thinking_budget": 2048,
+                            "top_k": 40,
+                        }
+                    }
+                }
+            }
+        )
+
+        policy = mini_rl_env._apply_benchmark_thinking_mode(
+            llm_service=llm_service,
+            provider=mini_rl_env.LLMProvider.OPENAI,
+            model="nemotron-3-nano-30b",
+            thinking="high",
+            thinking_budget=None,
+            openai_base_url="https://daily--nemotron-nano-b200-sglang-serve.modal.run",
+            openai_no_budget_thinking_toggle=True,
+        )
+
+        self.assertEqual(policy, "openai-compatible:nemotron enable_thinking=True no_budget")
+        extra_body = llm_service._settings["extra"]["extra_body"]
+        self.assertEqual(extra_body["chat_template_kwargs"]["enable_thinking"], True)
+        self.assertNotIn("thinking_budget", extra_body["vllm_xargs"])
+        self.assertEqual(extra_body["vllm_xargs"]["top_k"], 40)
+
     def test_validate_generation_controls_rejects_max_tokens_for_non_openai(self) -> None:
         parser = argparse.ArgumentParser()
         args = types.SimpleNamespace(
@@ -1614,6 +1644,90 @@ class MiniRLEnvRegressionTests(unittest.TestCase):
 
         with self.assertRaises(SystemExit):
             mini_rl_env._validate_generation_controls(args, parser)
+
+    def test_validate_generation_controls_allows_nemotron_no_budget_toggle(self) -> None:
+        parser = argparse.ArgumentParser()
+        args = types.SimpleNamespace(
+            provider="openai",
+            model="nemotron-3-nano-30b",
+            openai_base_url="https://daily--nemotron-nano-b200-sglang-serve.modal.run",
+            thinking="high",
+            thinking_budget=None,
+            max_tokens=8192,
+            openai_no_budget_thinking_toggle=True,
+        )
+
+        mini_rl_env._validate_generation_controls(args, parser)
+
+    def test_validate_generation_controls_rejects_nonbinary_nemotron_no_budget_toggle(self) -> None:
+        parser = argparse.ArgumentParser()
+        args = types.SimpleNamespace(
+            provider="openai",
+            model="nemotron-3-nano-30b",
+            openai_base_url="https://daily--nemotron-nano-b200-sglang-serve.modal.run",
+            thinking="medium",
+            thinking_budget=None,
+            max_tokens=8192,
+            openai_no_budget_thinking_toggle=True,
+        )
+
+        with self.assertRaises(SystemExit):
+            mini_rl_env._validate_generation_controls(args, parser)
+
+    def test_prune_empty_assistant_context_messages_drops_whitespace_only_text(self) -> None:
+        context = mini_rl_env.LLMContext(
+            messages=[
+                {"role": "user", "content": "Status?"},
+                {"role": "assistant", "content": " \n"},
+                {"role": "assistant", "content": ":"},
+            ]
+        )
+
+        dropped = mini_rl_env._prune_empty_assistant_context_messages(context)
+
+        self.assertEqual(dropped, 1)
+        self.assertEqual(
+            context.get_messages(),
+            [
+                {"role": "user", "content": "Status?"},
+                {"role": "assistant", "content": ":"},
+            ],
+        )
+
+    def test_prune_empty_assistant_context_messages_preserves_tool_call_messages(self) -> None:
+        tool_call_message = {
+            "role": "assistant",
+            "tool_calls": [
+                {
+                    "id": "call_1",
+                    "type": "function",
+                    "function": {"name": "my_status", "arguments": "{}"},
+                }
+            ],
+        }
+        context = mini_rl_env.LLMContext(
+            messages=[
+                {"role": "assistant", "content": ""},
+                tool_call_message,
+            ]
+        )
+
+        dropped = mini_rl_env._prune_empty_assistant_context_messages(context)
+
+        self.assertEqual(dropped, 1)
+        self.assertEqual(context.get_messages(), [tool_call_message])
+
+    def test_prune_empty_assistant_context_messages_preserves_nonempty_structured_content(self) -> None:
+        structured_message = {
+            "role": "assistant",
+            "content": [{"type": "output_text", "text": "Let me check that route."}],
+        }
+        context = mini_rl_env.LLMContext(messages=[structured_message])
+
+        dropped = mini_rl_env._prune_empty_assistant_context_messages(context)
+
+        self.assertEqual(dropped, 0)
+        self.assertEqual(context.get_messages(), [structured_message])
 
     def test_validate_generation_controls_allows_binary_qwen35_4b_reasoning(self) -> None:
         parser = argparse.ArgumentParser()

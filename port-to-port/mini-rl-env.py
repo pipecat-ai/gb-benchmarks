@@ -150,6 +150,7 @@ DEFAULT_BENCHMARK_TASK = TASK_PROMPTS[DEFAULT_TASK_VARIANT]["text"]
 
 MEGA_PORT_NAME = "MEGA SSS"
 RUN_SCHEMA_VERSION = "mini_rl_run.v3"
+REPLAY_STREAM_SCHEMA_VERSION = "mini_rl_replay_stream.v1"
 RUNNER_VERSION = "2026-02-25"
 ASYNC_COMPLETION_TIMEOUT = 5.0
 MAX_NO_TOOL_NUDGES = 3
@@ -513,6 +514,73 @@ def _serialize_context_message(message: Any) -> Any:
     return _to_json_compatible(message)
 
 
+def _message_content_has_meaningful_payload(content: Any) -> bool:
+    if content is None:
+        return False
+    if isinstance(content, str):
+        return bool(content.strip())
+    if isinstance(content, list):
+        return any(_message_content_has_meaningful_payload(item) for item in content)
+    if isinstance(content, dict):
+        text = content.get("text")
+        if isinstance(text, str):
+            if text.strip():
+                return True
+            return any(
+                _message_content_has_meaningful_payload(value)
+                for key, value in content.items()
+                if key not in {"type", "text"} and value is not None
+            )
+
+        refusal = content.get("refusal")
+        if isinstance(refusal, str):
+            if refusal.strip():
+                return True
+            return any(
+                _message_content_has_meaningful_payload(value)
+                for key, value in content.items()
+                if key not in {"type", "refusal"} and value is not None
+            )
+
+        return any(
+            _message_content_has_meaningful_payload(value)
+            for key, value in content.items()
+            if key != "type" and value is not None
+        )
+
+    return True
+
+
+def _is_empty_assistant_context_message(message: Any) -> bool:
+    payload = message.message if isinstance(message, LLMSpecificMessage) else message
+    if not isinstance(payload, dict):
+        return False
+    if payload.get("role") != "assistant":
+        return False
+    if payload.get("tool_calls") or payload.get("function_call"):
+        return False
+
+    allowed_keys = {"role", "content", "name", "tool_calls", "function_call"}
+    if any(key not in allowed_keys for key in payload):
+        return False
+
+    return not _message_content_has_meaningful_payload(payload.get("content"))
+
+
+def _prune_empty_assistant_context_messages(context: Optional[LLMContext]) -> int:
+    if context is None:
+        return 0
+
+    messages = list(context.get_messages())
+    filtered_messages = [
+        message for message in messages if not _is_empty_assistant_context_message(message)
+    ]
+    dropped = len(messages) - len(filtered_messages)
+    if dropped:
+        context.set_messages(filtered_messages)
+    return dropped
+
+
 def _normalize_benchmark_thinking_level(thinking: str) -> str:
     return "none" if thinking == "minimal" else thinking
 
@@ -573,11 +641,40 @@ def _parse_optional_nonnegative_int(raw: Optional[str], *, label: str) -> Option
 def _validate_generation_controls(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
     model_lower = str(args.model).strip().lower()
     thinking_budget = args.thinking_budget
+    openai_no_budget_thinking_toggle = bool(getattr(args, "openai_no_budget_thinking_toggle", False))
 
     if args.max_tokens is not None and args.provider != "openai":
         parser.error("--max-tokens is only supported when --provider openai is selected.")
 
     if args.provider == "openai":
+        if openai_no_budget_thinking_toggle:
+            if not args.openai_base_url:
+                parser.error(
+                    "--openai-no-budget-thinking-toggle requires --openai-base-url for an "
+                    "OpenAI-compatible endpoint."
+                )
+            if not model_lower.startswith("nemotron"):
+                parser.error(
+                    "--openai-no-budget-thinking-toggle is currently supported only for "
+                    "OpenAI-compatible Nemotron endpoints."
+                )
+            if _is_nemotron_vllm_017_default_only_endpoint(args.openai_base_url):
+                parser.error(
+                    "This Nemotron vLLM 0.17 endpoint only supports its default reasoning mode; "
+                    "--openai-no-budget-thinking-toggle is not applicable."
+                )
+            if args.thinking not in {"none", "high"}:
+                parser.error(
+                    "For Nemotron with --openai-no-budget-thinking-toggle, --thinking must be "
+                    "'none' (thinking disabled) or 'high' (thinking enabled)."
+                )
+            if thinking_budget is not None:
+                parser.error(
+                    "--openai-no-budget-thinking-toggle omits exact reasoning budgets; "
+                    "do not pass --thinking-budget."
+                )
+            return
+
         if args.openai_base_url and _is_glm_sglang_binary_reasoning_model(model_lower):
             if args.thinking not in {"none", "high"}:
                 parser.error(
@@ -677,6 +774,7 @@ def _apply_benchmark_thinking_mode(
     thinking: str,
     thinking_budget: Optional[int],
     openai_base_url: Optional[str],
+    openai_no_budget_thinking_toggle: bool = False,
 ) -> str:
     model_lower = model.strip().lower()
     normalized_thinking = _normalize_benchmark_thinking_level(thinking)
@@ -722,6 +820,27 @@ def _apply_benchmark_thinking_mode(
             extra_body["chat_template_kwargs"] = chat_template_kwargs
             extra["extra_body"] = extra_body
             return f"openai-compatible:sglang glm enable_thinking={enable_thinking}"
+
+        if openai_base_url and model_lower.startswith("nemotron") and openai_no_budget_thinking_toggle:
+            enable_thinking = thinking != "none"
+            existing_extra_body = extra.get("extra_body")
+            extra_body = dict(existing_extra_body) if isinstance(existing_extra_body, dict) else {}
+            existing_ctk = extra_body.get("chat_template_kwargs")
+            chat_template_kwargs = dict(existing_ctk) if isinstance(existing_ctk, dict) else {}
+            chat_template_kwargs["enable_thinking"] = enable_thinking
+            extra_body["chat_template_kwargs"] = chat_template_kwargs
+
+            existing_xargs = extra_body.get("vllm_xargs")
+            if isinstance(existing_xargs, dict):
+                xargs = dict(existing_xargs)
+                xargs.pop("thinking_budget", None)
+                if xargs:
+                    extra_body["vllm_xargs"] = xargs
+                else:
+                    extra_body.pop("vllm_xargs", None)
+
+            extra["extra_body"] = extra_body
+            return f"openai-compatible:nemotron enable_thinking={enable_thinking} no_budget"
 
         if (
             openai_base_url
@@ -1144,6 +1263,14 @@ class _BenchmarkInferenceController:
         if "no_tool_nudge" not in reasons_snapshot:
             self._no_tool_nudge_count = 0
 
+        dropped_empty_messages = _prune_empty_assistant_context_messages(self._runtime.llm_context)
+        if dropped_empty_messages:
+            logger.info(
+                "LLM_CONTEXT_PRUNE turn={} dropped_empty_assistant_messages={}",
+                self._runtime.turn_count + 1,
+                dropped_empty_messages,
+            )
+
         logger.info(
             "LLM_RUN turn={} reasons={} state={}",
             self._runtime.turn_count + 1,
@@ -1386,6 +1513,7 @@ class _BenchmarkResponseTracker(FrameProcessor):
         self._runtime.attach_active_inference_capture(turn_log)
         self._runtime.turn_logs.append(turn_log)
         self._runtime.turn_count += 1
+        self._runtime._append_replay_stream_event("turn", turn=turn_log)
         logger.info(
             "TURN_COMPLETE turn={} decision_ms={} tools={} failure={} before={} after={}",
             turn_log["llm_turn"],
@@ -1439,6 +1567,16 @@ class _BenchmarkRuntime:
         self.started_at_utc = _iso_utc_now()
         self.started_monotonic = time.perf_counter()
         self.initial_state_snapshot = self.world.state_snapshot()
+        self.git_sha = _git_sha(REPO_ROOT)
+        self.leaderboard_prompt_id = _leaderboard_prompt_id_for_task(
+            task_variant=self.args.task_variant,
+            task=self.args.task,
+        )
+        self.replay_stream_path = (
+            Path(self.args.replay_stream_jsonl).expanduser().resolve()
+            if getattr(self.args, "replay_stream_jsonl", None)
+            else None
+        )
 
         self.max_turns = args.max_turns
         self.done_event = asyncio.Event()
@@ -1455,6 +1593,79 @@ class _BenchmarkRuntime:
         self._event_tasks: set[asyncio.Task[Any]] = set()
         self._skip_context_events: dict[str, int] = {}
         self._async_dependency_waiters: list[asyncio.Future[bool]] = []
+        self._initialize_replay_stream()
+
+    def build_config_snapshot(self) -> dict[str, Any]:
+        return {
+            "provider": self.args.provider,
+            "model": self.args.model,
+            "openai_base_url": self.args.openai_base_url,
+            "openai_params": getattr(self.args, "openai_params", None),
+            "openai_no_budget_thinking_toggle": getattr(self.args, "openai_no_budget_thinking_toggle", False),
+            "thinking": self.args.thinking,
+            "thinking_budget": self.args.thinking_budget,
+            "max_tokens": self.args.max_tokens,
+            "max_turns": self.args.max_turns,
+            "function_call_timeout_secs": self.args.function_call_timeout_secs,
+            "capture_inference_inputs": self.args.capture_inference_inputs,
+            "task": self.args.task,
+            "task_variant": self.args.task_variant,
+            "task_prompt_version": self.args.task_prompt_version,
+            "leaderboard_prompt_id": self.leaderboard_prompt_id,
+        }
+
+    def build_metadata_snapshot(self, *, ended_at_utc: Optional[str] = None) -> dict[str, Any]:
+        return {
+            "run_id": self.run_id,
+            "runner_version": RUNNER_VERSION,
+            "started_at_utc": self.started_at_utc,
+            "ended_at_utc": ended_at_utc,
+            "repo_root": str(REPO_ROOT),
+            "git_sha": self.git_sha,
+            "system_instruction_path": str(self.system_instruction_path),
+            "system_instruction_hash": _sha256_text(self.system_instruction),
+            "task_variant": self.args.task_variant,
+            "task_prompt_version": self.args.task_prompt_version,
+            "leaderboard_prompt_id": self.leaderboard_prompt_id,
+            "task_prompt_hash": _sha256_text(self.args.task),
+            "initial_state": self.initial_state_snapshot,
+            "run_file": self.args.log_json,
+            "replay_stream_jsonl": self.args.replay_stream_jsonl,
+        }
+
+    def build_termination_snapshot(self, *, elapsed_ms: Any) -> dict[str, Any]:
+        return {
+            "reason": self.terminal_reason,
+            "finished_called": self.finished_called,
+            "finished_message": self.finished_message,
+            "elapsed_ms": elapsed_ms,
+        }
+
+    def _append_replay_stream_event(self, event_type: str, **payload: Any) -> None:
+        if self.replay_stream_path is None:
+            return
+
+        event = {
+            "schema_version": REPLAY_STREAM_SCHEMA_VERSION,
+            "type": event_type,
+            "recorded_at_utc": _iso_utc_now(),
+            **payload,
+        }
+        self.replay_stream_path.parent.mkdir(parents=True, exist_ok=True)
+        with self.replay_stream_path.open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps(_to_json_compatible(event), ensure_ascii=False) + "\n")
+
+    def _initialize_replay_stream(self) -> None:
+        if self.replay_stream_path is None:
+            return
+        self.replay_stream_path.parent.mkdir(parents=True, exist_ok=True)
+        self.replay_stream_path.write_text("", encoding="utf-8")
+        self._append_replay_stream_event(
+            "session_start",
+            run_schema_version=RUN_SCHEMA_VERSION,
+            metadata=self.build_metadata_snapshot(),
+            config=self.build_config_snapshot(),
+        )
 
     async def setup_pipeline(self) -> tuple[PipelineTask, asyncio.Task[Any]]:
         self.llm_service.register_function(None, self.handle_function_call)
@@ -1562,6 +1773,7 @@ class _BenchmarkRuntime:
             entry["llm_tool_config"] = _to_json_compatible(llm_tool_config)
 
         self.inference_inputs.append(entry)
+        self._append_replay_stream_event("inference_input", inference_input=entry)
         return int(entry["inference_index"])
 
     def queue_inference_capture(self, reasons: list[str]) -> int | None:
@@ -2020,6 +2232,7 @@ class _BenchmarkRuntime:
             "elapsed_ms": total_ms,
             "provider": self.args.provider,
             "model": self.args.model,
+            "openai_no_budget_thinking_toggle": getattr(self.args, "openai_no_budget_thinking_toggle", False),
             "thinking": self.args.thinking,
             "thinking_budget": self.args.thinking_budget,
             "max_tokens": self.args.max_tokens,
@@ -2028,49 +2241,9 @@ class _BenchmarkRuntime:
     def build_output_payload(self) -> dict[str, Any]:
         summary = self.build_summary()
         ended_at_utc = _iso_utc_now()
-        git_sha = _git_sha(REPO_ROOT)
-        leaderboard_prompt_id = _leaderboard_prompt_id_for_task(
-            task_variant=self.args.task_variant,
-            task=self.args.task,
-        )
-
-        config_snapshot = {
-            "provider": self.args.provider,
-            "model": self.args.model,
-            "openai_base_url": self.args.openai_base_url,
-            "openai_params": getattr(self.args, "openai_params", None),
-            "thinking": self.args.thinking,
-            "thinking_budget": self.args.thinking_budget,
-            "max_tokens": self.args.max_tokens,
-            "max_turns": self.args.max_turns,
-            "function_call_timeout_secs": self.args.function_call_timeout_secs,
-            "capture_inference_inputs": self.args.capture_inference_inputs,
-            "task": self.args.task,
-            "task_variant": self.args.task_variant,
-            "task_prompt_version": self.args.task_prompt_version,
-            "leaderboard_prompt_id": leaderboard_prompt_id,
-        }
-        metadata = {
-            "run_id": self.run_id,
-            "runner_version": RUNNER_VERSION,
-            "started_at_utc": self.started_at_utc,
-            "ended_at_utc": ended_at_utc,
-            "repo_root": str(REPO_ROOT),
-            "git_sha": git_sha,
-            "system_instruction_path": str(self.system_instruction_path),
-            "system_instruction_hash": _sha256_text(self.system_instruction),
-            "task_variant": self.args.task_variant,
-            "task_prompt_version": self.args.task_prompt_version,
-            "leaderboard_prompt_id": leaderboard_prompt_id,
-            "task_prompt_hash": _sha256_text(self.args.task),
-            "initial_state": self.initial_state_snapshot,
-        }
-        termination = {
-            "reason": self.terminal_reason,
-            "finished_called": self.finished_called,
-            "finished_message": self.finished_message,
-            "elapsed_ms": summary.get("elapsed_ms"),
-        }
+        config_snapshot = self.build_config_snapshot()
+        metadata = self.build_metadata_snapshot(ended_at_utc=ended_at_utc)
+        termination = self.build_termination_snapshot(elapsed_ms=summary.get("elapsed_ms"))
         payload = {
             "schema_version": RUN_SCHEMA_VERSION,
             "metadata": metadata,
@@ -2116,6 +2289,7 @@ async def _run_benchmark(args: argparse.Namespace) -> int:
         thinking=args.thinking,
         thinking_budget=args.thinking_budget,
         openai_base_url=args.openai_base_url,
+        openai_no_budget_thinking_toggle=getattr(args, "openai_no_budget_thinking_toggle", False),
     )
 
     harness_dir = Path(__file__).resolve().parent
@@ -2140,12 +2314,13 @@ async def _run_benchmark(args: argparse.Namespace) -> int:
     )
 
     logger.info(
-        "HARNESS_CONFIG provider={} model={} openai_base_url={} thinking={} thinking_budget={} thinking_policy={} tool_call_workaround={} max_tokens={} max_turns={}",
+        "HARNESS_CONFIG provider={} model={} openai_base_url={} thinking={} thinking_budget={} openai_no_budget_thinking_toggle={} thinking_policy={} tool_call_workaround={} max_tokens={} max_turns={}",
         provider.value,
         args.model,
         args.openai_base_url or "(default)",
         args.thinking,
         args.thinking_budget if args.thinking_budget is not None else "(mapped)",
+        getattr(args, "openai_no_budget_thinking_toggle", False),
         thinking_policy,
         tool_call_streaming_workaround,
         args.max_tokens,
@@ -2191,6 +2366,7 @@ async def _run_benchmark(args: argparse.Namespace) -> int:
                 )
                 runtime.attach_active_inference_capture(runtime.turn_logs[-1])
                 runtime.turn_count += 1
+                runtime._append_replay_stream_event("turn", turn=runtime.turn_logs[-1])
                 runtime.request_stop("inference_failure")
 
         runner_task.add_done_callback(_runner_done)
@@ -2240,8 +2416,20 @@ async def _run_benchmark(args: argparse.Namespace) -> int:
 
     if args.log_json:
         payload = runtime.build_output_payload()
+        runtime._append_replay_stream_event(
+            "summary",
+            summary=payload.get("summary"),
+            termination=payload.get("termination"),
+        )
         Path(args.log_json).write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        runtime._append_replay_stream_event("output_written", path=args.log_json)
         logger.info("WROTE {}", args.log_json)
+    else:
+        runtime._append_replay_stream_event(
+            "summary",
+            summary=summary,
+            termination=runtime.build_termination_snapshot(elapsed_ms=summary.get("elapsed_ms")),
+        )
 
     if interrupted:
         return 130
@@ -2286,6 +2474,16 @@ def _build_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
+        "--openai-no-budget-thinking-toggle",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help=(
+            "For supported OpenAI-compatible Nemotron endpoints, send "
+            "chat_template_kwargs.enable_thinking and omit thinking_budget. "
+            "Supports --thinking none|high only."
+        ),
+    )
+    parser.add_argument(
         "--thinking",
         default=_default_thinking_level(),
         choices=list(THINKING_LEVELS),
@@ -2324,8 +2522,14 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--capture-inference-inputs",
-        action="store_true",
-        help="Include full pre-inference context snapshots in --log-json output.",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Include full pre-inference context snapshots in structured outputs and replay streams.",
+    )
+    parser.add_argument(
+        "--replay-stream-jsonl",
+        default=None,
+        help="Optional append-only JSONL stream for live replay observers.",
     )
     return parser
 
