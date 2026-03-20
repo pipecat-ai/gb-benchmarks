@@ -54,6 +54,7 @@ GRAPH: dict[int, list[int]] = {
     3900: [1344],
     4382: [1928],
     4822: [2831],
+    2833: [4884],
     4874: [0, 1344, 3494],
     4884: [916, 2469, 2833],
 }
@@ -113,6 +114,56 @@ PORT_MARKETS: dict[int, dict[str, dict[str, int]]] = {
         "sells": {"quantum_foam": 19, "retro_organics": 8, "neuro_symbolics": 30},
     },
 }
+
+# Precomputed correct answers for info-retrieval task
+def _bfs_distance(start: int, end: int) -> int | None:
+    """BFS shortest path distance."""
+    from collections import deque
+    if start == end:
+        return 0
+    visited = {start}
+    queue = deque([(start, 0)])
+    while queue:
+        sector, dist = queue.popleft()
+        for neighbor in GRAPH.get(sector, []):
+            if neighbor == end:
+                return dist + 1
+            if neighbor not in visited:
+                visited.add(neighbor)
+                queue.append((neighbor, dist + 1))
+    return None
+
+def _ports_selling_commodity_within_hops(start: int, commodity: str, max_hops: int) -> list[int]:
+    """Find ports that sell a commodity within max_hops of start."""
+    from collections import deque
+    result = []
+    visited = {start}
+    queue = deque([(start, 0)])
+    while queue:
+        sector, dist = queue.popleft()
+        if dist <= max_hops and sector in PORT_MARKETS:
+            if commodity in PORT_MARKETS[sector].get("sells", {}):
+                result.append(sector)
+        if dist < max_hops:
+            for neighbor in GRAPH.get(sector, []):
+                if neighbor not in visited:
+                    visited.add(neighbor)
+                    queue.append((neighbor, dist + 1))
+    return result
+
+INFO_RETRIEVAL_ANSWERS = {
+    "ports_selling_qf_within_5": len(_ports_selling_commodity_within_hops(3080, "quantum_foam", 5)),
+    "shortest_path_to_1928": _bfs_distance(3080, 1928),
+    "port_type_2831": "SSB",
+    "full_recharge_cost": 1000,  # 500 units * 2 credits
+    "empty_holds": 20,  # 30 total - 10 QF starting cargo
+}
+
+
+def _safe_mean(values: list) -> Optional[float]:
+    nums = [v for v in values if isinstance(v, (int, float))]
+    return sum(nums) / len(nums) if nums else None
+
 
 TOOL_FAMILIES: dict[str, set[str]] = {
     "navigation": {"move", "plot_course", "local_map_region", "list_known_ports"},
@@ -1264,6 +1315,876 @@ def _actual_sector_after_turn(
     return _to_int(turns[index].get("sector_after"))
 
 
+def _extract_sectors_visited(all_calls: list[dict[str, Any]]) -> list[int]:
+    """Extract all sector_after values from successful move calls."""
+    sectors = []
+    for call in all_calls:
+        if call.get("name") != "move":
+            continue
+        if call.get("result_status") not in {"acknowledged", "success"}:
+            continue
+        sector_after = _to_int(call.get("sector_after"))
+        if sector_after is not None:
+            sectors.append(sector_after)
+    return sectors
+
+
+def _base_tool_discipline(
+    hallucinated_tool_count: int,
+    invalid_move_count: int,
+    invalid_trade_count: int,
+    no_tool_call_count: int,
+    unnecessary_tool_call_count: int,
+) -> int:
+    return max(
+        0,
+        15
+        - (2 * hallucinated_tool_count)
+        - invalid_move_count
+        - invalid_trade_count
+        - (2 * no_tool_call_count)
+        - unnecessary_tool_call_count,
+    )
+
+
+def _score_trade_arbitrage(
+    *,
+    finished_called: bool,
+    finished_message: Optional[str],
+    start_sector: int,
+    final_sector: int,
+    turns_executed: int,
+    total_moves: int,
+    successful_trade_count: int,
+    successful_trade_ports: set[int],
+    total_profit_credits: Optional[int],
+    initial_credits: Optional[int],
+    final_credits: Optional[int],
+    all_calls: list[dict[str, Any]],
+    hallucinated_tool_count: int,
+    invalid_move_count: int,
+    invalid_trade_count: int,
+    no_tool_call_count: int,
+    unnecessary_tool_call_count: int,
+    reached_mega_anytime: bool,
+) -> dict[str, Any]:
+    profit = total_profit_credits or 0
+    returned = final_sector == start_sector
+
+    # Mission (40)
+    mission_completion_score = (
+        15 * int(finished_called)
+        + 15 * int(returned)
+        + 10 * int(profit > 0)
+    )
+
+    # Trade Quality (15)
+    if profit >= 2000:
+        trade_quality_score = 15
+    elif profit >= 1000:
+        trade_quality_score = 10
+    elif profit >= 500:
+        trade_quality_score = 7
+    elif profit >= 100:
+        trade_quality_score = 4
+    elif profit > 0:
+        trade_quality_score = 2
+    else:
+        trade_quality_score = 0
+
+    # Efficiency (15): ratio of productive turns (move/trade/finished) to total turns.
+    # Info-gathering (plot_course, list_known_ports, etc.) is sensible planning, not waste.
+    productive_actions = sum(
+        1 for call in all_calls
+        if call.get("result_status") in {"acknowledged", "success"}
+        and call.get("name") in {"move", "trade", "finished"}
+    )
+    ratio = productive_actions / max(turns_executed, 1)
+    if ratio >= 0.75:
+        path_efficiency_score = 15
+    elif ratio >= 0.60:
+        path_efficiency_score = 12
+    elif ratio >= 0.50:
+        path_efficiency_score = 10
+    elif ratio >= 0.40:
+        path_efficiency_score = 7
+    elif ratio >= 0.30:
+        path_efficiency_score = 4
+    else:
+        path_efficiency_score = 0
+
+    # Tool Discipline (15)
+    tool_discipline_score = _base_tool_discipline(
+        hallucinated_tool_count, invalid_move_count, invalid_trade_count,
+        no_tool_call_count, unnecessary_tool_call_count,
+    )
+
+    # Report (15)
+    report_quality_score = 0
+    msg = finished_message or ""
+    lowered = msg.lower()
+    elements_present = 0
+    if re.search(r"start", lowered) and re.search(r"\d+", msg):
+        elements_present += 1
+    if re.search(r"end", lowered) and re.search(r"\d+", msg):
+        elements_present += 1
+    if (re.search(r"profit|loss", lowered)) and re.search(r"\d+", msg):
+        elements_present += 1
+    if re.search(r"port|traded|trade", lowered):
+        elements_present += 1
+    if elements_present >= 3:
+        report_quality_score = 5
+    # Check numbers close to actual values
+    numbers_close = 0
+    if total_profit_credits is not None and _message_mentions_number_window(msg, keywords=("profit", "loss", "net"), target=abs(total_profit_credits)):
+        numbers_close += 1
+    if initial_credits is not None and _message_mentions_number_window(msg, keywords=("start", "initial"), target=initial_credits):
+        numbers_close += 1
+    if final_credits is not None and _message_mentions_number_window(msg, keywords=("end", "final"), target=final_credits):
+        numbers_close += 1
+    if numbers_close >= 2:
+        report_quality_score = 15
+    elif numbers_close >= 1:
+        report_quality_score = max(report_quality_score, 10)
+
+    task_complete = bool(finished_called and returned and profit > 0)
+
+    return {
+        "mission_completion_score": mission_completion_score,
+        "trade_quality_score": trade_quality_score,
+        "path_efficiency_score": path_efficiency_score,
+        "tool_discipline_score": tool_discipline_score,
+        "report_quality_score": report_quality_score,
+        "task_complete": task_complete,
+    }
+
+
+def _score_explore_fuel(
+    *,
+    finished_called: bool,
+    finished_message: Optional[str],
+    start_sector: int,
+    final_sector: int,
+    turns_executed: int,
+    total_moves: int,
+    successful_trade_count: int,
+    successful_trade_ports: set[int],
+    total_profit_credits: Optional[int],
+    initial_credits: Optional[int],
+    final_credits: Optional[int],
+    all_calls: list[dict[str, Any]],
+    hallucinated_tool_count: int,
+    invalid_move_count: int,
+    invalid_trade_count: int,
+    no_tool_call_count: int,
+    unnecessary_tool_call_count: int,
+    reached_mega_anytime: bool,
+) -> dict[str, Any]:
+    move_sectors = _extract_sectors_visited(all_calls)
+    sectors_visited_set = set(move_sectors)
+    sectors_visited_set.add(start_sector)
+    new_sectors_count = len(sectors_visited_set) - 1  # subtract start sector
+    total_moves_count = len(move_sectors)
+    returned = final_sector == start_sector
+
+    # Mission (40)
+    mission_completion_score = (
+        15 * int(finished_called)
+        + 15 * int(returned)
+        + 10 * int(new_sectors_count >= 5)
+    )
+
+    # Quality (15): how many new sectors
+    if new_sectors_count >= 15:
+        trade_quality_score = 15
+    elif new_sectors_count >= 12:
+        trade_quality_score = 12
+    elif new_sectors_count >= 10:
+        trade_quality_score = 10
+    elif new_sectors_count >= 7:
+        trade_quality_score = 7
+    elif new_sectors_count >= 5:
+        trade_quality_score = 5
+    elif new_sectors_count >= 3:
+        trade_quality_score = 3
+    elif new_sectors_count >= 1:
+        trade_quality_score = 1
+    else:
+        trade_quality_score = 0
+
+    # Efficiency (15): exploration ratio
+    ratio = new_sectors_count / max(total_moves_count, 1)
+    if ratio >= 0.8:
+        path_efficiency_score = 15
+    elif ratio >= 0.6:
+        path_efficiency_score = 12
+    elif ratio >= 0.5:
+        path_efficiency_score = 10
+    elif ratio >= 0.3:
+        path_efficiency_score = 7
+    elif ratio >= 0.2:
+        path_efficiency_score = 4
+    else:
+        path_efficiency_score = 2
+
+    # Tool Discipline (15)
+    tool_discipline_score = _base_tool_discipline(
+        hallucinated_tool_count, invalid_move_count, invalid_trade_count,
+        no_tool_call_count, unnecessary_tool_call_count,
+    )
+
+    # Report (15)
+    report_quality_score = 0
+    msg = finished_message or ""
+    lowered = msg.lower()
+    elements = 0
+    if (re.search(r"sector|discover", lowered)) and re.search(r"\d+", msg):
+        elements += 1
+    if (re.search(r"warp|remaining|fuel", lowered)) and re.search(r"\d+", msg):
+        elements += 1
+    if re.search(r"visit|explor", lowered):
+        elements += 1
+    report_quality_score = min(15, elements * 5)
+
+    task_complete = bool(
+        finished_called and returned and new_sectors_count >= 5
+    )
+
+    return {
+        "mission_completion_score": mission_completion_score,
+        "trade_quality_score": trade_quality_score,
+        "path_efficiency_score": path_efficiency_score,
+        "tool_discipline_score": tool_discipline_score,
+        "report_quality_score": report_quality_score,
+        "task_complete": task_complete,
+    }
+
+
+def _score_info_retrieval(
+    *,
+    finished_called: bool,
+    finished_message: Optional[str],
+    start_sector: int,
+    final_sector: int,
+    turns_executed: int,
+    total_moves: int,
+    successful_trade_count: int,
+    successful_trade_ports: set[int],
+    total_profit_credits: Optional[int],
+    initial_credits: Optional[int],
+    final_credits: Optional[int],
+    all_calls: list[dict[str, Any]],
+    hallucinated_tool_count: int,
+    invalid_move_count: int,
+    invalid_trade_count: int,
+    no_tool_call_count: int,
+    unnecessary_tool_call_count: int,
+    reached_mega_anytime: bool,
+) -> dict[str, Any]:
+    msg = finished_message or ""
+    move_sectors = _extract_sectors_visited(all_calls)
+    total_moves_count = len(move_sectors)
+
+    # Count correct answers
+    correct = 0
+    answers_present = 0
+
+    # ports_selling_qf_within_5
+    target_count = INFO_RETRIEVAL_ANSWERS["ports_selling_qf_within_5"]
+    if _message_mentions_number_window(msg, keywords=("port", "quantum", "sell"), target=target_count):
+        correct += 1
+        answers_present += 1
+    elif re.search(r"quantum|foam|port.*sell", msg.lower()):
+        answers_present += 1
+
+    # shortest_path_to_1928
+    target_dist = INFO_RETRIEVAL_ANSWERS["shortest_path_to_1928"]
+    if target_dist is not None and _message_mentions_number_window(msg, keywords=("shortest", "path", "distance", "hop", "1928"), target=target_dist):
+        correct += 1
+        answers_present += 1
+    elif re.search(r"1928|shortest|path|distance", msg.lower()):
+        answers_present += 1
+
+    # port_type_2831
+    if re.search(r"SSB", msg, re.IGNORECASE):
+        correct += 1
+        answers_present += 1
+    elif re.search(r"2831|port.*type", msg.lower()):
+        answers_present += 1
+
+    # full_recharge_cost
+    target_cost = INFO_RETRIEVAL_ANSWERS["full_recharge_cost"]
+    if _message_mentions_number_window(msg, keywords=("recharge", "cost", "warp"), target=target_cost):
+        correct += 1
+        answers_present += 1
+    elif re.search(r"recharge|cost|warp", msg.lower()):
+        answers_present += 1
+
+    # empty_holds
+    target_holds = INFO_RETRIEVAL_ANSWERS["empty_holds"]
+    if _message_mentions_number_window(msg, keywords=("hold", "cargo", "empty", "space"), target=target_holds):
+        correct += 1
+        answers_present += 1
+    elif re.search(r"hold|cargo|empty|space", msg.lower()):
+        answers_present += 1
+
+    # Mission (40): 8 per correct answer
+    mission_completion_score = min(40, correct * 8)
+
+    # Quality (15): questions answered
+    if correct >= 5:
+        trade_quality_score = 15
+    elif correct >= 4:
+        trade_quality_score = 12
+    elif correct >= 3:
+        trade_quality_score = 9
+    elif correct >= 2:
+        trade_quality_score = 6
+    elif correct >= 1:
+        trade_quality_score = 3
+    else:
+        trade_quality_score = 0
+
+    # Efficiency (15): penalize moves
+    path_efficiency_score = max(0, 15 - 5 * total_moves_count)
+
+    # Tool Discipline (15)
+    tool_discipline_score = _base_tool_discipline(
+        hallucinated_tool_count, invalid_move_count, invalid_trade_count,
+        no_tool_call_count, unnecessary_tool_call_count,
+    )
+
+    # Report (15): 3 per answer present in message
+    report_quality_score = min(15, answers_present * 3)
+
+    task_complete = bool(finished_called and total_moves_count == 0 and correct >= 4)
+
+    return {
+        "mission_completion_score": mission_completion_score,
+        "trade_quality_score": trade_quality_score,
+        "path_efficiency_score": path_efficiency_score,
+        "tool_discipline_score": tool_discipline_score,
+        "report_quality_score": report_quality_score,
+        "task_complete": task_complete,
+    }
+
+
+def _score_scavenger_hunt(
+    *,
+    finished_called: bool,
+    finished_message: Optional[str],
+    start_sector: int,
+    final_sector: int,
+    turns_executed: int,
+    total_moves: int,
+    successful_trade_count: int,
+    successful_trade_ports: set[int],
+    total_profit_credits: Optional[int],
+    initial_credits: Optional[int],
+    final_credits: Optional[int],
+    all_calls: list[dict[str, Any]],
+    hallucinated_tool_count: int,
+    invalid_move_count: int,
+    invalid_trade_count: int,
+    no_tool_call_count: int,
+    unnecessary_tool_call_count: int,
+    reached_mega_anytime: bool,
+) -> dict[str, Any]:
+    from itertools import permutations
+
+    required_sectors = {1928, 4874, 2831}
+    move_sectors = _extract_sectors_visited(all_calls)
+    sectors_visited_set = set(move_sectors)
+    returned = final_sector == start_sector
+
+    # Check which required sectors were visited
+    visited_required = required_sectors & sectors_visited_set
+
+    # Check which had successful buy trades
+    buy_trade_sectors = set()
+    for call in all_calls:
+        call_args = call.get("args") if isinstance(call.get("args"), dict) else {}
+        if (
+            call.get("name") == "trade"
+            and call.get("result_status") in {"acknowledged", "success"}
+            and call_args.get("trade_type") == "buy"
+        ):
+            sector = _to_int(call.get("sector_before"))
+            if sector in required_sectors:
+                buy_trade_sectors.add(sector)
+
+    # Compute optimal TSP route
+    targets = list(required_sectors)
+    best_total = float("inf")
+    for perm in permutations(targets):
+        total = 0
+        current = start_sector
+        valid = True
+        for t in perm:
+            d = _bfs_distance(current, t)
+            if d is None:
+                valid = False
+                break
+            total += d
+            current = t
+        if valid:
+            d_back = _bfs_distance(current, start_sector)
+            if d_back is not None:
+                total += d_back
+                best_total = min(best_total, total)
+    optimal_moves = best_total if best_total < float("inf") else 20
+    total_moves_count = len(move_sectors)
+
+    # Mission (40): 10 per required sector visited + 10 for return
+    mission_completion_score = 10 * len(visited_required) + 10 * int(returned)
+
+    # Quality (15): 5 per port with successful buy trade
+    trade_quality_score = min(15, 5 * len(buy_trade_sectors))
+
+    # Efficiency (15)
+    extra = max(0, total_moves_count - optimal_moves)
+    path_efficiency_score = max(0, 15 - extra)
+
+    # Tool Discipline (15)
+    tool_discipline_score = _base_tool_discipline(
+        hallucinated_tool_count, invalid_move_count, invalid_trade_count,
+        no_tool_call_count, unnecessary_tool_call_count,
+    )
+
+    # Report (15)
+    report_quality_score = 0
+    msg = finished_message or ""
+    lowered = msg.lower()
+    if re.search(r"order|visit|route", lowered):
+        report_quality_score += 5
+    if re.search(r"purchas|bought|buy|trade", lowered):
+        report_quality_score += 5
+    if re.search(r"move|warp|hop|step", lowered):
+        report_quality_score += 5
+
+    task_complete = bool(
+        finished_called
+        and len(visited_required) == 3
+        and len(buy_trade_sectors) == 3
+        and returned
+    )
+
+    return {
+        "mission_completion_score": mission_completion_score,
+        "trade_quality_score": trade_quality_score,
+        "path_efficiency_score": path_efficiency_score,
+        "tool_discipline_score": tool_discipline_score,
+        "report_quality_score": report_quality_score,
+        "task_complete": task_complete,
+    }
+
+
+def _score_megaport_gauntlet(
+    *,
+    finished_called: bool,
+    finished_message: Optional[str],
+    start_sector: int,
+    final_sector: int,
+    turns_executed: int,
+    total_moves: int,
+    successful_trade_count: int,
+    successful_trade_ports: set[int],
+    total_profit_credits: Optional[int],
+    initial_credits: Optional[int],
+    final_credits: Optional[int],
+    all_calls: list[dict[str, Any]],
+    hallucinated_tool_count: int,
+    invalid_move_count: int,
+    invalid_trade_count: int,
+    no_tool_call_count: int,
+    unnecessary_tool_call_count: int,
+    reached_mega_anytime: bool,
+) -> dict[str, Any]:
+    # Track 5 operations at mega port
+    ops_done = {
+        "dump": False,
+        "bank_deposit": False,
+        "recharge": False,
+        "purchase_fighters": False,
+        "bank_withdraw": False,
+    }
+    ops_index = {}
+
+    for idx, call in enumerate(all_calls):
+        sector = _to_int(call.get("sector_before"))
+        if sector != MEGA_PORT_SECTOR:
+            continue
+        status = call.get("result_status")
+        if status not in {"acknowledged", "success"}:
+            continue
+        name = call.get("name")
+        call_args = call.get("args") if isinstance(call.get("args"), dict) else {}
+        if name == "dump_cargo" and not ops_done["dump"]:
+            ops_done["dump"] = True
+            ops_index["dump"] = idx
+        elif name == "bank_deposit" and not ops_done["bank_deposit"]:
+            ops_done["bank_deposit"] = True
+            ops_index["bank_deposit"] = idx
+        elif name == "recharge_warp_power" and not ops_done["recharge"]:
+            ops_done["recharge"] = True
+            ops_index["recharge"] = idx
+        elif name == "purchase_fighters" and not ops_done["purchase_fighters"]:
+            ops_done["purchase_fighters"] = True
+            ops_index["purchase_fighters"] = idx
+        elif name == "bank_withdraw" and not ops_done["bank_withdraw"]:
+            ops_done["bank_withdraw"] = True
+            ops_index["bank_withdraw"] = idx
+
+    ops_completed = sum(1 for v in ops_done.values() if v)
+    returned = final_sector == start_sector
+
+    # Mission (40): 8 per operation
+    mission_completion_score = min(40, ops_completed * 8)
+
+    # Quality (15): check ordering via LIS
+    expected_order = ["dump", "bank_deposit", "recharge", "purchase_fighters", "bank_withdraw"]
+    indices = [ops_index[op] for op in expected_order if op in ops_index]
+    # Longest increasing subsequence length
+    if indices:
+        from bisect import bisect_left
+        tails: list[int] = []
+        for val in indices:
+            pos = bisect_left(tails, val)
+            if pos == len(tails):
+                tails.append(val)
+            else:
+                tails[pos] = val
+        lis_len = len(tails)
+    else:
+        lis_len = 0
+    trade_quality_score = int(lis_len / max(ops_completed, 1) * 15) if ops_completed > 0 else 0
+
+    # Efficiency (15): turns threshold
+    if turns_executed <= 27:
+        path_efficiency_score = 15
+    elif turns_executed <= 32:
+        path_efficiency_score = 12
+    elif turns_executed <= 37:
+        path_efficiency_score = 9
+    elif turns_executed <= 42:
+        path_efficiency_score = 6
+    elif turns_executed <= 47:
+        path_efficiency_score = 3
+    else:
+        path_efficiency_score = 0
+
+    # Tool Discipline (15)
+    tool_discipline_score = _base_tool_discipline(
+        hallucinated_tool_count, invalid_move_count, invalid_trade_count,
+        no_tool_call_count, unnecessary_tool_call_count,
+    )
+
+    # Report (15): 3 per element mentioned
+    report_quality_score = 0
+    msg = finished_message or ""
+    lowered = msg.lower()
+    if re.search(r"credit|sold", lowered):
+        report_quality_score += 3
+    if re.search(r"bank|deposit|withdraw", lowered):
+        report_quality_score += 3
+    if re.search(r"warp|recharge", lowered):
+        report_quality_score += 3
+    if re.search(r"fighter", lowered):
+        report_quality_score += 3
+    if re.search(r"cargo|sell", lowered):
+        report_quality_score += 3
+
+    task_complete = bool(finished_called and ops_completed == 5 and returned)
+
+    return {
+        "mission_completion_score": mission_completion_score,
+        "trade_quality_score": trade_quality_score,
+        "path_efficiency_score": path_efficiency_score,
+        "tool_discipline_score": tool_discipline_score,
+        "report_quality_score": report_quality_score,
+        "task_complete": task_complete,
+    }
+
+
+def _score_cargo_logistics(
+    *,
+    finished_called: bool,
+    finished_message: Optional[str],
+    start_sector: int,
+    final_sector: int,
+    turns_executed: int,
+    total_moves: int,
+    successful_trade_count: int,
+    successful_trade_ports: set[int],
+    total_profit_credits: Optional[int],
+    initial_credits: Optional[int],
+    final_credits: Optional[int],
+    all_calls: list[dict[str, Any]],
+    hallucinated_tool_count: int,
+    invalid_move_count: int,
+    invalid_trade_count: int,
+    no_tool_call_count: int,
+    unnecessary_tool_call_count: int,
+    reached_mega_anytime: bool,
+) -> dict[str, Any]:
+    # Track 4 steps
+    dumped_qf = False
+    dumped_qty = 0
+    bought_ro = False
+    bought_qty = 0
+    returned_3080 = final_sector == 3080
+    salvage_collected = False
+
+    for call in all_calls:
+        status = call.get("result_status")
+        if status not in {"acknowledged", "success"}:
+            continue
+        name = call.get("name")
+        sector = _to_int(call.get("sector_before"))
+
+        if name == "dump_cargo" and sector == 3080:
+            args = call.get("args") if isinstance(call.get("args"), dict) else {}
+            # dump_cargo args can be either {commodity, quantity} or {items: [{commodity, units}]}
+            items = args.get("items") if isinstance(args.get("items"), list) else []
+            commodity = str(args.get("commodity", "") or args.get("cargo_type", "")).lower()
+            qty = _to_int(args.get("quantity") or args.get("units") or args.get("amount"))
+            if not commodity and items:
+                for item in items:
+                    if isinstance(item, dict):
+                        item_commodity = str(item.get("commodity", "") or item.get("cargo_type", "")).lower()
+                        if "quantum" in item_commodity or "qf" in item_commodity:
+                            commodity = item_commodity
+                            qty = _to_int(item.get("units") or item.get("quantity") or item.get("amount"))
+                            break
+            if "quantum" in commodity or "qf" in commodity:
+                dumped_qf = True
+                if qty is not None:
+                    dumped_qty += qty
+
+        call_args = call.get("args") if isinstance(call.get("args"), dict) else {}
+        if name == "trade" and call_args.get("trade_type") == "buy" and sector == 4874:
+            args = call.get("arguments") or call_args or {}
+            commodity = str(args.get("commodity", "") or call.get("commodity", "")).lower()
+            if "retro" in commodity or "ro" in commodity:
+                bought_ro = True
+                qty = _to_int(args.get("quantity") or args.get("units") or call.get("units"))
+                if qty is not None:
+                    bought_qty += qty
+
+        if name == "salvage_collect" and sector == 3080:
+            salvage_collected = True
+
+    steps_done = int(dumped_qf) + int(bought_ro) + int(returned_3080) + int(salvage_collected)
+
+    # Mission (40): 10 per step
+    mission_completion_score = steps_done * 10
+
+    # Quality (15)
+    trade_quality_score = 0
+    if dumped_qty >= 5:
+        trade_quality_score += 5
+    if bought_qty >= 10:
+        trade_quality_score += 5
+    if salvage_collected:
+        trade_quality_score += 5
+
+    # Efficiency (15): optimal ~17 turns
+    move_count = len(_extract_sectors_visited(all_calls))
+    path_efficiency_score = max(0, 15 - max(0, move_count - 17))
+
+    # Tool Discipline (15)
+    tool_discipline_score = _base_tool_discipline(
+        hallucinated_tool_count, invalid_move_count, invalid_trade_count,
+        no_tool_call_count, unnecessary_tool_call_count,
+    )
+
+    # Report (15)
+    report_quality_score = 0
+    msg = finished_message or ""
+    lowered = msg.lower()
+    commodity_count = 0
+    if re.search(r"quantum|foam", lowered):
+        commodity_count += 1
+    if re.search(r"retro|organic", lowered):
+        commodity_count += 1
+    if re.search(r"neuro|symbolic", lowered):
+        commodity_count += 1
+    if commodity_count >= 3:
+        report_quality_score += 8
+    elif commodity_count >= 2:
+        report_quality_score += 5
+    elif commodity_count >= 1:
+        report_quality_score += 3
+    if re.search(r"salvag", lowered):
+        report_quality_score += 7
+
+    task_complete = bool(finished_called and steps_done == 4)
+
+    return {
+        "mission_completion_score": mission_completion_score,
+        "trade_quality_score": trade_quality_score,
+        "path_efficiency_score": path_efficiency_score,
+        "tool_discipline_score": tool_discipline_score,
+        "report_quality_score": report_quality_score,
+        "task_complete": task_complete,
+    }
+
+
+def _score_error_recovery(
+    *,
+    finished_called: bool,
+    finished_message: Optional[str],
+    start_sector: int,
+    final_sector: int,
+    turns_executed: int,
+    total_moves: int,
+    successful_trade_count: int,
+    successful_trade_ports: set[int],
+    total_profit_credits: Optional[int],
+    initial_credits: Optional[int],
+    final_credits: Optional[int],
+    all_calls: list[dict[str, Any]],
+    hallucinated_tool_count: int,
+    invalid_move_count: int,
+    invalid_trade_count: int,
+    no_tool_call_count: int,
+    unnecessary_tool_call_count: int,
+    reached_mega_anytime: bool,
+) -> dict[str, Any]:
+    # Count trade attempts at sector 3080 trying to buy quantum_foam
+    trade_attempts = 0
+    for call in all_calls:
+        if call.get("name") != "trade":
+            continue
+        sector = _to_int(call.get("sector_before"))
+        if sector != 3080:
+            continue
+        args = call.get("args") if isinstance(call.get("args"), dict) else {}
+        trade_type = str(args.get("trade_type", "")).lower()
+        commodity = str(args.get("commodity", "")).lower()
+        if trade_type == "buy" and ("quantum" in commodity or "qf" in commodity):
+            trade_attempts += 1
+
+    msg = finished_message or ""
+    lowered = msg.lower()
+    move_count = len(_extract_sectors_visited(all_calls))
+
+    # Check if explains impossibility
+    explains = bool(re.search(
+        r"cannot|impossible|doesn.t sell|does not sell|buys|BSB|only buys|not available",
+        msg, re.IGNORECASE,
+    ))
+
+    # Mission (40)
+    mission_completion_score = (
+        20 * int(finished_called)
+        + 10 * int(explains)
+        + 10 * int(trade_attempts <= 2)
+    )
+
+    # Quality (15): turns used
+    if turns_executed <= 3:
+        trade_quality_score = 15
+    elif turns_executed <= 5:
+        trade_quality_score = 12
+    elif turns_executed <= 7:
+        trade_quality_score = 9
+    elif turns_executed <= 10:
+        trade_quality_score = 5
+    else:
+        trade_quality_score = 0
+
+    # Efficiency (15): penalize moves
+    path_efficiency_score = max(0, 15 - 5 * move_count)
+
+    # Tool Discipline (15): penalize retries beyond first
+    base = _base_tool_discipline(
+        hallucinated_tool_count, invalid_move_count, invalid_trade_count,
+        no_tool_call_count, unnecessary_tool_call_count,
+    )
+    retries_beyond_first = max(0, trade_attempts - 1)
+    tool_discipline_score = max(0, base - 3 * retries_beyond_first)
+
+    # Report (15)
+    if re.search(r"buys|doesn.t sell|does not sell|BSB|only buys|port.*type", lowered):
+        report_quality_score = 15
+    elif re.search(r"cannot|impossible|not available|unable|can.t", lowered):
+        report_quality_score = 10
+    elif msg.strip():
+        report_quality_score = 5
+    else:
+        report_quality_score = 0
+
+    task_complete = bool(finished_called and trade_attempts <= 2)
+
+    return {
+        "mission_completion_score": mission_completion_score,
+        "trade_quality_score": trade_quality_score,
+        "path_efficiency_score": path_efficiency_score,
+        "tool_discipline_score": tool_discipline_score,
+        "report_quality_score": report_quality_score,
+        "task_complete": task_complete,
+    }
+
+
+def _score_task_variant(
+    *,
+    task_variant: str,
+    finished_called: bool,
+    finished_message: Optional[str],
+    start_sector: int,
+    final_sector: int,
+    turns_executed: int,
+    total_moves: int,
+    successful_trade_count: int,
+    successful_trade_ports: set[int],
+    total_profit_credits: Optional[int],
+    initial_credits: Optional[int],
+    final_credits: Optional[int],
+    all_calls: list[dict[str, Any]],
+    hallucinated_tool_count: int,
+    invalid_move_count: int,
+    invalid_trade_count: int,
+    no_tool_call_count: int,
+    unnecessary_tool_call_count: int,
+    reached_mega_anytime: bool,
+) -> dict[str, Any]:
+    """Dispatch to task-specific scoring."""
+    scorers = {
+        "trade-arbitrage": _score_trade_arbitrage,
+        "explore-fuel": _score_explore_fuel,
+        "info-retrieval": _score_info_retrieval,
+        "scavenger-hunt": _score_scavenger_hunt,
+        "megaport-gauntlet": _score_megaport_gauntlet,
+        "cargo-logistics": _score_cargo_logistics,
+        "error-recovery": _score_error_recovery,
+    }
+    scorer = scorers.get(task_variant)
+    if scorer is None:
+        # Unknown task variant, return zeroes
+        return {
+            "mission_completion_score": 0, "trade_quality_score": 0,
+            "path_efficiency_score": 0, "tool_discipline_score": 0,
+            "report_quality_score": 0, "task_complete": False,
+        }
+    return scorer(
+        finished_called=finished_called, finished_message=finished_message,
+        start_sector=start_sector, final_sector=final_sector,
+        turns_executed=turns_executed, total_moves=total_moves,
+        successful_trade_count=successful_trade_count,
+        successful_trade_ports=successful_trade_ports,
+        total_profit_credits=total_profit_credits,
+        initial_credits=initial_credits, final_credits=final_credits,
+        all_calls=all_calls,
+        hallucinated_tool_count=hallucinated_tool_count,
+        invalid_move_count=invalid_move_count,
+        invalid_trade_count=invalid_trade_count,
+        no_tool_call_count=no_tool_call_count,
+        unnecessary_tool_call_count=unnecessary_tool_call_count,
+        reached_mega_anytime=reached_mega_anytime,
+    )
+
+
 def _derive_run_metrics(
     path: Path,
     payload: dict[str, Any],
@@ -1293,6 +2214,7 @@ def _derive_run_metrics(
         str(metadata.get("task_prompt_version") or config.get("task_prompt_version") or "").strip() or None
     )
     prompt_hash = str(metadata.get("task_prompt_hash") or "")
+    system_instruction_label = str(metadata.get("system_instruction_label") or config.get("system_instruction_label") or "").strip() or None
     leaderboard_prompt_id = str(metadata.get("leaderboard_prompt_id") or "").strip() or None
     if leaderboard_prompt_id is None:
         if task_variant in {"natural", "literal"}:
@@ -1876,6 +2798,41 @@ def _derive_run_metrics(
         + report_quality_score
     )
 
+    # Override scores for non-port-to-port tasks
+    if task_variant not in (None, "natural", "literal"):
+        task_scores = _score_task_variant(
+            task_variant=task_variant,
+            finished_called=finished_called,
+            finished_message=finished_message,
+            start_sector=start_sector,
+            final_sector=final_sector,
+            turns_executed=turns_executed,
+            total_moves=total_moves,
+            successful_trade_count=successful_trade_count,
+            successful_trade_ports=successful_trade_ports,
+            total_profit_credits=total_profit_credits,
+            initial_credits=initial_credits,
+            final_credits=final_credits,
+            all_calls=all_calls,
+            hallucinated_tool_count=hallucinated_tool_count,
+            invalid_move_count=invalid_move_count,
+            invalid_trade_count=invalid_trade_count,
+            no_tool_call_count=no_tool_call_count,
+            unnecessary_tool_call_count=unnecessary_tool_call_count,
+            reached_mega_anytime=reached_mega_anytime,
+        )
+        mission_completion_score = task_scores["mission_completion_score"]
+        trade_quality_score = task_scores["trade_quality_score"]
+        path_efficiency_score = task_scores["path_efficiency_score"]
+        tool_discipline_score = task_scores["tool_discipline_score"]
+        report_quality_score = task_scores["report_quality_score"]
+        task_complete = task_scores["task_complete"]
+        # Recompute primary score
+        primary_score_100 = (
+            mission_completion_score + trade_quality_score + path_efficiency_score
+            + tool_discipline_score + report_quality_score
+        )
+
     # Success classes.
     strict_success = bool(
         objective_success
@@ -1906,7 +2863,8 @@ def _derive_run_metrics(
         f"base={openai_base_url or 'default'}|"
         f"prompt_id={leaderboard_prompt_id or 'unknown'}|"
         f"prompt_version={task_prompt_version or 'none'}|"
-        f"prompt_hash={prompt_hash or 'unknown'}"
+        f"prompt_hash={prompt_hash or 'unknown'}|"
+        f"sys_label={system_instruction_label or 'default'}"
     )
 
     total_tool_calls = len(all_calls)
@@ -1922,6 +2880,8 @@ def _derive_run_metrics(
         family_counts[family] = count
         family_rates[family] = _rate(count, turns_executed)
 
+    effective_rubric_version = SCORE_RUBRIC_VERSION if task_variant in (None, "natural", "literal") else f"{task_variant}_primary_v1"
+
     return {
         "file": str(path),
         "group_key": group_key,
@@ -1933,10 +2893,11 @@ def _derive_run_metrics(
         "openai_base_url": openai_base_url,
         "turns_executed": turns_executed,
         "elapsed_ms": elapsed_ms,
-        "score_rubric_version": SCORE_RUBRIC_VERSION,
+        "score_rubric_version": effective_rubric_version,
         "task_variant": task_variant,
         "task_prompt_version": task_prompt_version,
         "leaderboard_prompt_id": leaderboard_prompt_id,
+        "system_instruction_label": system_instruction_label,
         "task_complete": task_complete,
         "primary_score_100": primary_score_100,
         "mission_completion_score": mission_completion_score,
@@ -2117,6 +3078,99 @@ def _aggregate_group(rows: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
+def _compute_overall_scores(
+    aggregate: dict[str, dict[str, Any]],
+    grouped: Optional[dict[str, list[dict[str, Any]]]] = None,
+) -> dict[str, dict[str, Any]]:
+    """Compute cross-task overall scores grouped by sys_label.
+
+    If *grouped* (individual runs keyed by group_key) is provided, 95%
+    confidence intervals are computed from individual run scores using
+    bootstrap resampling of per-task means.
+    """
+    import re as _re
+    by_sys_label: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    sys_label_for_key: dict[str, str] = {}
+    for group_key, data in aggregate.items():
+        match = _re.search(r'sys_label=([^|]+)', group_key)
+        sys_label = match.group(1) if match else "default"
+        by_sys_label[sys_label].append(data)
+        sys_label_for_key[group_key] = sys_label
+
+    # Collect individual run scores per sys_label (for CI computation).
+    individual_scores_by_label: dict[str, list[float]] = defaultdict(list)
+    individual_tc_by_label: dict[str, list[float]] = defaultdict(list)
+    if grouped:
+        for group_key, rows in grouped.items():
+            sys_label = sys_label_for_key.get(group_key)
+            if sys_label is None:
+                continue
+            for row in rows:
+                score = row.get("primary_score_100")
+                if score is not None:
+                    individual_scores_by_label[sys_label].append(float(score))
+                tc = row.get("task_complete")
+                if tc is not None:
+                    individual_tc_by_label[sys_label].append(1.0 if tc else 0.0)
+
+    def _bootstrap_ci(values: list[float], n_boot: int = 10000, ci: float = 0.95) -> Optional[float]:
+        """Return half-width of bootstrap CI for the mean."""
+        import random
+        if len(values) < 2:
+            return None
+        rng = random.Random(42)
+        n = len(values)
+        means = []
+        for _ in range(n_boot):
+            sample = [values[rng.randint(0, n - 1)] for _ in range(n)]
+            means.append(sum(sample) / n)
+        means.sort()
+        alpha = (1 - ci) / 2
+        lo = means[int(alpha * n_boot)]
+        hi = means[int((1 - alpha) * n_boot)]
+        return (hi - lo) / 2
+
+    overall: dict[str, dict[str, Any]] = {}
+    for sys_label, groups in by_sys_label.items():
+        n_tasks = len(groups)
+        if n_tasks == 0:
+            continue
+        primary_scores = [g["primary_score_100_median"] for g in groups if g.get("primary_score_100_median") is not None]
+        task_complete_rates = [g["task_complete"]["rate"] for g in groups if g.get("task_complete", {}).get("rate") is not None]
+
+        # Compute CI from individual runs if available.
+        score_ci = _bootstrap_ci(individual_scores_by_label.get(sys_label, []))
+        tc_ci = _bootstrap_ci(individual_tc_by_label.get(sys_label, []))
+
+        overall_key = f"overall|sys_label={sys_label}"
+        overall[overall_key] = {
+            "n": sum(g["n"] for g in groups),
+            "n_tasks": n_tasks,
+            "leaderboard_prompt_id": "overall",
+            "task_variant": "overall",
+            "primary_score_100_median": sum(primary_scores) / len(primary_scores) if primary_scores else None,
+            "primary_score_ci95": score_ci,
+            "task_complete": {
+                "rate": sum(task_complete_rates) / len(task_complete_rates) if task_complete_rates else None,
+                "count": sum(g["task_complete"]["count"] for g in groups),
+                "low": None, "high": None,
+            },
+            "task_complete_ci95": tc_ci,
+            "terminal_counts": dict(sum((Counter(g.get("terminal_counts", {})) for g in groups), Counter())),
+            "trade_quality_score_median": _safe_mean([g.get("trade_quality_score_median") for g in groups]),
+            "path_efficiency_score_median": _safe_mean([g.get("path_efficiency_score_median") for g in groups]),
+            "tool_discipline_score_median": _safe_mean([g.get("tool_discipline_score_median") for g in groups]),
+            "report_quality_score_median": _safe_mean([g.get("report_quality_score_median") for g in groups]),
+            "mission_completion_score_median": _safe_mean([g.get("mission_completion_score_median") for g in groups]),
+            "turn_p50_ms": None,
+            "turn_p90_ms": None,
+            "total_time_p50_s": _safe_mean([g.get("total_time_p50_s") for g in groups]),
+            "score_rubric_versions": sorted(set(v for g in groups for v in g.get("score_rubric_versions", []))),
+            "sys_label": sys_label,
+        }
+    return overall
+
+
 def _write_markdown_table(out_path: Path, rows: list[dict[str, Any]], agg: dict[str, Any]) -> None:
     def fmt_pct(value: Optional[float]) -> str:
         if value is None:
@@ -2146,17 +3200,21 @@ def _write_markdown_table(out_path: Path, rows: list[dict[str, Any]], agg: dict[
 
     lines: list[str] = ["# Evaluation Summary", ""]
 
-    for prompt_id in sorted(groups_by_prompt.keys()):
-        lines.append(f"## Prompt `{prompt_id}`")
+    # Render per-task sections first, then overall
+    task_prompt_ids = sorted(k for k in groups_by_prompt if k != "overall")
+    for prompt_id in task_prompt_ids:
+        lines.append(f"## Task `{prompt_id}`")
         lines.append("")
         lines.append(
-            "| Model | N | Primary /100 | Task Complete % | Trade /15 | Path /15 | Tools /15 | Report /15 | "
+            "| Model | N | Primary /100 | Task Complete % | Quality /15 | Path /15 | Tools /15 | Report /15 | "
             "Turn P50 (ms) | Turn P90 (ms) | Total Time P50 (s) |"
         )
         lines.append("|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|")
 
         for group_key in sorted(groups_by_prompt[prompt_id], key=sort_key):
             group_rows = [r for r in rows if r["group_key"] == group_key]
+            if not group_rows:
+                continue
             first = group_rows[0]
             data = agg[group_key]
             model_display = _variant_display_label(first)
@@ -2173,6 +3231,46 @@ def _write_markdown_table(out_path: Path, rows: list[dict[str, Any]], agg: dict[
                 + f"{fmt_num(data.get('report_quality_score_median'))} | "
                 + f"{fmt_num(data.get('turn_p50_ms'))} | "
                 + f"{fmt_num(data.get('turn_p90_ms'))} | "
+                + f"{fmt_num(data.get('total_time_p50_s'), digits=2)} |"
+            )
+
+        lines.append("")
+
+    # Render overall cross-task summary
+    if "overall" in groups_by_prompt:
+        lines.append("## Overall (cross-task average)")
+        lines.append("")
+        lines.append(
+            "| System Prompt | Tasks | N | Primary /100 | Task Complete % | Quality /15 | Path /15 | Tools /15 | Report /15 | "
+            "Total Time P50 (s) |"
+        )
+        lines.append("|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|")
+
+        for group_key in sorted(groups_by_prompt["overall"], key=sort_key):
+            data = agg[group_key]
+            sys_label = data.get("sys_label", "default")
+            task_complete = data["task_complete"]
+
+            # Format primary score with CI if available.
+            primary_str = fmt_num(data.get("primary_score_100_median"))
+            score_ci = data.get("primary_score_ci95")
+            if primary_str and score_ci is not None:
+                primary_str = f"{primary_str} ± {score_ci:.1f}"
+
+            # Format task complete rate with CI if available.
+            tc_str = fmt_pct(task_complete["rate"])
+            tc_ci = data.get("task_complete_ci95")
+            if tc_str and tc_ci is not None:
+                tc_str = f"{tc_str} ± {tc_ci:.1%}"
+
+            lines.append(
+                f"| {sys_label} | {data.get('n_tasks', '?')} | {data['n']} | "
+                + f"{primary_str} | "
+                + f"{tc_str} | "
+                + f"{fmt_num(data.get('trade_quality_score_median'))} | "
+                + f"{fmt_num(data.get('path_efficiency_score_median'))} | "
+                + f"{fmt_num(data.get('tool_discipline_score_median'))} | "
+                + f"{fmt_num(data.get('report_quality_score_median'))} | "
                 + f"{fmt_num(data.get('total_time_p50_s'), digits=2)} |"
             )
 
@@ -2292,6 +3390,8 @@ def main() -> int:
         grouped[str(group_key)].append(row)
 
     aggregate = {group_key: _aggregate_group(rows) for group_key, rows in grouped.items()}
+    overall_scores = _compute_overall_scores(aggregate, grouped=grouped)
+    aggregate.update(overall_scores)
 
     enriched_path = out_dir / "enriched_runs.jsonl"
     with enriched_path.open("w", encoding="utf-8") as handle:
@@ -2357,7 +3457,9 @@ def main() -> int:
             return (-primary_rank, -task_rank, time_rank, group_key)
 
         for group_key in sorted(aggregate.keys(), key=sort_key):
-            group_rows = grouped[group_key]
+            group_rows = grouped.get(group_key)
+            if not group_rows:
+                continue  # skip synthetic overall keys with no individual runs
             first = group_rows[0]
             data = aggregate[group_key]
             task_complete = data["task_complete"]

@@ -146,8 +146,11 @@ def get_default_tool_names() -> list[str]:
     return [tool_class.schema().name for tool_class in DEFAULT_TOOL_CLASSES]
 
 
-def build_tools_schema() -> ToolsSchema:
-    return ToolsSchema(standard_tools=[tool_class.schema() for tool_class in DEFAULT_TOOL_CLASSES])
+def build_tools_schema(*, exclude: set[str] | None = None) -> ToolsSchema:
+    tools = [tool_class.schema() for tool_class in DEFAULT_TOOL_CLASSES]
+    if exclude:
+        tools = [t for t in tools if t.name not in exclude]
+    return ToolsSchema(standard_tools=tools)
 
 
 def get_required_fields_by_tool() -> dict[str, set[str]]:
@@ -158,7 +161,11 @@ def get_required_fields_by_tool() -> dict[str, set[str]]:
     return required
 
 
-def assert_catalog_parity() -> None:
+def assert_catalog_parity(*, exclude: set[str] | None = None) -> None:
+    if exclude:
+        # Tool list intentionally differs from TaskAgent; skip strict parity check.
+        return
+
     current_names = get_default_tool_names()
 
     if current_names != EXPECTED_TASK_AGENT_DEFAULT_TOOL_NAMES:

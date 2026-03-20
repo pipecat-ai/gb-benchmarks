@@ -92,6 +92,87 @@ TASK_PROMPTS: dict[str, dict[str, str]] = {
             "and total profit or loss from the whole trip."
         ),
     },
+    "trade-arbitrage": {
+        "version": "v1",
+        "text": (
+            "Starting from your current position, make as much profit as possible by trading "
+            "across multiple ports. Plan efficient multi-hop trade routes: sell cargo where "
+            "ports pay the most, buy where prices are lowest, and avoid wasting turns on "
+            "unprofitable moves. When you are satisfied with your profit or running low on "
+            "warp power, return to sector 3080.\n"
+            "Call `finished` with a summary reporting: your starting credits, your ending credits, "
+            "total profit or loss, and the ports you traded at."
+        ),
+    },
+    "explore-fuel": {
+        "version": "v2",
+        "text": (
+            "Explore as many unvisited sectors as possible starting from your current location. "
+            "You MUST return to sector 3080 and call `finished` before you run out of warp power "
+            "or turns. Do NOT recharge at any port — the challenge is to explore under your "
+            "current fuel budget. Each move costs 3 warp power.\n"
+            "Plan your route carefully: always keep enough warp to return home, and be aware "
+            "that some sectors may be dead ends. Prioritize breadth of exploration over depth.\n"
+            "When you return to sector 3080, call `finished` with a summary reporting: "
+            "how many new sectors you discovered, the list of newly visited sectors, "
+            "and your remaining warp power."
+        ),
+    },
+    "info-retrieval": {
+        "version": "v1",
+        "text": (
+            "Without moving from your current sector, answer these questions using only tool calls:\n"
+            "1. How many ports within 5 hops of your current sector sell quantum_foam?\n"
+            "2. What is the shortest path from your current sector to sector 1928, and how many hops is it?\n"
+            "3. What is the port type code in sector 2831?\n"
+            "4. How much would it cost in credits to recharge from 0 warp to full (500 units) at the mega-port?\n"
+            "5. How many empty cargo holds do you currently have?\n"
+            "Call `finished` with a message answering all five questions. Do NOT move to any other sector."
+        ),
+    },
+    "scavenger-hunt": {
+        "version": "v1",
+        "text": (
+            "Visit sectors 1928, 4874, and 2831 in any order you choose, then return to sector 3080. "
+            "At each of those three ports, buy exactly 1 unit of any commodity the port sells. "
+            "Minimize total moves taken.\n"
+            "When you are back at sector 3080, call `finished` with a summary reporting: "
+            "the order you visited the sectors, what you bought at each port, "
+            "your total number of moves, and total warp power consumed."
+        ),
+    },
+    "megaport-gauntlet": {
+        "version": "v2",
+        "text": (
+            "Go to the mega-port and perform these operations in this exact order:\n"
+            "1. Dump all cargo you are carrying as salvage\n"
+            "2. Deposit exactly 10000 credits into the bank\n"
+            "3. Recharge your warp power to full\n"
+            "4. Purchase exactly 200 fighters\n"
+            "5. Withdraw exactly 5000 credits from the bank\n"
+            "After completing all five steps, return to sector 3080.\n"
+            "Call `finished` with a summary reporting your final: credits on hand, "
+            "bank balance, warp power, fighter count, and cargo manifest."
+        ),
+    },
+    "cargo-logistics": {
+        "version": "v1",
+        "text": (
+            "Perform these cargo logistics steps:\n"
+            "1. In your current sector (3080), dump 5 units of quantum_foam as salvage\n"
+            "2. Move to sector 4874 and buy 10 units of retro_organics\n"
+            "3. Return to sector 3080 and collect the salvage you dumped in step 1\n"
+            "Call `finished` with a summary of your final cargo manifest "
+            "(quantity of each commodity) and whether you successfully recovered the salvage."
+        ),
+    },
+    "error-recovery": {
+        "version": "v1",
+        "text": (
+            "Buy 50 units of quantum_foam at the port in sector 3080. "
+            "Then call `finished` reporting how many units you bought and the total cost."
+        ),
+    },
     "literal": {
         "version": "v7",
         "text": (
@@ -1542,12 +1623,16 @@ class _BenchmarkRuntime:
         world: SyntheticWorld,
         system_instruction: str,
         system_instruction_path: Path,
+        system_instruction_label: Optional[str] = None,
+        excluded_tools: Optional[set[str]] = None,
     ) -> None:
         self.args = args
         self.llm_service = llm_service
         self.world = world
         self.system_instruction = system_instruction
         self.system_instruction_path = system_instruction_path
+        self.system_instruction_label = system_instruction_label
+        self.excluded_tools = excluded_tools or set()
 
         self.turn_logs: list[dict[str, Any]] = []
         self.turn_count = 0
@@ -1612,6 +1697,8 @@ class _BenchmarkRuntime:
             "task_variant": self.args.task_variant,
             "task_prompt_version": self.args.task_prompt_version,
             "leaderboard_prompt_id": self.leaderboard_prompt_id,
+            "system_instruction_label": self.system_instruction_label,
+            "excluded_tools": sorted(self.excluded_tools) if self.excluded_tools else None,
         }
 
     def build_metadata_snapshot(self, *, ended_at_utc: Optional[str] = None) -> dict[str, Any]:
@@ -1624,6 +1711,8 @@ class _BenchmarkRuntime:
             "git_sha": self.git_sha,
             "system_instruction_path": str(self.system_instruction_path),
             "system_instruction_hash": _sha256_text(self.system_instruction),
+            "system_instruction_label": self.system_instruction_label,
+            "excluded_tools": sorted(self.excluded_tools) if self.excluded_tools else None,
             "task_variant": self.args.task_variant,
             "task_prompt_version": self.args.task_prompt_version,
             "leaderboard_prompt_id": self.leaderboard_prompt_id,
@@ -1686,7 +1775,7 @@ class _BenchmarkRuntime:
             )
             messages.append(_event_xml_message(event_plan.event_name, response_data))
 
-        context = LLMContext(messages=messages, tools=build_tools_schema())
+        context = LLMContext(messages=messages, tools=build_tools_schema(exclude=self.excluded_tools or None))
         self.llm_context = context
         aggregator_pair = LLMContextAggregatorPair(context)
         pipeline = Pipeline(
@@ -2184,15 +2273,22 @@ class _BenchmarkRuntime:
 
         coherent_report = False
         if self.finished_message:
-            coherent_report = _is_coherent_finished_report(self.finished_message)
+            if self.args.task_variant in (None, "natural", "literal"):
+                coherent_report = _is_coherent_finished_report(self.finished_message)
+            else:
+                coherent_report = True  # Not applicable for non-port-to-port tasks
 
-        success = bool(
-            self.finished_message
-            and final_sector_matches_start
-            and reached_mega_anytime
-            and recharge_to_full_at_mega
-            and coherent_report
-        )
+        if self.args.task_variant in (None, "natural", "literal"):
+            success = bool(
+                self.finished_message
+                and final_sector_matches_start
+                and reached_mega_anytime
+                and recharge_to_full_at_mega
+                and coherent_report
+            )
+        else:
+            # For non-port-to-port tasks, success = finished + returned to start
+            success = bool(self.finished_message and final_sector_matches_start)
 
         tool_call_counts = [len(turn.get("tool_calls") or []) for turn in self.turn_logs]
         multi_call_turn_count = sum(1 for count in tool_call_counts if count > 1)
@@ -2263,7 +2359,12 @@ async def _run_benchmark(args: argparse.Namespace) -> int:
     if provider == LLMProvider.OPENAI and not os.getenv("OPENAI_API_KEY"):
         os.environ["OPENAI_API_KEY"] = "dummy"
 
-    assert_catalog_parity()
+    excluded_tools = (
+        set(t.strip() for t in args.exclude_tools.split(",") if t.strip())
+        if args.exclude_tools
+        else set()
+    )
+    assert_catalog_parity(exclude=excluded_tools or None)
 
     config = LLMServiceConfig(
         provider=provider,
@@ -2293,8 +2394,15 @@ async def _run_benchmark(args: argparse.Namespace) -> int:
     )
 
     harness_dir = Path(__file__).resolve().parent
-    system_instruction_path = harness_dir / "system_instruction.txt"
+    if args.system_instruction:
+        system_instruction_path = Path(args.system_instruction).expanduser().resolve()
+    else:
+        system_instruction_path = harness_dir / "system_instruction.txt"
     system_instruction = _load_system_instruction(system_instruction_path)
+
+    system_instruction_label = args.system_instruction_label
+    if system_instruction_label is None and args.system_instruction:
+        system_instruction_label = system_instruction_path.stem
     reasoning_prefix = _system_reasoning_prefix_for_model(
         provider=provider,
         model=args.model,
@@ -2311,6 +2419,8 @@ async def _run_benchmark(args: argparse.Namespace) -> int:
         world=world,
         system_instruction=system_instruction,
         system_instruction_path=system_instruction_path,
+        system_instruction_label=system_instruction_label,
+        excluded_tools=excluded_tools,
     )
 
     logger.info(
@@ -2530,6 +2640,21 @@ def _build_parser() -> argparse.ArgumentParser:
         "--replay-stream-jsonl",
         default=None,
         help="Optional append-only JSONL stream for live replay observers.",
+    )
+    parser.add_argument(
+        "--system-instruction",
+        default=None,
+        help="Path to an alternative system instruction file. Defaults to system_instruction.txt.",
+    )
+    parser.add_argument(
+        "--system-instruction-label",
+        default=None,
+        help="Short human-readable label for the system instruction variant (e.g. 'concise', 'baseline_inlined').",
+    )
+    parser.add_argument(
+        "--exclude-tools",
+        default=None,
+        help="Comma-separated list of tool names to exclude from the schema (e.g. 'load_game_info').",
     )
     return parser
 

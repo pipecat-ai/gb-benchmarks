@@ -301,6 +301,10 @@ def _build_model_label(row: dict[str, Any]) -> str:
     if base_url:
         details.append(f"base={base_url}")
 
+    sys_label = row.get("system_instruction_label")
+    if sys_label:
+        details.append(f"sys={sys_label}")
+
     if not details:
         return base_label
     return f"{base_label} ({', '.join(details)})"
@@ -344,7 +348,11 @@ def _build_rows(
             config.get("openai_base_url") or summary.get("openai_base_url")
         )
         display_model = model_name_aliases.get(model, model)
-        group_key = (model, thinking, thinking_budget, max_tokens, openai_base_url)
+        system_instruction_label = (
+            str(enriched.get("system_instruction_label") or config.get("system_instruction_label") or "").strip()
+            or None
+        )
+        group_key = (model, thinking, thinking_budget, max_tokens, openai_base_url, system_instruction_label)
 
         rec = by_group.setdefault(
             group_key,
@@ -355,6 +363,7 @@ def _build_rows(
                 "thinking_budget": thinking_budget,
                 "max_tokens": max_tokens,
                 "openai_base_url": openai_base_url,
+                "system_instruction_label": system_instruction_label,
                 "n": 0,
                 "primary_scores": [],
                 "task_complete_count": 0,
@@ -399,6 +408,7 @@ def _build_rows(
             "thinking_budget": rec["thinking_budget"],
             "max_tokens": rec["max_tokens"],
             "openai_base_url": rec["openai_base_url"],
+            "system_instruction_label": rec.get("system_instruction_label"),
             "n": n,
             "primary_score_100_median": _percentile(rec["primary_scores"], 0.50) or 0.0,
             "task_complete_rate": _pct(rec["task_complete_count"], n),
