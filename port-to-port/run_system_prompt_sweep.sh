@@ -8,9 +8,9 @@ TS="${1:-$(date -u +%Y%m%dT%H%M%SZ)}"
 RUN_DIR="runs/prompt-sweep-${TS}"
 mkdir -p "$RUN_DIR"
 
-PROVIDER="${PROVIDER:-google}"
-MODEL="${MODEL:-gemini-2.5-flash}"
-THINKING="${THINKING:-high}"
+PROVIDER="${PROVIDER:-openai}"
+MODEL="${MODEL:-gpt-4.1}"
+THINKING="${THINKING:-none}"
 ROUNDS="${ROUNDS:-10}"
 PARALLEL="${PARALLEL:-7}"
 UV_BIN="${UV_BIN:-uv}"
@@ -39,10 +39,27 @@ if ! command -v "$UV_BIN" >/dev/null 2>&1; then
   exit 127
 fi
 
-if [[ -z "${GOOGLE_API_KEY:-}" ]]; then
-  echo "ERROR: GOOGLE_API_KEY is required for Gemini benchmarks." >&2
-  exit 2
-fi
+# Validate API key for selected provider.
+case "$PROVIDER" in
+  google)
+    if [[ -z "${GOOGLE_API_KEY:-}" ]]; then
+      echo "ERROR: GOOGLE_API_KEY is required for provider=google." >&2
+      exit 2
+    fi
+    ;;
+  openai)
+    if [[ -z "${OPENAI_API_KEY:-}" ]]; then
+      echo "ERROR: OPENAI_API_KEY is required for provider=openai." >&2
+      exit 2
+    fi
+    ;;
+  anthropic)
+    if [[ -z "${ANTHROPIC_API_KEY:-}" ]]; then
+      echo "ERROR: ANTHROPIC_API_KEY is required for provider=anthropic." >&2
+      exit 2
+    fi
+    ;;
+esac
 
 RESULTS="$RUN_DIR/results.tsv"
 RESULTS_LOCK="$RUN_DIR/.results.lock"
