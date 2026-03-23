@@ -3276,6 +3276,54 @@ def _write_markdown_table(out_path: Path, rows: list[dict[str, Any]], agg: dict[
 
         lines.append("")
 
+    # Render per-task-by-prompt summary (compact ranking table per task).
+    if len(task_prompt_ids) > 1 and "overall" in groups_by_prompt:
+        import re as _re_pt
+
+        # Collect per (sys_label, task) average scores from individual runs.
+        from collections import defaultdict as _dd_pt
+        _by_label_task: dict[tuple[str, str], dict] = _dd_pt(lambda: {"scores": [], "complete": 0, "total": 0})
+        for row in rows:
+            sys_label = row.get("system_instruction_label", "")
+            task_variant = row.get("task_variant", "")
+            score = row.get("primary_score_100")
+            tc = row.get("task_complete", False)
+            if score is not None and sys_label and task_variant:
+                key = (sys_label, task_variant)
+                _by_label_task[key]["scores"].append(float(score))
+                _by_label_task[key]["complete"] += 1 if tc else 0
+                _by_label_task[key]["total"] += 1
+
+        if _by_label_task:
+            # Get labels sorted by overall average score (descending).
+            _label_all: dict[str, list[float]] = _dd_pt(list)
+            for (lbl, _tv), d in _by_label_task.items():
+                _label_all[lbl].extend(d["scores"])
+            _sorted_labels = sorted(_label_all, key=lambda l: -sum(_label_all[l]) / len(_label_all[l]))
+
+            lines.append("## Per-Task Breakdown by Prompt")
+            lines.append("")
+
+            for task_id in task_prompt_ids:
+                lines.append(f"### {task_id}")
+                lines.append("")
+                lines.append("| Prompt | Score /100 | Task Complete % | N |")
+                lines.append("|---|---:|---:|---:|")
+
+                task_rows = []
+                for lbl in _sorted_labels:
+                    d = _by_label_task.get((lbl, task_id))
+                    if d and d["total"] > 0:
+                        avg = sum(d["scores"]) / len(d["scores"])
+                        rate = d["complete"] / d["total"] * 100
+                        task_rows.append((lbl, avg, rate, d["total"]))
+
+                task_rows.sort(key=lambda x: -x[1])
+                for lbl, avg, rate, n in task_rows:
+                    lines.append(f"| {lbl} | {avg:.1f} | {rate:.0f}% | {n} |")
+
+                lines.append("")
+
     out_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 

@@ -81,45 +81,40 @@ from tool_catalog import (  # noqa: E402
 DEFAULT_TASK_VARIANT = "natural"
 TASK_PROMPTS: dict[str, dict[str, str]] = {
     "natural": {
-        "version": "v1",
+        "version": "v2",
         "text": (
             "Go round-trip from our current location to the nearest mega-port. "
             "At the mega-port, recharge to full warp power. "
-            "While traveling there and back, make as much money as possible by trading optimally "
-            "at profitable ports on your route without going off-course. "
-            "When you're back where you started, give me a quick summary with the mega-port you used, "
-            "how much warp you recharged and what it cost, how many distinct ports you traded at, "
-            "and total profit or loss from the whole trip."
+            "On both the outbound and return legs, stop at every port along your route and "
+            "make any profitable trade available there before moving on. Do not skip ports. "
+            "When you're back where you started, call `finished` with a summary reporting: "
+            "the mega-port you used, how much warp you recharged and what it cost, "
+            "how many distinct ports you traded at, and total profit or loss from the whole trip."
         ),
     },
     "trade-arbitrage": {
-        "version": "v1",
+        "version": "v2",
         "text": (
-            "Starting from your current position, make as much profit as possible by trading "
-            "across multiple ports. Plan efficient multi-hop trade routes: sell cargo where "
-            "ports pay the most, buy where prices are lowest, and avoid wasting turns on "
-            "unprofitable moves. When you are satisfied with your profit or running low on "
-            "warp power, return to sector 3080.\n"
-            "Call `finished` with a summary reporting: your starting credits, your ending credits, "
+            "Starting from your current position, find a profitable trade route between two ports "
+            "and complete exactly 2 round-trip trade loops along it. A loop means: buy cargo at "
+            "one port, travel to another port, sell it for a profit, buy new cargo there, travel "
+            "back, and sell again.\n"
+            "After completing 2 loops, return to sector 3080 and call `finished` "
+            " with a summary reporting: your starting credits, your ending credits, "
             "total profit or loss, and the ports you traded at."
         ),
     },
     "explore-fuel": {
-        "version": "v2",
+        "version": "v3",
         "text": (
-            "Explore as many unvisited sectors as possible starting from your current location. "
-            "You MUST return to sector 3080 and call `finished` before you run out of warp power "
-            "or turns. Do NOT recharge at any port — the challenge is to explore under your "
-            "current fuel budget. Each move costs 3 warp power.\n"
-            "Plan your route carefully: always keep enough warp to return home, and be aware "
-            "that some sectors may be dead ends. Prioritize breadth of exploration over depth.\n"
-            "When you return to sector 3080, call `finished` with a summary reporting: "
+            "Explore 15 unvisited sectors starting from your current location. "
+            "Then please return to sector 3080 and call `finished` with a summary reporting: "
             "how many new sectors you discovered, the list of newly visited sectors, "
             "and your remaining warp power."
         ),
     },
     "info-retrieval": {
-        "version": "v1",
+        "version": "v2",
         "text": (
             "Without moving from your current sector, answer these questions using only tool calls:\n"
             "1. How many ports within 5 hops of your current sector sell quantum_foam?\n"
@@ -127,22 +122,25 @@ TASK_PROMPTS: dict[str, dict[str, str]] = {
             "3. What is the port type code in sector 2831?\n"
             "4. How much would it cost in credits to recharge from 0 warp to full (500 units) at the mega-port?\n"
             "5. How many empty cargo holds do you currently have?\n"
-            "Call `finished` with a message answering all five questions. Do NOT move to any other sector."
+            "Once you have gathered all five answers, call `finished` immediately with a message "
+            "answering all five questions. Do NOT move to any other sector."
         ),
     },
     "scavenger-hunt": {
-        "version": "v1",
+        "version": "v2",
         "text": (
             "Visit sectors 1928, 4874, and 2831 in any order you choose, then return to sector 3080. "
             "At each of those three ports, buy exactly 1 unit of any commodity the port sells. "
-            "Minimize total moves taken.\n"
-            "When you are back at sector 3080, call `finished` with a summary reporting: "
+            "Minimize total moves taken. Do not perform any other actions at these ports — "
+            "just buy and move on.\n"
+            "Once you have bought from all three ports, return directly to sector 3080 and "
+            "call `finished` immediately with a summary reporting: "
             "the order you visited the sectors, what you bought at each port, "
             "your total number of moves, and total warp power consumed."
         ),
     },
     "megaport-gauntlet": {
-        "version": "v2",
+        "version": "v3",
         "text": (
             "Go to the mega-port and perform these operations in this exact order:\n"
             "1. Dump all cargo you are carrying as salvage\n"
@@ -150,80 +148,30 @@ TASK_PROMPTS: dict[str, dict[str, str]] = {
             "3. Recharge your warp power to full\n"
             "4. Purchase exactly 200 fighters\n"
             "5. Withdraw exactly 5000 credits from the bank\n"
-            "After completing all five steps, return to sector 3080.\n"
+            "After completing all five steps, return immediately to sector 3080. "
+            "Do not perform any other operations at the mega-port.\n"
             "Call `finished` with a summary reporting your final: credits on hand, "
             "bank balance, warp power, fighter count, and cargo manifest."
         ),
     },
     "cargo-logistics": {
-        "version": "v1",
+        "version": "v2",
         "text": (
-            "Perform these cargo logistics steps:\n"
+            "Perform these cargo logistics steps in order:\n"
             "1. In your current sector (3080), dump 5 units of quantum_foam as salvage\n"
             "2. Move to sector 4874 and buy 10 units of retro_organics\n"
             "3. Return to sector 3080 and collect the salvage you dumped in step 1\n"
-            "Call `finished` with a summary of your final cargo manifest "
-            "(quantity of each commodity) and whether you successfully recovered the salvage."
+            "Once all three steps are done, call `finished` immediately with a summary of "
+            "your final cargo manifest (quantity of each commodity) and whether you "
+            "successfully recovered the salvage."
         ),
     },
     "error-recovery": {
-        "version": "v1",
+        "version": "v2",
         "text": (
             "Buy 50 units of quantum_foam at the port in sector 3080. "
-            "Then call `finished` reporting how many units you bought and the total cost."
-        ),
-    },
-    "literal": {
-        "version": "v7",
-        "text": (
-            "Use this procedure exactly.\n"
-            "1. Mission priority:\n"
-            "   - reach the nearest mega-port that is not your current sector\n"
-            "   - recharge to full there\n"
-            "   - return to your starting sector\n"
-            "   - only then call `finished`\n"
-            "2. Response rule:\n"
-            "   - every response must contain exactly one tool call\n"
-            "   - do not output explanation text, JSON snippets, pseudo-calls, or thoughts\n"
-            "   - if you know the next action, call the tool immediately\n"
-            "3. Trading rule:\n"
-            "   - a profitable sale means the current port pays more credits than you paid for that cargo\n"
-            "   - a profitable buy means the current port sells a commodity for fewer credits than a later port on your already plotted route pays for it\n"
-            "   - treat cargo already in your hold at the start of the run as having cost 0, so any positive sale price is profitable\n"
-            "   - only free hold space by making profitable sales\n"
-            "   - do not make an unprofitable sale and do not use `dump_cargo` just to create empty holds for a later buy\n"
-            "   - if your holds are empty and the current port has a profitable buy on the plotted route, take that buy before moving\n"
-            "   - do not skip an available profitable buy just because moving is also allowed\n"
-            "   - if a port is both a profitable sell and a profitable buy, do the profitable sell first, then use the next turn for the profitable buy if hold space is available\n"
-            "4. Outbound setup:\n"
-            "   - identify the nearest mega-port that is not your current sector\n"
-            "   - plot a route to it\n"
-            "5. Outbound policy: repeat until you arrive at the mega-port:\n"
-            "   - if the current sector has no port, move to the next sector on the plotted route\n"
-            "   - otherwise, if the port pays more for cargo you carry than you paid for it, sell that cargo\n"
-            "   - otherwise, if this port sells a commodity and a later port on the already plotted route pays more for that commodity, buy that commodity\n"
-            "   - otherwise, move to the next sector on the plotted route\n"
-            "   - if you were already at this same port on the previous turn and no successful trade happened there, move to the next sector on the plotted route\n"
-            "6. Mega-port policy:\n"
-            "   - recharge to full immediately when you arrive\n"
-            "   - then plot a route back to your starting sector\n"
-            "   - if you already have empty holds and the plotted return route has a later buyer that pays more, take exactly one profitable buy turn at the mega-port before leaving\n"
-            "   - after that one trade turn, leave the mega-port by moving to the next sector on the plotted return route\n"
-            "7. Return policy:\n"
-            "   - if the current sector is not your starting sector, do not call `finished`\n"
-            "   - if the current sector has no profitable sale or profitable buy on the plotted return route right now, move to the next sector on the plotted return route\n"
-            "   - if a trade attempt failed on the previous turn at this port, move on this turn\n"
-            "   - otherwise, repeat the same sell/buy/move policy on the plotted return route until you reach your starting sector\n"
-            "8. Starting-sector finish rule:\n"
-            "   - when you are back at your starting sector, first sell any profitable cargo there\n"
-            "   - do not buy new cargo at your starting sector on the return leg\n"
-            "   - when no profitable sale remains at your starting sector, call `finished` immediately\n"
-            "9. `finished` message requirements:\n"
-            "   - which mega-port you used\n"
-            "   - how much warp you recharged\n"
-            "   - the recharge cost\n"
-            "   - how many distinct ports you traded at\n"
-            "   - the total profit or loss from the whole trip"
+            "Call `finished` reporting the outcome: how many units you bought and the total cost, "
+            "and any other status info about the task."
         ),
     },
 }
@@ -2273,12 +2221,12 @@ class _BenchmarkRuntime:
 
         coherent_report = False
         if self.finished_message:
-            if self.args.task_variant in (None, "natural", "literal"):
+            if self.args.task_variant in (None, "natural"):
                 coherent_report = _is_coherent_finished_report(self.finished_message)
             else:
                 coherent_report = True  # Not applicable for non-port-to-port tasks
 
-        if self.args.task_variant in (None, "natural", "literal"):
+        if self.args.task_variant in (None, "natural"):
             success = bool(
                 self.finished_message
                 and final_sector_matches_start
