@@ -186,6 +186,7 @@ MAX_NO_TOOL_NUDGES = 3
 NO_TOOL_WATCHDOG_DELAY = 5.0
 EVENT_BATCH_INFERENCE_DELAY = 1.0
 PIPELINE_GRACEFUL_SHUTDOWN_TIMEOUT = 3.0
+PIPELINE_IDLE_TIMEOUT_SECS = 60
 THINKING_LEVELS = ("none", "minimal", "low", "medium", "high")
 THINKING_BUDGET_MAP = {"minimal": 0, "low": 128, "medium": 512, "high": 2048}
 ANTHROPIC_HAIKU_THINKING_BUDGET_MAP = {"low": 1024, "medium": 2048, "high": 4096}
@@ -1497,6 +1498,15 @@ class _BenchmarkResponseTracker(FrameProcessor):
             failure_class = "no_tool_call"
             self._runtime.no_tool_call_count += 1
             self._runtime.world.increment_bad_action()
+            text_preview = self._response_text_raw.strip()[:300]
+            logger.warning(
+                "NO_TOOL_CALL turn={} decision_ms={} text_chars={} thought_chars={} text_preview={!r}",
+                self._runtime.turn_count + 1,
+                self._decision_ms,
+                len(self._response_text_raw.strip()),
+                len(self._response_thought.strip()),
+                text_preview if text_preview else "(empty)",
+            )
 
         state_after = self._runtime.world.state_snapshot()
         bad_after = self._runtime.world.bad_actions_count
@@ -1559,6 +1569,47 @@ class _BenchmarkResponseTracker(FrameProcessor):
         self._response_started = False
 
     async def finalize_pending_response(self) -> None:
+        await self._finalize_if_ready()
+
+    async def force_finalize_timeout(self) -> None:
+        """Force-finalize an in-flight response that never received LLMFullResponseEndFrame.
+
+        Called when the pipeline idle timeout fires while a response is still
+        in progress (API hung mid-stream).  Logs a detailed debug snapshot and
+        records the turn as an ``idle_timeout`` failure so the run can proceed.
+        """
+        if not self._response_started or self._response_end_seen:
+            return
+
+        elapsed_ms = (
+            round((time.perf_counter() - self._response_start_monotonic) * 1000, 2)
+            if self._response_start_monotonic is not None
+            else None
+        )
+        text_received = self._response_text_raw.strip()
+        thought_received = self._response_thought.strip()
+
+        logger.warning(
+            "IDLE_TIMEOUT_FORCE_FINALIZE turn={} elapsed_ms={} "
+            "response_end_seen=False has_function_calls={} "
+            "pending_tool_results={} text_chars={} thought_chars={} "
+            "text_preview={!r}",
+            self._runtime.turn_count + 1,
+            elapsed_ms,
+            self._has_function_calls,
+            self._pending_tool_results,
+            len(text_received),
+            len(thought_received),
+            text_received[:200] if text_received else "(empty)",
+        )
+
+        # Synthesize the end-of-response so _finalize_if_ready can proceed.
+        self._response_end_seen = True
+        self._pending_tool_results = 0
+        if self._response_start_monotonic is not None:
+            self._decision_ms = round(
+                (time.perf_counter() - self._response_start_monotonic) * 1000, 2
+            )
         await self._finalize_if_ready()
 
 
@@ -1742,6 +1793,7 @@ class _BenchmarkRuntime:
                 enable_metrics=True,
                 enable_usage_metrics=True,
             ),
+            idle_timeout_secs=PIPELINE_IDLE_TIMEOUT_SECS,
             idle_timeout_frames=(
                 LLMTextFrame,
                 FunctionCallsStartedFrame,
@@ -2398,7 +2450,13 @@ async def _run_benchmark(args: argparse.Namespace) -> int:
                     runtime.request_stop("inference_failure")
                 return
             exc = task.exception()
-            if exc is not None and not runtime.stop_requested:
+            if exc is None:
+                # Pipeline exited cleanly (e.g. idle timeout).  Make sure
+                # done_event is signalled so the main loop can proceed.
+                if not runtime.stop_requested:
+                    runtime.request_stop("idle_timeout")
+                return
+            if not runtime.stop_requested:
                 runtime.world.increment_bad_action()
                 runtime.last_error_event = {
                     "endpoint": "inference",
@@ -2438,6 +2496,12 @@ async def _run_benchmark(args: argparse.Namespace) -> int:
             logger.warning("Benchmark run interrupted; proceeding with partial summary/output.")
 
     finally:
+        # Force-finalize any in-flight response that was cut short by the
+        # pipeline idle timeout (API hung mid-stream without sending
+        # LLMFullResponseEndFrame).  This records the partial turn with
+        # detailed debug info so the run can produce a JSON output.
+        await runtime.response_tracker.force_finalize_timeout()
+
         if pipeline_task and not pipeline_task.has_finished():
             try:
                 await pipeline_task.queue_frames([EndFrame()])

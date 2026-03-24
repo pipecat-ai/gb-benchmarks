@@ -799,7 +799,11 @@ def _message_mentions_number_window(message: str, *, keywords: tuple[str, ...], 
             if idx == -1:
                 break
             window = message[max(0, idx - 32) : idx + len(keyword) + 48]
-            numbers = [int(match.group(0)) for match in re.finditer(r"-?\d+", window)]
+            # Match numbers that may contain comma separators (e.g. "1,000").
+            numbers = [
+                int(match.group(0).replace(",", ""))
+                for match in re.finditer(r"-?\d[\d,]*", window)
+            ]
             if target in numbers:
                 return True
             start = idx + len(keyword)
@@ -1145,10 +1149,12 @@ class AnthropicReportJudge:
 
     @staticmethod
     def _parse_verdict(text: str) -> Optional[bool]:
-        verdict_match = re.search(r"\b(PASS|FAIL)\b", text.upper())
-        if not verdict_match:
+        # Use the *last* PASS/FAIL in the response — when the model reasons
+        # before giving a verdict, the final occurrence is the actual answer.
+        matches = list(re.finditer(r"\b(PASS|FAIL)\b", text.upper()))
+        if not matches:
             return None
-        return verdict_match.group(1) == "PASS"
+        return matches[-1].group(1) == "PASS"
 
     def judge(
         self,
@@ -1205,7 +1211,7 @@ class AnthropicReportJudge:
         text, err = self._request_text(
             system_prompt=system_prompt,
             user_prompt=user_prompt,
-            max_tokens=64,
+            max_tokens=256,
         )
         if err is not None:
             return None, err
@@ -2548,7 +2554,11 @@ def _derive_run_metrics(
     report_accuracy_method = "llm_not_run"
     report_judge_reason: Optional[str] = None
 
-    if report_judge is not None and finished_called:
+    # The LLM report judge evaluates port-to-port report criteria (mega-port,
+    # recharge, trading profit).  Skip it for non-p2p task variants — their
+    # report quality is scored by the task-specific scorer instead.
+    _is_p2p_for_judge = task_variant in (None, "natural", "literal")
+    if report_judge is not None and finished_called and _is_p2p_for_judge:
         judged_accuracy, judge_reason = report_judge.judge(
             finished_message=finished_message,
             expected_finish_sector=expected_finish_sector,
@@ -2560,8 +2570,10 @@ def _derive_run_metrics(
             report_accuracy_method = "llm"
         else:
             report_accuracy_method = "llm_unparseable"
-    elif finished_called:
+    elif finished_called and _is_p2p_for_judge:
         report_accuracy_method = "llm_unavailable"
+    elif finished_called and not _is_p2p_for_judge:
+        report_accuracy_method = "task_variant_scored"
 
     required_course_sectors = _canonical_required_course_sectors(start_sector)
     required_course_move_targets = required_course_sectors[1:]
@@ -2702,15 +2714,21 @@ def _derive_run_metrics(
     hallucinated_tool_count = unknown_action_count
     incorrect_tool_arg_count = invalid_move_count + invalid_trade_count
 
-    report_element_verdicts = _compute_report_element_verdicts(
-        finished_message=finished_message,
-        report_truth=report_truth,
-    )
-    report_presence_score = sum(1 for verdict in report_element_verdicts.values() if verdict["present"])
-    report_accuracy_score = sum(2 for verdict in report_element_verdicts.values() if verdict["accurate"])
-    if report_accuracy is True:
-        report_presence_score = 5
-        report_accuracy_score = 10
+    # Port-to-port report element verdicts are only meaningful for p2p tasks.
+    if _is_p2p_for_judge:
+        report_element_verdicts = _compute_report_element_verdicts(
+            finished_message=finished_message,
+            report_truth=report_truth,
+        )
+        report_presence_score = sum(1 for verdict in report_element_verdicts.values() if verdict["present"])
+        report_accuracy_score = sum(2 for verdict in report_element_verdicts.values() if verdict["accurate"])
+        if report_accuracy is True:
+            report_presence_score = 5
+            report_accuracy_score = 10
+    else:
+        report_element_verdicts = {}
+        report_presence_score = 0
+        report_accuracy_score = 0
     report_quality_score = report_presence_score + report_accuracy_score
 
     # Navigation quality metrics.
@@ -2799,7 +2817,8 @@ def _derive_run_metrics(
     )
 
     # Override scores for non-port-to-port tasks
-    if task_variant not in (None, "natural", "literal"):
+    _is_p2p_task = task_variant in (None, "natural", "literal")
+    if not _is_p2p_task:
         task_scores = _score_task_variant(
             task_variant=task_variant,
             finished_called=finished_called,
@@ -2832,13 +2851,17 @@ def _derive_run_metrics(
             mission_completion_score + trade_quality_score + path_efficiency_score
             + tool_discipline_score + report_quality_score
         )
+        # For non-p2p tasks, objective_success is driven by task_complete.
+        objective_success = task_complete
 
     # Success classes.
     strict_success = bool(
         objective_success
-        and report_accuracy is True
+        and (_is_p2p_task and report_accuracy is True or not _is_p2p_task)
     )
-    lenient_success = bool(finished_called and round_trip_complete and coherent_report)
+    lenient_success = bool(
+        finished_called and (round_trip_complete and coherent_report if _is_p2p_task else task_complete)
+    )
     clean_finish = terminal_reason == "finished_tool"
 
     if strict_success:
@@ -3075,6 +3098,11 @@ def _aggregate_group(rows: list[dict[str, Any]]) -> dict[str, Any]:
             sum(1 for r in rows if r.get("report_accuracy") is True),
             sum(1 for r in rows if r.get("report_accuracy") is not None),
         ),
+        "bad_actions_median": med("bad_actions_count"),
+        "no_tool_call_median": med("no_tool_call_count"),
+        "turns_executed_median": med("turns_executed"),
+        "total_moves_median": med("total_moves"),
+        "task_complete_rate": _rate(task_complete_count, n),
     }
 
 
@@ -3082,36 +3110,52 @@ def _compute_overall_scores(
     aggregate: dict[str, dict[str, Any]],
     grouped: Optional[dict[str, list[dict[str, Any]]]] = None,
 ) -> dict[str, dict[str, Any]]:
-    """Compute cross-task overall scores grouped by sys_label.
+    """Compute cross-task overall scores grouped by (model, sys_label).
 
-    If *grouped* (individual runs keyed by group_key) is provided, 95%
-    confidence intervals are computed from individual run scores using
-    bootstrap resampling of per-task means.
+    When multiple models are present, each model gets its own set of overall
+    entries. If *grouped* (individual runs keyed by group_key) is provided,
+    95% confidence intervals are computed via bootstrap resampling.
     """
     import re as _re
-    by_sys_label: dict[str, list[dict[str, Any]]] = defaultdict(list)
-    sys_label_for_key: dict[str, str] = {}
-    for group_key, data in aggregate.items():
-        match = _re.search(r'sys_label=([^|]+)', group_key)
-        sys_label = match.group(1) if match else "default"
-        by_sys_label[sys_label].append(data)
-        sys_label_for_key[group_key] = sys_label
 
-    # Collect individual run scores per sys_label (for CI computation).
-    individual_scores_by_label: dict[str, list[float]] = defaultdict(list)
-    individual_tc_by_label: dict[str, list[float]] = defaultdict(list)
+    # Detect all distinct models present.
+    _models_seen: set[str] = set()
+    for group_key in aggregate:
+        m = _re.match(r'^([^|]+\|[^|]+)', group_key)
+        if m:
+            _models_seen.add(m.group(1))
+    multi_model = len(_models_seen) > 1
+
+    # Group aggregate entries by (model_tag, sys_label).
+    by_bucket: dict[tuple[str, str], list[dict[str, Any]]] = defaultdict(list)
+    bucket_for_key: dict[str, tuple[str, str]] = {}
+    for group_key, data in aggregate.items():
+        match_sys = _re.search(r'sys_label=([^|]+)', group_key)
+        sys_label = match_sys.group(1) if match_sys else "default"
+        if multi_model:
+            m = _re.match(r'^([^|]+\|[^|]+)', group_key)
+            model_tag = m.group(1) if m else "unknown"
+        else:
+            model_tag = ""
+        bucket = (model_tag, sys_label)
+        by_bucket[bucket].append(data)
+        bucket_for_key[group_key] = bucket
+
+    # Collect individual run scores per bucket (for CI computation).
+    individual_scores: dict[tuple[str, str], list[float]] = defaultdict(list)
+    individual_tc: dict[tuple[str, str], list[float]] = defaultdict(list)
     if grouped:
         for group_key, rows in grouped.items():
-            sys_label = sys_label_for_key.get(group_key)
-            if sys_label is None:
+            bucket = bucket_for_key.get(group_key)
+            if bucket is None:
                 continue
             for row in rows:
                 score = row.get("primary_score_100")
                 if score is not None:
-                    individual_scores_by_label[sys_label].append(float(score))
+                    individual_scores[bucket].append(float(score))
                 tc = row.get("task_complete")
                 if tc is not None:
-                    individual_tc_by_label[sys_label].append(1.0 if tc else 0.0)
+                    individual_tc[bucket].append(1.0 if tc else 0.0)
 
     def _bootstrap_ci(values: list[float], n_boot: int = 10000, ci: float = 0.95) -> Optional[float]:
         """Return half-width of bootstrap CI for the mean."""
@@ -3131,18 +3175,21 @@ def _compute_overall_scores(
         return (hi - lo) / 2
 
     overall: dict[str, dict[str, Any]] = {}
-    for sys_label, groups in by_sys_label.items():
+    for (model_tag, sys_label), groups in by_bucket.items():
         n_tasks = len(groups)
         if n_tasks == 0:
             continue
         primary_scores = [g["primary_score_100_median"] for g in groups if g.get("primary_score_100_median") is not None]
         task_complete_rates = [g["task_complete"]["rate"] for g in groups if g.get("task_complete", {}).get("rate") is not None]
 
-        # Compute CI from individual runs if available.
-        score_ci = _bootstrap_ci(individual_scores_by_label.get(sys_label, []))
-        tc_ci = _bootstrap_ci(individual_tc_by_label.get(sys_label, []))
+        bucket = (model_tag, sys_label)
+        score_ci = _bootstrap_ci(individual_scores.get(bucket, []))
+        tc_ci = _bootstrap_ci(individual_tc.get(bucket, []))
 
-        overall_key = f"overall|sys_label={sys_label}"
+        if multi_model:
+            overall_key = f"overall|model={model_tag}|sys_label={sys_label}"
+        else:
+            overall_key = f"overall|sys_label={sys_label}"
         overall[overall_key] = {
             "n": sum(g["n"] for g in groups),
             "n_tasks": n_tasks,
@@ -3167,8 +3214,238 @@ def _compute_overall_scores(
             "total_time_p50_s": _safe_mean([g.get("total_time_p50_s") for g in groups]),
             "score_rubric_versions": sorted(set(v for g in groups for v in g.get("score_rubric_versions", []))),
             "sys_label": sys_label,
+            "model_tag": model_tag,
         }
     return overall
+
+
+def _write_charts(out_dir: Path, rows: list[dict[str, Any]], agg: dict[str, Any]) -> list[str]:
+    """Generate bar chart PNGs comparing models and prompts. Returns list of written file paths."""
+    try:
+        import matplotlib
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+        import numpy as np
+    except ImportError:
+        return []
+
+    written: list[str] = []
+    from collections import defaultdict as _dd_ch
+
+    # Collect per (model, sys_label, task) scores from individual runs.
+    by_model_task: dict[tuple[str, str], list[float]] = _dd_ch(list)
+    by_model_prompt: dict[tuple[str, str], list[float]] = _dd_ch(list)
+    by_model: dict[str, list[float]] = _dd_ch(list)
+    models_seen: set[str] = set()
+    tasks_seen: set[str] = set()
+    prompts_seen: set[str] = set()
+
+    for row in rows:
+        model = row.get("model", "")
+        task = row.get("task_variant", "")
+        prompt = row.get("system_instruction_label", "")
+        score = row.get("primary_score_100")
+        if score is None or not model:
+            continue
+        score_f = float(score)
+        models_seen.add(model)
+        tasks_seen.add(task)
+        prompts_seen.add(prompt)
+        by_model_task[(model, task)].append(score_f)
+        by_model_prompt[(model, prompt)].append(score_f)
+        by_model[model].append(score_f)
+
+    if not models_seen:
+        return []
+
+    models = sorted(models_seen)
+    tasks = sorted(tasks_seen)
+    multi_model = len(models) > 1
+    colors = plt.cm.Set2(np.linspace(0, 1, max(len(models), 3)))
+
+    # ── Chart 1: Overall score by model (best prompt) ───────────────────
+    if multi_model:
+        fig, ax = plt.subplots(figsize=(8, 5))
+        model_means = []
+        model_stds = []
+        for m in models:
+            scores = by_model[m]
+            model_means.append(np.mean(scores))
+            model_stds.append(np.std(scores) / np.sqrt(len(scores)) * 1.96 if len(scores) > 1 else 0)
+
+        bars = ax.bar(range(len(models)), model_means, yerr=model_stds,
+                      color=colors[:len(models)], capsize=5, edgecolor="black", linewidth=0.5)
+        ax.set_xticks(range(len(models)))
+        ax.set_xticklabels(models, rotation=15, ha="right")
+        ax.set_ylabel("Primary Score /100")
+        ax.set_title("Overall Score by Model (all prompts)")
+        ax.set_ylim(0, 105)
+        for bar, mean in zip(bars, model_means):
+            ax.text(bar.get_x() + bar.get_width() / 2, bar.get_height() + 1,
+                    f"{mean:.1f}", ha="center", va="bottom", fontsize=9)
+        fig.tight_layout()
+        p = out_dir / "chart_overall_by_model.png"
+        fig.savefig(p, dpi=150)
+        plt.close(fig)
+        written.append(str(p))
+
+    # ── Chart 2: Score by task per model ─────────────────────────────────
+    fig, ax = plt.subplots(figsize=(max(10, len(tasks) * 1.2), 6))
+    bar_width = 0.8 / max(len(models), 1)
+    x = np.arange(len(tasks))
+
+    for i, m in enumerate(models):
+        means = []
+        stds = []
+        for t in tasks:
+            scores = by_model_task.get((m, t), [])
+            means.append(np.mean(scores) if scores else 0)
+            stds.append(np.std(scores) / np.sqrt(len(scores)) * 1.96 if len(scores) > 1 else 0)
+        offset = (i - len(models) / 2 + 0.5) * bar_width
+        ax.bar(x + offset, means, bar_width, yerr=stds, label=m,
+               color=colors[i], capsize=3, edgecolor="black", linewidth=0.3)
+
+    ax.set_xticks(x)
+    ax.set_xticklabels(tasks, rotation=30, ha="right")
+    ax.set_ylabel("Primary Score /100")
+    ax.set_title("Score by Task" + (" and Model" if multi_model else ""))
+    ax.set_ylim(0, 105)
+    ax.legend(loc="lower right", fontsize=8)
+    fig.tight_layout()
+    p = out_dir / "chart_score_by_task.png"
+    fig.savefig(p, dpi=150)
+    plt.close(fig)
+    written.append(str(p))
+
+    # ── Chart 3: Task completion rate by task per model ──────────────────
+    by_model_task_tc: dict[tuple[str, str], list[float]] = _dd_ch(list)
+    for row in rows:
+        model = row.get("model", "")
+        task = row.get("task_variant", "")
+        tc = row.get("task_complete")
+        if tc is not None and model:
+            by_model_task_tc[(model, task)].append(1.0 if tc else 0.0)
+
+    fig, ax = plt.subplots(figsize=(max(10, len(tasks) * 1.2), 6))
+    for i, m in enumerate(models):
+        rates = []
+        for t in tasks:
+            vals = by_model_task_tc.get((m, t), [])
+            rates.append(np.mean(vals) * 100 if vals else 0)
+        offset = (i - len(models) / 2 + 0.5) * bar_width
+        ax.bar(x + offset, rates, bar_width, label=m,
+               color=colors[i], edgecolor="black", linewidth=0.3)
+
+    ax.set_xticks(x)
+    ax.set_xticklabels(tasks, rotation=30, ha="right")
+    ax.set_ylabel("Task Complete %")
+    ax.set_title("Task Completion Rate" + (" by Model" if multi_model else ""))
+    ax.set_ylim(0, 110)
+    ax.legend(loc="lower right", fontsize=8)
+    fig.tight_layout()
+    p = out_dir / "chart_task_complete_by_task.png"
+    fig.savefig(p, dpi=150)
+    plt.close(fig)
+    written.append(str(p))
+
+    # ── Chart 4: Bad actions by task per model ─────────────────────────
+    by_model_task_ba: dict[tuple[str, str], list[float]] = _dd_ch(list)
+    by_model_task_ntc: dict[tuple[str, str], list[float]] = _dd_ch(list)
+    for row in rows:
+        model = row.get("model", "")
+        task = row.get("task_variant", "")
+        if not model:
+            continue
+        ba = row.get("bad_actions_count")
+        if isinstance(ba, (int, float)):
+            by_model_task_ba[(model, task)].append(float(ba))
+        ntc = row.get("no_tool_call_count")
+        if isinstance(ntc, (int, float)):
+            by_model_task_ntc[(model, task)].append(float(ntc))
+
+    fig, ax = plt.subplots(figsize=(max(10, len(tasks) * 1.2), 6))
+    for i, m in enumerate(models):
+        means = []
+        for t in tasks:
+            vals = by_model_task_ba.get((m, t), [])
+            means.append(np.mean(vals) if vals else 0)
+        offset = (i - len(models) / 2 + 0.5) * bar_width
+        ax.bar(x + offset, means, bar_width, label=m,
+               color=colors[i], edgecolor="black", linewidth=0.3)
+
+    ax.set_xticks(x)
+    ax.set_xticklabels(tasks, rotation=30, ha="right")
+    ax.set_ylabel("Bad Actions (mean)")
+    ax.set_title("Bad Actions by Task" + (" and Model" if multi_model else ""))
+    ax.legend(loc="upper right", fontsize=8)
+    fig.tight_layout()
+    p = out_dir / "chart_bad_actions_by_task.png"
+    fig.savefig(p, dpi=150)
+    plt.close(fig)
+    written.append(str(p))
+
+    # ── Chart 5: Turns executed by task per model ────────────────────────
+    by_model_task_turns: dict[tuple[str, str], list[float]] = _dd_ch(list)
+    for row in rows:
+        model = row.get("model", "")
+        task = row.get("task_variant", "")
+        turns = row.get("turns_executed")
+        if model and isinstance(turns, (int, float)):
+            by_model_task_turns[(model, task)].append(float(turns))
+
+    fig, ax = plt.subplots(figsize=(max(10, len(tasks) * 1.2), 6))
+    for i, m in enumerate(models):
+        means = []
+        stds = []
+        for t in tasks:
+            vals = by_model_task_turns.get((m, t), [])
+            means.append(np.mean(vals) if vals else 0)
+            stds.append(np.std(vals) / np.sqrt(len(vals)) * 1.96 if len(vals) > 1 else 0)
+        offset = (i - len(models) / 2 + 0.5) * bar_width
+        ax.bar(x + offset, means, bar_width, yerr=stds, label=m,
+               color=colors[i], capsize=3, edgecolor="black", linewidth=0.3)
+
+    ax.set_xticks(x)
+    ax.set_xticklabels(tasks, rotation=30, ha="right")
+    ax.set_ylabel("Turns Executed (mean)")
+    ax.set_title("Turns by Task" + (" and Model" if multi_model else ""))
+    ax.legend(loc="upper right", fontsize=8)
+    fig.tight_layout()
+    p = out_dir / "chart_turns_by_task.png"
+    fig.savefig(p, dpi=150)
+    plt.close(fig)
+    written.append(str(p))
+
+    # ── Chart 6: Score by prompt (averaged across tasks), per model ──────
+    if multi_model:
+        # For each model, find best prompt's per-task scores
+        prompts = sorted(prompts_seen)
+        fig, ax = plt.subplots(figsize=(max(10, len(prompts) * 1.0), 6))
+        bar_width_p = 0.8 / max(len(models), 1)
+        x_p = np.arange(len(prompts))
+
+        for i, m in enumerate(models):
+            means = []
+            for pr in prompts:
+                scores = by_model_prompt.get((m, pr), [])
+                means.append(np.mean(scores) if scores else 0)
+            offset = (i - len(models) / 2 + 0.5) * bar_width_p
+            ax.bar(x_p + offset, means, bar_width_p, label=m,
+                   color=colors[i], edgecolor="black", linewidth=0.3)
+
+        ax.set_xticks(x_p)
+        ax.set_xticklabels(prompts, rotation=45, ha="right", fontsize=7)
+        ax.set_ylabel("Primary Score /100")
+        ax.set_title("Score by Prompt and Model")
+        ax.set_ylim(0, 105)
+        ax.legend(loc="lower right", fontsize=8)
+        fig.tight_layout()
+        p = out_dir / "chart_score_by_prompt.png"
+        fig.savefig(p, dpi=150)
+        plt.close(fig)
+        written.append(str(p))
+
+    return written
 
 
 def _write_markdown_table(out_path: Path, rows: list[dict[str, Any]], agg: dict[str, Any]) -> None:
@@ -3236,93 +3513,206 @@ def _write_markdown_table(out_path: Path, rows: list[dict[str, Any]], agg: dict[
 
         lines.append("")
 
-    # Render overall cross-task summary
-    if "overall" in groups_by_prompt:
-        lines.append("## Overall (cross-task average)")
-        lines.append("")
-        lines.append(
-            "| System Prompt | Tasks | N | Primary /100 | Task Complete % | Quality /15 | Path /15 | Tools /15 | Report /15 | "
-            "Total Time P50 (s) |"
-        )
-        lines.append("|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|")
+    # Render overall cross-task summary.
+    # Detect multi-model: check if any overall key contains model=.
+    import re as _re_mm
+    overall_keys = groups_by_prompt.get("overall", [])
+    _overall_models: set[str] = set()
+    for gk in overall_keys:
+        m = _re_mm.search(r'model=(.+?)\|sys_label=', gk)
+        if m:
+            _overall_models.add(m.group(1))
+    _multi_model = len(_overall_models) > 1
 
-        for group_key in sorted(groups_by_prompt["overall"], key=sort_key):
-            data = agg[group_key]
-            sys_label = data.get("sys_label", "default")
-            task_complete = data["task_complete"]
+    if overall_keys:
+        if _multi_model:
+            # Group overall entries by model, render a section per model
+            # and then a cross-model comparison table.
+            _by_model: dict[str, list[str]] = defaultdict(list)
+            for gk in overall_keys:
+                m = _re_mm.search(r'model=(.+?)\|sys_label=', gk)
+                mtag = m.group(1) if m else "unknown"
+                _by_model[mtag].append(gk)
 
-            # Format primary score with CI if available.
-            primary_str = fmt_num(data.get("primary_score_100_median"))
-            score_ci = data.get("primary_score_ci95")
-            if primary_str and score_ci is not None:
-                primary_str = f"{primary_str} ± {score_ci:.1f}"
+            def _model_display(mtag: str) -> str:
+                """Turn 'openai|gpt-4.1' into 'gpt-4.1', keep plain names as-is."""
+                return mtag.split("|")[-1] if "|" in mtag else mtag
 
-            # Format task complete rate with CI if available.
-            tc_str = fmt_pct(task_complete["rate"])
-            tc_ci = data.get("task_complete_ci95")
-            if tc_str and tc_ci is not None:
-                tc_str = f"{tc_str} ± {tc_ci:.1%}"
+            for mtag in sorted(_by_model):
+                lines.append(f"## Overall — {_model_display(mtag)}")
+                lines.append("")
+                lines.append(
+                    "| System Prompt | Tasks | N | Primary /100 | Task Complete % | Quality /15 | Path /15 | Tools /15 | Report /15 | "
+                    "Total Time P50 (s) |"
+                )
+                lines.append("|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|")
 
+                for group_key in sorted(_by_model[mtag], key=sort_key):
+                    data = agg[group_key]
+                    sys_label = data.get("sys_label", "default")
+                    task_complete = data["task_complete"]
+
+                    primary_str = fmt_num(data.get("primary_score_100_median"))
+                    score_ci = data.get("primary_score_ci95")
+                    if primary_str and score_ci is not None:
+                        primary_str = f"{primary_str} ± {score_ci:.1f}"
+
+                    tc_str = fmt_pct(task_complete["rate"])
+                    tc_ci = data.get("task_complete_ci95")
+                    if tc_str and tc_ci is not None:
+                        tc_str = f"{tc_str} ± {tc_ci:.1%}"
+
+                    lines.append(
+                        f"| {sys_label} | {data.get('n_tasks', '?')} | {data['n']} | "
+                        + f"{primary_str} | "
+                        + f"{tc_str} | "
+                        + f"{fmt_num(data.get('trade_quality_score_median'))} | "
+                        + f"{fmt_num(data.get('path_efficiency_score_median'))} | "
+                        + f"{fmt_num(data.get('tool_discipline_score_median'))} | "
+                        + f"{fmt_num(data.get('report_quality_score_median'))} | "
+                        + f"{fmt_num(data.get('total_time_p50_s'), digits=2)} |"
+                    )
+
+                lines.append("")
+
+            # Cross-model comparison: best prompt per model, then per-task breakdown.
+            lines.append("## Cross-Model Comparison (best prompt per model)")
+            lines.append("")
+            lines.append("| Model | Best Prompt | Primary /100 | Task Complete % | Total Time P50 (s) |")
+            lines.append("|---|---|---:|---:|---:|")
+            for mtag in sorted(_by_model):
+                best_key = sorted(_by_model[mtag], key=sort_key)[0]
+                data = agg[best_key]
+                sys_label = data.get("sys_label", "default")
+                task_complete = data["task_complete"]
+                primary_str = fmt_num(data.get("primary_score_100_median"))
+                score_ci = data.get("primary_score_ci95")
+                if primary_str and score_ci is not None:
+                    primary_str = f"{primary_str} ± {score_ci:.1f}"
+                tc_str = fmt_pct(task_complete["rate"])
+                tc_ci = data.get("task_complete_ci95")
+                if tc_str and tc_ci is not None:
+                    tc_str = f"{tc_str} ± {tc_ci:.1%}"
+                # Clean model tag for display (e.g. "openai|gpt-4.1" -> "gpt-4.1")
+                model_display = mtag.split("|")[-1] if "|" in mtag else mtag
+                lines.append(f"| {model_display} | {sys_label} | {primary_str} | {tc_str} | {fmt_num(data.get('total_time_p50_s'), digits=2)} |")
+            lines.append("")
+
+        else:
+            # Single model: original rendering.
+            lines.append("## Overall (cross-task average)")
+            lines.append("")
             lines.append(
-                f"| {sys_label} | {data.get('n_tasks', '?')} | {data['n']} | "
-                + f"{primary_str} | "
-                + f"{tc_str} | "
-                + f"{fmt_num(data.get('trade_quality_score_median'))} | "
-                + f"{fmt_num(data.get('path_efficiency_score_median'))} | "
-                + f"{fmt_num(data.get('tool_discipline_score_median'))} | "
-                + f"{fmt_num(data.get('report_quality_score_median'))} | "
-                + f"{fmt_num(data.get('total_time_p50_s'), digits=2)} |"
+                "| System Prompt | Tasks | N | Primary /100 | Task Complete % | Quality /15 | Path /15 | Tools /15 | Report /15 | "
+                "Total Time P50 (s) |"
             )
+            lines.append("|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|")
 
-        lines.append("")
+            for group_key in sorted(overall_keys, key=sort_key):
+                data = agg[group_key]
+                sys_label = data.get("sys_label", "default")
+                task_complete = data["task_complete"]
+
+                primary_str = fmt_num(data.get("primary_score_100_median"))
+                score_ci = data.get("primary_score_ci95")
+                if primary_str and score_ci is not None:
+                    primary_str = f"{primary_str} ± {score_ci:.1f}"
+
+                tc_str = fmt_pct(task_complete["rate"])
+                tc_ci = data.get("task_complete_ci95")
+                if tc_str and tc_ci is not None:
+                    tc_str = f"{tc_str} ± {tc_ci:.1%}"
+
+                lines.append(
+                    f"| {sys_label} | {data.get('n_tasks', '?')} | {data['n']} | "
+                    + f"{primary_str} | "
+                    + f"{tc_str} | "
+                    + f"{fmt_num(data.get('trade_quality_score_median'))} | "
+                    + f"{fmt_num(data.get('path_efficiency_score_median'))} | "
+                    + f"{fmt_num(data.get('tool_discipline_score_median'))} | "
+                    + f"{fmt_num(data.get('report_quality_score_median'))} | "
+                    + f"{fmt_num(data.get('total_time_p50_s'), digits=2)} |"
+                )
+
+            lines.append("")
 
     # Render per-task-by-prompt summary (compact ranking table per task).
     if len(task_prompt_ids) > 1 and "overall" in groups_by_prompt:
-        import re as _re_pt
-
-        # Collect per (sys_label, task) average scores from individual runs.
+        # Collect per (model, sys_label, task) average scores from individual runs.
         from collections import defaultdict as _dd_pt
-        _by_label_task: dict[tuple[str, str], dict] = _dd_pt(lambda: {"scores": [], "complete": 0, "total": 0})
+        _by_key_task: dict[tuple[str, str, str], dict] = _dd_pt(lambda: {"scores": [], "complete": 0, "total": 0})
         for row in rows:
             sys_label = row.get("system_instruction_label", "")
             task_variant = row.get("task_variant", "")
+            model_name = row.get("model", "")
             score = row.get("primary_score_100")
             tc = row.get("task_complete", False)
             if score is not None and sys_label and task_variant:
-                key = (sys_label, task_variant)
-                _by_label_task[key]["scores"].append(float(score))
-                _by_label_task[key]["complete"] += 1 if tc else 0
-                _by_label_task[key]["total"] += 1
+                key = (model_name, sys_label, task_variant)
+                _by_key_task[key]["scores"].append(float(score))
+                _by_key_task[key]["complete"] += 1 if tc else 0
+                _by_key_task[key]["total"] += 1
 
-        if _by_label_task:
-            # Get labels sorted by overall average score (descending).
-            _label_all: dict[str, list[float]] = _dd_pt(list)
-            for (lbl, _tv), d in _by_label_task.items():
-                _label_all[lbl].extend(d["scores"])
-            _sorted_labels = sorted(_label_all, key=lambda l: -sum(_label_all[l]) / len(_label_all[l]))
-
-            lines.append("## Per-Task Breakdown by Prompt")
-            lines.append("")
-
-            for task_id in task_prompt_ids:
-                lines.append(f"### {task_id}")
+        if _by_key_task:
+            if _multi_model:
+                # Multi-model: include model column in per-task breakdown.
+                lines.append("## Per-Task Breakdown by Model and Prompt")
                 lines.append("")
-                lines.append("| Prompt | Score /100 | Task Complete % | N |")
-                lines.append("|---|---:|---:|---:|")
 
-                task_rows = []
-                for lbl in _sorted_labels:
-                    d = _by_label_task.get((lbl, task_id))
-                    if d and d["total"] > 0:
-                        avg = sum(d["scores"]) / len(d["scores"])
-                        rate = d["complete"] / d["total"] * 100
-                        task_rows.append((lbl, avg, rate, d["total"]))
+                for task_id in task_prompt_ids:
+                    lines.append(f"### {task_id}")
+                    lines.append("")
+                    lines.append("| Model | Prompt | Score /100 | Task Complete % | N |")
+                    lines.append("|---|---|---:|---:|---:|")
 
-                task_rows.sort(key=lambda x: -x[1])
-                for lbl, avg, rate, n in task_rows:
-                    lines.append(f"| {lbl} | {avg:.1f} | {rate:.0f}% | {n} |")
+                    task_rows_mm: list[tuple[str, str, float, float, int]] = []
+                    for (mdl, lbl, tv), d in _by_key_task.items():
+                        if tv == task_id and d["total"] > 0:
+                            avg = sum(d["scores"]) / len(d["scores"])
+                            rate = d["complete"] / d["total"] * 100
+                            task_rows_mm.append((mdl, lbl, avg, rate, d["total"]))
 
+                    task_rows_mm.sort(key=lambda x: -x[2])
+                    for mdl, lbl, avg, rate, n in task_rows_mm:
+                        lines.append(f"| {mdl} | {lbl} | {avg:.1f} | {rate:.0f}% | {n} |")
+
+                    lines.append("")
+            else:
+                # Single model: original per-task-by-prompt.
+                _by_label_task: dict[tuple[str, str], dict] = _dd_pt(lambda: {"scores": [], "complete": 0, "total": 0})
+                for (mdl, lbl, tv), d in _by_key_task.items():
+                    key_lt = (lbl, tv)
+                    _by_label_task[key_lt]["scores"].extend(d["scores"])
+                    _by_label_task[key_lt]["complete"] += d["complete"]
+                    _by_label_task[key_lt]["total"] += d["total"]
+
+                _label_all: dict[str, list[float]] = _dd_pt(list)
+                for (lbl, _tv), d in _by_label_task.items():
+                    _label_all[lbl].extend(d["scores"])
+                _sorted_labels = sorted(_label_all, key=lambda l: -sum(_label_all[l]) / len(_label_all[l]))
+
+                lines.append("## Per-Task Breakdown by Prompt")
                 lines.append("")
+
+                for task_id in task_prompt_ids:
+                    lines.append(f"### {task_id}")
+                    lines.append("")
+                    lines.append("| Prompt | Score /100 | Task Complete % | N |")
+                    lines.append("|---|---:|---:|---:|")
+
+                    task_rows_sp: list[tuple[str, float, float, int]] = []
+                    for lbl in _sorted_labels:
+                        d = _by_label_task.get((lbl, task_id))
+                        if d and d["total"] > 0:
+                            avg = sum(d["scores"]) / len(d["scores"])
+                            rate = d["complete"] / d["total"] * 100
+                            task_rows_sp.append((lbl, avg, rate, d["total"]))
+
+                    task_rows_sp.sort(key=lambda x: -x[1])
+                    for lbl, avg, rate, n in task_rows_sp:
+                        lines.append(f"| {lbl} | {avg:.1f} | {rate:.0f}% | {n} |")
+
+                    lines.append("")
 
     out_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
@@ -3341,9 +3731,9 @@ def main() -> int:
     )
     parser.add_argument(
         "--report-accuracy-judge",
-        choices=["llm"],
+        choices=["llm", "skip"],
         default="llm",
-        help="How to evaluate report_accuracy used by report-quality scoring",
+        help="How to evaluate report_accuracy used by report-quality scoring (skip = no LLM judge)",
     )
     parser.add_argument(
         "--judge-model",
@@ -3490,6 +3880,10 @@ def main() -> int:
                 "required_course_trade_gap_median",
                 "off_course_trade_value_median",
                 "terminal_counts",
+                "bad_actions_median",
+                "no_tool_call_median",
+                "turns_executed_median",
+                "total_moves_median",
             ]
         )
 
@@ -3535,11 +3929,17 @@ def main() -> int:
                     data.get("required_course_trade_gap_median"),
                     data.get("off_course_trade_value_median"),
                     json.dumps(data["terminal_counts"], sort_keys=True),
+                    data.get("bad_actions_median"),
+                    data.get("no_tool_call_median"),
+                    data.get("turns_executed_median"),
+                    data.get("total_moves_median"),
                 ]
             )
 
     table_md_path = out_dir / "table.md"
     _write_markdown_table(table_md_path, derived_rows, aggregate)
+
+    chart_paths = _write_charts(out_dir, derived_rows, aggregate)
 
     print(f"INPUT_FILES={len(input_paths)}")
     print(f"OUT_DIR={out_dir}")
@@ -3547,6 +3947,8 @@ def main() -> int:
     print(f"AGGREGATE={aggregate_path}")
     print(f"TABLE_CSV={table_csv_path}")
     print(f"TABLE_MD={table_md_path}")
+    for cp in chart_paths:
+        print(f"CHART={cp}")
     return 0
 
 

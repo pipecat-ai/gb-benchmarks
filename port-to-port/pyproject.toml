@@ -6,6 +6,7 @@ requires-python = ">=3.12"
 dependencies = [
   "anthropic==0.79.0",
   "loguru>=0.7.0",
+  "matplotlib>=3.8.0",
   "pipecat-ai[google]==0.0.102",
 ]
 
