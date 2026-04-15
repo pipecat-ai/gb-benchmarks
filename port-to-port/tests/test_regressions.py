@@ -1496,6 +1496,21 @@ class MiniRLEnvRegressionTests(unittest.TestCase):
         self.assertEqual(policy, "openai:gpt-5.4 responses reasoning.effort=none")
         self.assertEqual(llm_service._settings["extra"]["reasoning"], {"effort": "none"})
 
+    def test_apply_benchmark_thinking_mode_maps_xhigh_for_gpt54(self) -> None:
+        llm_service = types.SimpleNamespace(_settings={})
+
+        policy = mini_rl_env._apply_benchmark_thinking_mode(
+            llm_service=llm_service,
+            provider=mini_rl_env.LLMProvider.OPENAI,
+            model="gpt-5.4-mini",
+            thinking="xhigh",
+            thinking_budget=None,
+            openai_base_url=None,
+        )
+
+        self.assertEqual(policy, "openai:gpt-5.4 responses reasoning.effort=xhigh")
+        self.assertEqual(llm_service._settings["extra"]["reasoning"], {"effort": "xhigh"})
+
     def test_apply_benchmark_thinking_mode_sets_qwen35_4b_enable_thinking_toggle(self) -> None:
         llm_service = types.SimpleNamespace(_settings={})
 
@@ -2449,7 +2464,7 @@ chmod +x .venv/bin/python
 printf 'canonical jsonl\\n' > runs/leaderboard-natural-v1-input.jsonl
 printf 'canonical leaderboard\\n' > leaderboards/leaderboard-natural.md
 
-for i in $(seq 1 22); do
+for i in $(seq 1 28); do
   printf '{}' > "runs/source-${i}.json"
   ln -sfn "$(pwd)/runs/source-${i}.json" "$ACCEPTED_DIR/source-${i}.json"
   ln -sfn "$(pwd)/runs/source-${i}.json" "$JUDGEABLE_DIR/source-${i}.json"
@@ -2816,7 +2831,6 @@ class LlmFactoryRegressionTests(unittest.TestCase):
         params = service.kwargs["params"]
         self.assertEqual(params.kwargs["max_tokens"], 4096)
         self.assertEqual(params.kwargs["temperature"], 0.2)
-
 
 class OpenAIResponsesServiceRegressionTests(unittest.TestCase):
     def test_assistant_history_uses_input_text_when_replayed(self) -> None:

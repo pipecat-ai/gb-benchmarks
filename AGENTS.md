@@ -121,6 +121,51 @@ OPENAI_API_KEY="$OPENAI_API_KEY" .venv/bin/python mini-rl-env.py \
   --log-json runs/gpt-5.4-natural-medium-<ts>.json \
   > runs/gpt-5.4-natural-medium-<ts>.log 2>&1
 ```
+- GPT 5.4 mini none:
+```bash
+OPENAI_API_KEY="$OPENAI_API_KEY" .venv/bin/python mini-rl-env.py \
+  --provider openai --model gpt-5.4-mini \
+  --task-variant natural --thinking none --max-tokens 4096 \
+  --max-turns 50 --function-call-timeout-secs 20 \
+  --log-json runs/gpt-5.4-mini-natural-none-<ts>.json \
+  > runs/gpt-5.4-mini-natural-none-<ts>.log 2>&1
+```
+- GPT 5.4 mini low:
+```bash
+OPENAI_API_KEY="$OPENAI_API_KEY" .venv/bin/python mini-rl-env.py \
+  --provider openai --model gpt-5.4-mini \
+  --task-variant natural --thinking low --max-tokens 4096 \
+  --max-turns 50 --function-call-timeout-secs 20 \
+  --log-json runs/gpt-5.4-mini-natural-low-<ts>.json \
+  > runs/gpt-5.4-mini-natural-low-<ts>.log 2>&1
+```
+- GPT 5.4 mini medium:
+```bash
+OPENAI_API_KEY="$OPENAI_API_KEY" .venv/bin/python mini-rl-env.py \
+  --provider openai --model gpt-5.4-mini \
+  --task-variant natural --thinking medium --max-tokens 4096 \
+  --max-turns 50 --function-call-timeout-secs 20 \
+  --log-json runs/gpt-5.4-mini-natural-medium-<ts>.json \
+  > runs/gpt-5.4-mini-natural-medium-<ts>.log 2>&1
+```
+- GPT 5.4 mini high:
+```bash
+OPENAI_API_KEY="$OPENAI_API_KEY" .venv/bin/python mini-rl-env.py \
+  --provider openai --model gpt-5.4-mini \
+  --task-variant natural --thinking high --max-tokens 4096 \
+  --max-turns 50 --function-call-timeout-secs 20 \
+  --log-json runs/gpt-5.4-mini-natural-high-<ts>.json \
+  > runs/gpt-5.4-mini-natural-high-<ts>.log 2>&1
+```
+- GPT 5.4 mini xhigh:
+```bash
+OPENAI_API_KEY="$OPENAI_API_KEY" .venv/bin/python mini-rl-env.py \
+  --provider openai --model gpt-5.4-mini \
+  --task-variant natural --thinking xhigh --max-tokens 4096 \
+  --max-turns 50 --function-call-timeout-secs 20 \
+  --log-json runs/gpt-5.4-mini-natural-xhigh-<ts>.json \
+  > runs/gpt-5.4-mini-natural-xhigh-<ts>.log 2>&1
+```
 - GPT 5.2 medium:
 ```bash
 OPENAI_API_KEY="$OPENAI_API_KEY" .venv/bin/python mini-rl-env.py \
@@ -165,6 +210,7 @@ OPENAI_API_KEY="$OPENAI_API_KEY" .venv/bin/python mini-rl-env.py \
     - `low -> low`
     - `medium -> medium`
     - `high -> high`
+    - `xhigh -> xhigh`
   - Do not map `gpt-5.4` `thinking=none` to `minimal`; the API rejects that value.
 
 #### Google
@@ -402,6 +448,28 @@ OPENAI_API_KEY="$OPENAI_API_KEY" .venv/bin/python mini-rl-env.py \
   --log-json runs/qwen3.5-122b-natural-default-sglang-<ts>.json \
   > runs/qwen3.5-122b-natural-default-sglang-<ts>.log 2>&1
 ```
+
+#### OpenAI-compatible Gemma 4 on daily vLLM
+- Shared base URL:
+```bash
+GEMMA4_URL="https://daily--gemma4-31b-vllm.modal.run"
+```
+- Gemma 4 31B default reasoning:
+```bash
+OPENAI_API_KEY="dummy" .venv/bin/python mini-rl-env.py \
+  --provider openai --model gemma-4-31b \
+  --openai-base-url "$GEMMA4_URL" \
+  --task-variant natural --thinking high --max-tokens 4096 \
+  --max-turns 50 --function-call-timeout-secs 20 \
+  --log-json runs/gemma-4-31b-modal-natural-high-<ts>.json \
+  > runs/gemma-4-31b-modal-natural-high-<ts>.log 2>&1
+```
+- Gemma 4 caveats:
+  - Gemma 4 always thinks internally; there is no API toggle to disable reasoning.
+  - Use `--thinking high` as the benchmark placeholder; the harness sends no reasoning override.
+  - The vLLM endpoint handles thinking internally — no `<thought>` tags appear in the output stream, so the standard `OpenAILLMService` works.
+  - The `OPENAI_API_KEY` can be any non-empty string (`"dummy"` is fine); the Modal endpoint does not require authentication.
+  - Do not pass `--thinking-budget` for Gemma 4.
 
 ### Monitoring
 - Prefer a live PTY session for long workers.

@@ -157,7 +157,7 @@ MAX_NO_TOOL_NUDGES = 3
 NO_TOOL_WATCHDOG_DELAY = 5.0
 EVENT_BATCH_INFERENCE_DELAY = 1.0
 PIPELINE_GRACEFUL_SHUTDOWN_TIMEOUT = 3.0
-THINKING_LEVELS = ("none", "minimal", "low", "medium", "high")
+THINKING_LEVELS = ("none", "minimal", "low", "medium", "high", "xhigh")
 THINKING_BUDGET_MAP = {"minimal": 0, "low": 128, "medium": 512, "high": 2048}
 ANTHROPIC_HAIKU_THINKING_BUDGET_MAP = {"low": 1024, "medium": 2048, "high": 4096}
 GEMINI_25_FLASH_THINKING_BUDGET_MAP = {"low": 1024, "medium": 2048, "high": 4096}
@@ -226,6 +226,11 @@ def _is_google_thinking_level_model(model_lower: str) -> bool:
     return any(normalized.startswith(prefix) for prefix in GOOGLE_THINKING_LEVEL_MODEL_PREFIXES)
 
 
+def _is_nemotron_model(model_lower: str) -> bool:
+    normalized = model_lower.strip().lower()
+    return normalized.startswith("nemotron") or normalized.startswith("nvidia/nemotron")
+
+
 def _is_qwen35_model(model_lower: str) -> bool:
     normalized = model_lower.strip().lower()
     return "qwen3.5" in normalized or "qwen-3.5" in normalized
@@ -268,7 +273,9 @@ def _is_nemotron_vllm_017_default_only_endpoint(openai_base_url: Optional[str]) 
 
     parsed = urllib.parse.urlparse(openai_base_url)
     host = parsed.netloc.lower()
-    return "nemotron-vllm-017" in host and host.endswith(".modal.run")
+    return (
+        "nemotron-vllm-017" in host or ("nemotron" in host and "vllm017" in host)
+    ) and host.endswith(".modal.run")
 
 
 def _sanitize_assistant_replay_text(text: str) -> str:
@@ -653,7 +660,7 @@ def _validate_generation_controls(args: argparse.Namespace, parser: argparse.Arg
                     "--openai-no-budget-thinking-toggle requires --openai-base-url for an "
                     "OpenAI-compatible endpoint."
                 )
-            if not model_lower.startswith("nemotron"):
+            if not _is_nemotron_model(model_lower):
                 parser.error(
                     "--openai-no-budget-thinking-toggle is currently supported only for "
                     "OpenAI-compatible Nemotron endpoints."
@@ -690,7 +697,7 @@ def _validate_generation_controls(args: argparse.Namespace, parser: argparse.Arg
 
         if (
             args.openai_base_url
-            and model_lower.startswith("nemotron")
+            and _is_nemotron_model(model_lower)
             and _is_nemotron_vllm_017_default_only_endpoint(args.openai_base_url)
         ):
             if args.thinking != "high":
@@ -821,7 +828,7 @@ def _apply_benchmark_thinking_mode(
             extra["extra_body"] = extra_body
             return f"openai-compatible:sglang glm enable_thinking={enable_thinking}"
 
-        if openai_base_url and model_lower.startswith("nemotron") and openai_no_budget_thinking_toggle:
+        if openai_base_url and _is_nemotron_model(model_lower) and openai_no_budget_thinking_toggle:
             enable_thinking = thinking != "none"
             existing_extra_body = extra.get("extra_body")
             extra_body = dict(existing_extra_body) if isinstance(existing_extra_body, dict) else {}
@@ -844,7 +851,7 @@ def _apply_benchmark_thinking_mode(
 
         if (
             openai_base_url
-            and model_lower.startswith("nemotron")
+            and _is_nemotron_model(model_lower)
             and _is_nemotron_vllm_017_default_only_endpoint(openai_base_url)
         ):
             return "openai-compatible:nemotron vllm-017 default reasoning only"
