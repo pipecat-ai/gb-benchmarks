@@ -48,9 +48,11 @@
 | nemotron-3-super-120b (th=none, tb=0, mt=4096, base=daily--nemotron-super-b200-sglang-serve.modal.run) | 25 | 37 | 16.0% | 1.6 | 14.2 | 0.2 | 2.3 | 1497.1 | 2994.8 | 260.14 |
 | qwen3.5-4b (th=none, mt=4096, base=daily--qwen35-sglang-serve-4b.modal.run) | 25 | 37 | 12.0% | 0.8 | 13.5 | 0.1 | 2.8 | 1178.9 | 3033.4 | 241.03 |
 | nemotron-3-nano-30b (th=medium, tb=512, mt=4096, base=daily--nemotron-nano-b200-sglang-serve.modal.run) | 25 | 37 | 0.0% | 0.2 | 11.0 | 5.1 | 9.3 | 4882.8 | 5633.4 | 218.07 |
+| gemma-4-e4b (th=high, mt=4096, base=daily--gemma4-e4b-vllm.modal.run) | 25 | 35 | 20.0% | 0.6 | 11.5 | 1.7 | 5.4 | 1001.9 | 5828.9 | 180.49 |
 | qwen3.5-4b (th=high, mt=4096, base=daily--qwen35-sglang-serve-4b.modal.run) | 25 | 34 | 28.0% | 1.0 | 3.5 | 8.3 | 7.0 | 2372.3 | 6146.6 | 222.93 |
 | glm-4.7-flash (th=none, mt=4096, base=daily--glm47-sglang-serve.modal.run) | 25 | 29 | 12.0% | 1.1 | 6.6 | 6.9 | 3.4 | 1875.3 | 3692.8 | 168.69 |
 | nemotron-3-nano-30b (th=low, tb=128, mt=4096, base=daily--nemotron-nano-b200-sglang-serve.modal.run) | 25 | 28 | 0.0% | 0.0 | 11.4 | 5.5 | 8.1 | 2150.8 | 4918.5 | 108.50 |
+| gemma-4-e4b (th=none, mt=4096, base=daily--gemma4-e4b-vllm.modal.run) | 25 | 27 | 28.0% | 0.5 | 11.4 | 3.0 | 4.6 | 1045.6 | 6246.7 | 172.13 |
 | qwen3.5-122b (th=high, mt=4096, base=daily--qwen35-sglang-serve-122b.modal.run) | 25 | 22 | 4.0% | 0.2 | 15.0 | 7.2 | 0.5 | 976.0 | 4021.8 | 27.00 |
 | gpt-5.4-mini (th=xhigh, mt=4096) | 25 | 20 | 0.0% | 0.0 | 15.0 | 4.7 | 0.0 | 24118.1 | 28550.8 | 221.99 |
 | nemotron-3-nano-30b (th=none, tb=0, mt=4096, base=daily--nemotron-nano-b200-sglang-serve.modal.run) | 25 | 16 | 0.0% | 0.2 | 4.6 | 4.1 | 3.0 | 915.0 | 1291.6 | 102.65 |
