@@ -7,7 +7,11 @@ dependencies = [
   "anthropic==0.79.0",
   "loguru>=0.7.0",
   "pipecat-ai[google]==0.0.102",
+  "google-genai>=2.3.0,<2.4.0",
 ]
 
 [tool.uv]
 package = false
+# Override pipecat-ai's google-genai<2 cap so we can pick up gemini-3.5-flash
+# fixes from the 2.x SDK. Re-evaluate after each pipecat upgrade.
+override-dependencies = ["google-genai>=2.3.0,<2.4.0"]
