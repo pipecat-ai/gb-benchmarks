@@ -218,6 +218,8 @@ def _provider_from_str(provider: str) -> LLMProvider:
         return LLMProvider.GOOGLE
     if normalized == "anthropic":
         return LLMProvider.ANTHROPIC
+    if normalized == "cerebras":
+        return LLMProvider.CEREBRAS
     raise ValueError(f"Unsupported provider: {provider}")
 
 
@@ -653,6 +655,21 @@ def _validate_generation_controls(args: argparse.Namespace, parser: argparse.Arg
     if args.max_tokens is not None and args.provider != "openai":
         parser.error("--max-tokens is only supported when --provider openai is selected.")
 
+    if args.provider == "cerebras":
+        # Kimi K2.6 is a binary-reasoning model: Thinking (default) or Instant
+        # (reasoning_effort="none"). It exposes no exact thinking budget.
+        if thinking_budget is not None:
+            parser.error(
+                "Cerebras Kimi supports benchmark --thinking none|high "
+                "(Instant vs Thinking), not exact --thinking-budget."
+            )
+        if args.thinking not in {"none", "high"}:
+            parser.error(
+                "For Cerebras Kimi, --thinking must be 'none' (Instant) or "
+                "'high' (Thinking)."
+            )
+        return
+
     if args.provider == "openai":
         if openai_no_budget_thinking_toggle:
             if not args.openai_base_url:
@@ -798,6 +815,19 @@ def _apply_benchmark_thinking_mode(
     # Clear keys this function owns before applying model-specific config.
     for key in ("thinking", "output_config", "reasoning", "reasoning_effort"):
         extra.pop(key, None)
+
+    if provider == LLMProvider.CEREBRAS:
+        # Kimi K2.6: Thinking (default) vs Instant (reasoning_effort="none").
+        # Sampling follows Cerebras's guide: Thinking T=1.0, Instant T=0.6,
+        # top_p=0.95. CerebrasLLMService merges extra into the top-level request,
+        # so reasoning_effort lands as a chat param.
+        settings["top_p"] = 0.95
+        if normalized_thinking == "none":
+            extra["reasoning_effort"] = "none"
+            settings["temperature"] = 0.6
+            return "cerebras:kimi instant reasoning_effort=none T=0.6"
+        settings["temperature"] = 1.0
+        return "cerebras:kimi thinking (default) T=1.0"
 
     if provider == LLMProvider.OPENAI:
         if model_lower.startswith("gpt-5.4"):
@@ -2459,7 +2489,7 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--provider",
         default=os.getenv("TASK_LLM_PROVIDER", "openai"),
-        choices=["openai", "google", "anthropic"],
+        choices=["openai", "google", "anthropic", "cerebras"],
         help="LLM provider",
     )
     parser.add_argument(

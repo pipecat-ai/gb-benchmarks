@@ -15,6 +15,7 @@ class LLMProvider(Enum):
     GOOGLE = "google"
     ANTHROPIC = "anthropic"
     OPENAI = "openai"
+    CEREBRAS = "cerebras"
 
 
 @dataclass
@@ -90,6 +91,7 @@ def _get_api_key(provider: LLMProvider, override: Optional[str] = None) -> str:
         LLMProvider.GOOGLE: "GOOGLE_API_KEY",
         LLMProvider.ANTHROPIC: "ANTHROPIC_API_KEY",
         LLMProvider.OPENAI: "OPENAI_API_KEY",
+        LLMProvider.CEREBRAS: "CEREBRAS_API_KEY",
     }
     env_var = env_var_map[provider]
     value = os.getenv(env_var)
@@ -124,6 +126,12 @@ def create_llm_service(config: LLMServiceConfig) -> LLMService:
             function_call_timeout_secs=config.function_call_timeout_secs,
             openai_base_url=config.openai_base_url,
             openai_params=config.openai_params,
+        )
+    elif config.provider == LLMProvider.CEREBRAS:
+        service = _create_cerebras_service(
+            api_key=api_key,
+            model=config.model,
+            function_call_timeout_secs=config.function_call_timeout_secs,
         )
     else:
         raise ValueError(f"Unsupported provider: {config.provider}")
@@ -247,6 +255,31 @@ def _create_openai_service(
         kwargs["params"] = params
 
     return OpenAIServiceClass(
+        api_key=api_key,
+        model=model,
+        **kwargs,
+    )
+
+
+def _create_cerebras_service(
+    *,
+    api_key: str,
+    model: str,
+    function_call_timeout_secs: Optional[float],
+) -> LLMService:
+    from pipecat.services.cerebras.llm import CerebrasLLMService
+
+    # Cerebras Kimi K2.6 guide sampling defaults (Thinking mode). Instant-mode
+    # temperature (0.6) and reasoning_effort="none" are applied post-construction
+    # in mini-rl-env._apply_benchmark_thinking_mode, which mutates _settings.
+    params = CerebrasLLMService.InputParams(temperature=1.0, top_p=0.95)
+
+    kwargs: dict[str, object] = {"params": params}
+    if function_call_timeout_secs is not None:
+        kwargs["function_call_timeout_secs"] = function_call_timeout_secs
+
+    # CerebrasLLMService defaults base_url to https://api.cerebras.ai/v1.
+    return CerebrasLLMService(
         api_key=api_key,
         model=model,
         **kwargs,
