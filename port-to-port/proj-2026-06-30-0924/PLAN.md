@@ -61,7 +61,7 @@ The 2026-06-29 Baseten sweep (`runs/baseten-sweep-20260629-231133/`, see `codex-
   Standalone diagnostic (`diagnostics/baseten_empty_turn_probe.py`, new), **bounded and diagnostic-only (never leaderboard data)**. (a) **Concurrency test for Mechanism B:** drive the same workload at concurrency 1 vs 2 vs 6 against `inference.baseten.co` and measure empty/no-usage rate per level — determine whether B is induced by parallel endpoint load. (b) **Raw capture:** on no-content+no-tool turns dump raw chunks, each `choices[].delta`, `finish_reason`, final `usage`; streaming AND non-streaming for the same request; replay real B contexts from run JSONs' `inference_inputs[].messages_for_llm`. (c) **Reasoning-shape evidence for step 4:** on successful GLM-5.2 reasoning-on turns, report whether/where `delta.reasoning_content` (streaming) and `message.reasoning_content` (non-streaming) appear relative to `tool_calls`. (d) **force_nonempty_content probe:** does Baseten honor/ignore/reject it? Write `proj-2026-06-30-0924/step1-diagnostic-findings.md`. Gate steps 3 & 4's approach on these findings.
   Key files: `diagnostics/baseten_empty_turn_probe.py` (new), `proj-2026-06-30-0924/step1-diagnostic-findings.md` (new)
 
-- [ ] **2. Raise the per-turn token cap for Baseten reasoning models (Mechanism A)**
+- [x] **2. Raise the per-turn token cap for Baseten reasoning models (Mechanism A)**
   Raise `run_baseten_sweep.sh:17` to `MAX_TOKENS=${MAX_TOKENS:-8192}`; confirm pass-through at `llm_factory.py:229-232`. If any hard default per-turn cap exists in `mini-rl-env.py` for reasoning-on Baseten configs, ensure ≥8192. 8192 is a first sanity value; escalate if step 5 still shows A truncation. Non-Baseten defaults unchanged. (In-flight `mt=8192` re-run gives an early read.)
   Key files: `run_baseten_sweep.sh`, `llm_factory.py`, `mini-rl-env.py` (only if a hard cap exists)
 
@@ -80,8 +80,8 @@ The 2026-06-29 Baseten sweep (`runs/baseten-sweep-20260629-231133/`, see `codex-
 ## Progress
 | # | Step | Status | Commit | Notes |
 |---|------|--------|--------|-------|
-| 1 | Diagnostic: concurrency + raw-stream + reasoning-shape | done | (pending) | B is transient (not concurrency, not deterministic) → implement step 3 retry; step 4 reasoning is a separate field (feasible); force_nonempty out |
-| 2 | Raise per-turn token cap (≥8192) | pending | — | Mechanism A; independent; mt=8192 re-run in flight |
+| 1 | Diagnostic: concurrency + raw-stream + reasoning-shape | done | 0aed7aa | B is transient (not concurrency, not deterministic) → implement step 3 retry; step 4 reasoning is a separate field (feasible); force_nonempty out |
+| 2 | Raise per-turn token cap (≥8192) | done | (pending) | MAX_TOKENS default 4096→8192; no hard clamp; non-Baseten unaffected |
 | 3 | Empty/no-usage transport-retry | pending | — | gated on step 1; owns capture+watchdog; telemetry ≠ accounting |
 | 4 | GLM reasoning_content preservation | pending | — | spike first; Baseten-GLM predicate; no pipecat edits |
 | 5 | Staged sequential validation + Nemotron finding | pending | — | two-tier rounds; concurrency=1; scratch leaderboard; user-gated commit |

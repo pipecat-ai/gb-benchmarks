@@ -14,7 +14,9 @@ set -uo pipefail
 cd "$(dirname "$0")"
 
 ROUNDS="${ROUNDS:-25}"
-MAX_TOKENS="${MAX_TOKENS:-4096}"
+# 8192 is a sanity ceiling for reasoning-on Baseten configs (Mechanism A);
+# escalate if step-5 validation still shows truncation.
+MAX_TOKENS="${MAX_TOKENS:-8192}"
 MAX_TURNS="${MAX_TURNS:-50}"
 FC_TIMEOUT="${FC_TIMEOUT:-30}"
 PER_RUN_TIMEOUT="${PER_RUN_TIMEOUT:-600}"
