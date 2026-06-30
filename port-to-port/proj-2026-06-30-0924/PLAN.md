@@ -1,0 +1,87 @@
+# Plan: Fix GLM-5.2 / Nemotron-3-Ultra failure modes on the Baseten port-to-port benchmark
+
+Project directory: `./proj-2026-06-30-0924`
+
+## Context
+The 2026-06-29 Baseten sweep (`runs/baseten-sweep-20260629-231133/`, see `codex-failure-analysis.md`) showed GLM-5.2 never reaches 100% task completion and Nemotron-3-Ultra completes 100% but trades poorly. GLM failures split into **Mechanism A** (reasoning consumes the full per-turn `max_tokens=4096` and truncates before the tool call; 94 no-tool turns) and **Mechanism B** (empty completions — no content, no tool call, no `usage`; 613 GLM + 167 Nemotron turns). Genuine "narrate instead of act" no-tool turns are negligible (1 of 708), so the failure surface is A + B, not tool-use discipline — there is **no prompt change in this plan**. **Concurrency hypothesis:** the sweep ran 6 configs in parallel against one Baseten base URL, violating the repo sequential-per-endpoint rule (`../AGENTS.md:6`); concurrent endpoint load is a prime suspect for Mechanism B and is tested before any retry logic is justified. This plan: diagnose (incl. concurrency) → raise the token cap (A) → empty-turn transport retry (B) → GLM reasoning preservation → staged sequential validation. Nemotron's trade-quality gap is treated as a **measured finding** reported in validation, not a code change.
+
+## Reference implementations
+- **GLM-5.2 reasoning handling** — Z.ai thinking-mode doc: within an active tool-call chain (interleaved thinking) you must **preserve and re-submit** assistant `reasoning_content`. vLLM recipe: `--reasoning-parser glm45 --tool-call-parser glm47`.
+- **Nemotron-3-Ultra reasoning handling** — NVIDIA NIM doc: **strip** prior reasoning; with `tools` it wants `chat_template_kwargs:{enable_thinking:true, force_nonempty_content:true}` — but Baseten's managed endpoint only honors `reasoning.effort` and the harness strips `chat_template_kwargs` in the Baseten branch (`mini-rl-env.py:~890-904`). Treat `force_nonempty_content` as **out of reach on Baseten** unless step 1 proves otherwise.
+- **Local precedent for harness-side pipecat adaptation** — `mini-rl-env.py:324-404` `_apply_openai_non_streaming_tool_call_workaround` monkey-patches `OpenAILLMService.get_chat_completions`. Steps 3–4 adapt at the harness; **never edit installed pipecat** under `.venv`.
+- **Repo ops rules** (`../AGENTS.md`): line 6 "Keep runs sequential per provider endpoint"; line 358 "one run at a time per endpoint"; line 9 worker log capture; line 476 log `RUN_START`/`RUN_EXIT`.
+
+## Current state
+- `mini-rl-env.py:156-158` — `MAX_NO_TOOL_NUDGES = 3`, `NO_TOOL_WATCHDOG_DELAY = 5.0`, `EVENT_BATCH_INFERENCE_DELAY = 1.0`.
+- `mini-rl-env.py:585-612` — `_is_empty_assistant_context_message` / `_prune_empty_assistant_context_messages`.
+- `mini-rl-env.py:1193-1200` — `on_response_end(has_function_calls=...)` arms the no-tool watchdog.
+- `mini-rl-env.py:1292,1377` queue captures; `1477` `activate_next_inference_capture()`; `1610` `attach_active_inference_capture(turn_log)`; `1688,1884-1917` single `_active_inference_capture_index` lifecycle.
+- `mini-rl-env.py:1485-1546` — frame capture: `LLMTextFrame`→`_response_text`/`_response_text_raw`; `LLMThoughtTextFrame`→`_response_thought`; `FunctionCallsStartedFrame`→`_has_function_calls`; `MetricsFrame`→`_usage_metrics`.
+- `mini-rl-env.py:1553-1607`, esp. **1563-1567** — `not _has_function_calls` ⇒ `failure_class="no_tool_call"`, `no_tool_call_count += 1`, `world.increment_bad_action()`.
+- `mini-rl-env.py:1401-1427` — `_no_tool_watchdog_fire` (nudge/stall); inference watchdog cancels it at `1356-1358`.
+- `mini-rl-env.py:2434-2467` — synthesized `inference_failure` accounting; `_finalize_if_ready` records tool-result `error_event`.
+- `mini-rl-env.py:283-302` — `_is_baseten_endpoint` / `_baseten_reasoning_effort`; Baseten thinking branch ~`887-905`.
+- `mini-rl-env.py:1708-1727` — metadata: `task_prompt_hash = sha256(args.task)` (1727) is what the leaderboard guards on; `system_instruction_hash` (1723) is recorded but unused for scoping. (No prompt change in this plan ⇒ this hazard does not arise.)
+- `evaluate_runs.py:1405-1409,1431-1435` — reads `summary.no_tool_call_count`/`summary.bad_actions_count`; unknown new fields ignored.
+- `build_primary_leaderboard.py:178-214` — rejects mixed runs only on differing `task_prompt_hash` + `leaderboard_prompt_id`.
+- `llm_factory.py:211-261`, esp. **229-232** — `_create_openai_service` sets `params_kwargs["max_tokens"]`.
+- `run_baseten_sweep.sh:17` `MAX_TOKENS=${MAX_TOKENS:-4096}`; `19` `FC_TIMEOUT=30`; `21` single `BASE_URL`; `88` per-run `*.out`; `98-107` 6 parallel workers (violates sequential-per-endpoint); `PER_RUN_TIMEOUT=600`.
+- Gating hazard: `_is_glm_sglang_binary_reasoning_model` matches `glm-5*` and does **NOT** match `zai-org/GLM-5.2`. Do not reuse for Baseten-GLM gating.
+- Installed pipecat (do **not** edit): `base_llm.py:398-408` records usage `reasoning_tokens` only (no `delta.reasoning_content` parsing); `423-451` handles `delta.tool_calls`+`delta.content`; passes `context.tool_choice` through (no `tool_choice` is set by the harness). `llm_response_universal.py:974-988` builds assistant tool-call messages (no content/reasoning); `1128-1159` thought path emits `{"type":"thought",...}`; `open_ai_adapter.py:113-124` passes `LLMSpecificMessage.message` through.
+- Run JSONs embed `inference_inputs` per payload (`--capture-inference-inputs` default true, `mini-rl-env.py:~2621`); replay uses the per-entry `messages_for_llm`. No separate `inference_inputs/` directory.
+
+## Rules
+
+### Backward compatibility & gating
+- Every behavior change is gated on `_is_baseten_endpoint(openai_base_url)` and/or model identity; no change may alter behavior for non-Baseten providers/models or any recorded leaderboard run.
+- Gating predicates must match all name variants (`zai-org/GLM-5.2`, `glm-5.2`, `nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B`, `nemotron-3-ultra-550b`); add a dedicated predicate with unit tests; do NOT reuse `_is_glm_sglang_binary_reasoning_model`.
+- Do **not** edit installed pipecat. Adapt harness-side (monkey-patch precedent `324-404`, or a thin subclass/wrapper in `llm_factory.py`).
+- Do **not** add `chat_template_kwargs.force_nonempty_content` (or any chat_template_kwargs) to the Baseten path unless step 1 proves Baseten honors it.
+- **No changes to `system_instruction.txt` or `args.task`** in this plan — preserves leaderboard prompt comparability.
+
+### Transport-retry safety (step 3)
+- Retries must NOT increment `bad_actions_count`/`no_tool_call_count`, set `failure_class="no_tool_call"`, advance `turn_count`/`turns_executed`, or append a normal `turn_log` on success.
+- A retry must own the inference-capture lifecycle (reuse or explicitly discard the active empty-attempt capture at `1884-1917`) and immediately cancel `_no_tool_watchdog_handle`; fall through to the existing nudge/stall path only when retries are exhausted.
+- B signature = no function calls + empty `_response_text`/`_response_text_raw` + empty `_response_thought` + `_usage_metrics is None` + **no observed exception/synthesized `inference_failure` (`2434-2467`) and no tool `error_event`**, gated to Baseten GLM/Nemotron. A visible text-only no-tool response (non-empty text) is NEVER treated as a transport empty, even if usage is absent.
+- Telemetry uses new, stable fields separate from accounting: per-turn `transport_empty_retries`/`transport_empty_attempts`, summary `empty_response_count` + `empty_response_retry_success_count`.
+
+### Validation integrity & ops
+- **One benchmark at a time.** ALL benchmark runs (re-runs and validation) execute as a single sequential process with **one inference loop / one episode in flight at any time (one loop per process)**, per `../AGENTS.md:6,358`. This is both the documented house rule and the maximally-conservative posture while landing harness changes (steps 2–4): it isolates any code issue (incl. the step-3 capture-lifecycle/watchdog paths) instead of confounding or masking it under concurrent load. The original parallel-worker design of `run_baseten_sweep.sh` (6 simultaneous workers on one base URL) is **deprecated**; step 5 makes strictly-sequential the default.
+- Sequential runs write a canonical per-run worker log (tee to `runs/<stem>.log`, not only `*.out`) with `RUN_START`/`RUN_EXIT` markers (`../AGENTS.md:9,476`).
+- Step 1's concurrency probe is the **only** intentional concurrency — a bounded diagnostic exception explicitly labeled diagnostic-only, never fed into the eval/leaderboard (its purpose is to measure whether the prior parallel runs induced Mechanism B).
+- Do not overwrite committed leaderboards; validation writes a scratch table. Keep `FC_TIMEOUT=30` (matches baseline); note it.
+- `.env`/`runs/` stay untracked; never commit secrets or large run artifacts.
+
+### Process
+- Each step is one focused, independently committable, revertable change leaving the harness runnable. After each step: paired review (direct + Codex) must align and come back clean before proceeding.
+
+## Steps
+
+- [x] **1. Diagnostic: concurrency test + raw-stream capture + reasoning-shape evidence (read-only)**
+  Standalone diagnostic (`diagnostics/baseten_empty_turn_probe.py`, new), **bounded and diagnostic-only (never leaderboard data)**. (a) **Concurrency test for Mechanism B:** drive the same workload at concurrency 1 vs 2 vs 6 against `inference.baseten.co` and measure empty/no-usage rate per level — determine whether B is induced by parallel endpoint load. (b) **Raw capture:** on no-content+no-tool turns dump raw chunks, each `choices[].delta`, `finish_reason`, final `usage`; streaming AND non-streaming for the same request; replay real B contexts from run JSONs' `inference_inputs[].messages_for_llm`. (c) **Reasoning-shape evidence for step 4:** on successful GLM-5.2 reasoning-on turns, report whether/where `delta.reasoning_content` (streaming) and `message.reasoning_content` (non-streaming) appear relative to `tool_calls`. (d) **force_nonempty_content probe:** does Baseten honor/ignore/reject it? Write `proj-2026-06-30-0924/step1-diagnostic-findings.md`. Gate steps 3 & 4's approach on these findings.
+  Key files: `diagnostics/baseten_empty_turn_probe.py` (new), `proj-2026-06-30-0924/step1-diagnostic-findings.md` (new)
+
+- [ ] **2. Raise the per-turn token cap for Baseten reasoning models (Mechanism A)**
+  Raise `run_baseten_sweep.sh:17` to `MAX_TOKENS=${MAX_TOKENS:-8192}`; confirm pass-through at `llm_factory.py:229-232`. If any hard default per-turn cap exists in `mini-rl-env.py` for reasoning-on Baseten configs, ensure ≥8192. 8192 is a first sanity value; escalate if step 5 still shows A truncation. Non-Baseten defaults unchanged. (In-flight `mt=8192` re-run gives an early read.)
+  Key files: `run_baseten_sweep.sh`, `llm_factory.py`, `mini-rl-env.py` (only if a hard cap exists)
+
+- [ ] **3. Empty/no-usage transport-retry path in the harness**
+  Only if step 1 shows B is per-request (not purely concurrency); otherwise downscope to telemetry-only. Detect the B signature (per Transport-retry-safety rules) in `_finalize_if_ready` (`1563`), gated to Baseten GLM/Nemotron, and transparently re-run the inference up to a bounded count (default 2), owning the capture index + cancelling the no-tool watchdog, with no turn_count/turn_log/bad-action on success. Exhausted retries fall through to the existing nudge/stall path. Offline tests (mock the pipecat frame sequence; no live Baseten): empty→retry→success (no bad action, capture index intact, **no nudge appended, `_no_tool_watchdog_handle` cancelled/cleared before retry**, no turn_count bump); empty→exhausted→existing nudge/stall reached; text-only no-tool (incl. usage-absent but non-empty text)→unchanged accounting; observed `inference_failure`/`error_event`→NOT retried. Plus an eval regression proving `no_tool_call_count`/`bad_actions_count`/`tool_discipline_score`/leaderboard grouping are unaffected by the new telemetry.
+  Key files: `mini-rl-env.py` (`1485-1610`, `1193-1200`+`1401-1427` watchdog, `1884-1917`, `2434-2467`), `tests/test_empty_retry.py` (new)
+
+- [ ] **4. GLM reasoning_content preservation — spike, then implement**
+  **Spike first** (step-1 evidence): define the exact assistant message shape (`{role:assistant, content, reasoning_content, tool_calls}`) and the mechanism — subclass `OpenAILLMService`, custom assistant aggregator, or a harness context post-processor re-attaching captured reasoning — given installed `base_llm.py` ignores `delta.reasoning_content` (`423-451`) and `llm_response_universal.py` builds tool-call messages without it (`974-988`). Then implement, gated to **Baseten-GLM only** (new predicate), leaving Nemotron/all others on strip. Reconcile with `_prune_empty_assistant_context_messages` so a reasoning-bearing assistant message is never pruned. Captured-context test (GLM carries `reasoning_content`; Nemotron/others unchanged). If the spike shows it requires editing pipecat, stop and escalate.
+  Key files: `mini-rl-env.py` (context path, `585-612`, gating predicate), `llm_factory.py:211-261`, `tests/`
+
+- [ ] **5. Staged sequential validation + comparison (gate)**
+  Refactor `run_baseten_sweep.sh` to run strictly **one episode at a time in a single sequential process (one loop per process; no parallel config-workers)**, with canonical `.log` worker log + `RUN_START`/`RUN_EXIT` per `../AGENTS.md`. (This deprecates the parallel-worker design and is the default for all runs going forward.) **Two-tier to stay tractable** (full 5×6×25 sequential ≈ 30+ hours): use small **seed-matched smoke stages (3–5 rounds/config, or targeted GLM/Nemotron configs)** to attribute effects across baseline-rerun → +max_tokens (2) → +retry (3) → +reasoning (4); reserve full **25-round** sequential sweeps for the sequential baseline (tests the concurrency hypothesis) and the final candidate (or any ambiguous stage). Run the eval pipeline to a **scratch** leaderboard (never overwrite committed). Report: GLM completion rate, Mechanism-A count, Mechanism-B/`empty_response_count`, whether sequential-alone changed the B rate, and — as a **measured finding (no code change)** — Nemotron's trade-quality gap (invalid-trade count, missed-final-sale rate, none vs high). Write `proj-2026-06-30-0924/step5-validation.md`. Update committed leaderboards only if the user approves.
+  Key files: `run_baseten_sweep.sh` (sequential knob + logging), `proj-2026-06-30-0924/step5-validation.md` (new); read-only `evaluate_runs.py`, `build_primary_leaderboard.py`
+
+## Progress
+| # | Step | Status | Commit | Notes |
+|---|------|--------|--------|-------|
+| 1 | Diagnostic: concurrency + raw-stream + reasoning-shape | done | (pending) | B is transient (not concurrency, not deterministic) → implement step 3 retry; step 4 reasoning is a separate field (feasible); force_nonempty out |
+| 2 | Raise per-turn token cap (≥8192) | pending | — | Mechanism A; independent; mt=8192 re-run in flight |
+| 3 | Empty/no-usage transport-retry | pending | — | gated on step 1; owns capture+watchdog; telemetry ≠ accounting |
+| 4 | GLM reasoning_content preservation | pending | — | spike first; Baseten-GLM predicate; no pipecat edits |
+| 5 | Staged sequential validation + Nemotron finding | pending | — | two-tier rounds; concurrency=1; scratch leaderboard; user-gated commit |
