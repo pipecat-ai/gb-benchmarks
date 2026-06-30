@@ -65,7 +65,7 @@ The 2026-06-29 Baseten sweep (`runs/baseten-sweep-20260629-231133/`, see `codex-
   Raise `run_baseten_sweep.sh:17` to `MAX_TOKENS=${MAX_TOKENS:-8192}`; confirm pass-through at `llm_factory.py:229-232`. If any hard default per-turn cap exists in `mini-rl-env.py` for reasoning-on Baseten configs, ensure ≥8192. 8192 is a first sanity value; escalate if step 5 still shows A truncation. Non-Baseten defaults unchanged. (In-flight `mt=8192` re-run gives an early read.)
   Key files: `run_baseten_sweep.sh`, `llm_factory.py`, `mini-rl-env.py` (only if a hard cap exists)
 
-- [ ] **3. Empty/no-usage transport-retry path in the harness**
+- [x] **3. Empty/no-usage transport-retry path in the harness**
   Only if step 1 shows B is per-request (not purely concurrency); otherwise downscope to telemetry-only. Detect the B signature (per Transport-retry-safety rules) in `_finalize_if_ready` (`1563`), gated to Baseten GLM/Nemotron, and transparently re-run the inference up to a bounded count (default 2), owning the capture index + cancelling the no-tool watchdog, with no turn_count/turn_log/bad-action on success. Exhausted retries fall through to the existing nudge/stall path. Offline tests (mock the pipecat frame sequence; no live Baseten): empty→retry→success (no bad action, capture index intact, **no nudge appended, `_no_tool_watchdog_handle` cancelled/cleared before retry**, no turn_count bump); empty→exhausted→existing nudge/stall reached; text-only no-tool (incl. usage-absent but non-empty text)→unchanged accounting; observed `inference_failure`/`error_event`→NOT retried. Plus an eval regression proving `no_tool_call_count`/`bad_actions_count`/`tool_discipline_score`/leaderboard grouping are unaffected by the new telemetry.
   Key files: `mini-rl-env.py` (`1485-1610`, `1193-1200`+`1401-1427` watchdog, `1884-1917`, `2434-2467`), `tests/test_empty_retry.py` (new)
 
@@ -81,7 +81,7 @@ The 2026-06-29 Baseten sweep (`runs/baseten-sweep-20260629-231133/`, see `codex-
 | # | Step | Status | Commit | Notes |
 |---|------|--------|--------|-------|
 | 1 | Diagnostic: concurrency + raw-stream + reasoning-shape | done | 0aed7aa | B is transient (not concurrency, not deterministic) → implement step 3 retry; step 4 reasoning is a separate field (feasible); force_nonempty out |
-| 2 | Raise per-turn token cap (≥8192) | done | (pending) | MAX_TOKENS default 4096→8192; no hard clamp; non-Baseten unaffected |
-| 3 | Empty/no-usage transport-retry | pending | — | gated on step 1; owns capture+watchdog; telemetry ≠ accounting |
+| 2 | Raise per-turn token cap (≥8192) | done | 88a2df5 | MAX_TOKENS default 4096→8192; no hard clamp; non-Baseten unaffected |
+| 3 | Empty/no-usage transport-retry | done | (pending) | retry≤2, gated Baseten+GLM/Nemotron; capture/watchdog owned; telemetry ≠ accounting; 9 unit + 82 regression pass |
 | 4 | GLM reasoning_content preservation | pending | — | spike first; Baseten-GLM predicate; no pipecat edits |
 | 5 | Staged sequential validation + Nemotron finding | pending | — | two-tier rounds; concurrency=1; scratch leaderboard; user-gated commit |

@@ -156,6 +156,7 @@ ASYNC_COMPLETION_TIMEOUT = 5.0
 MAX_NO_TOOL_NUDGES = 3
 NO_TOOL_WATCHDOG_DELAY = 5.0
 EVENT_BATCH_INFERENCE_DELAY = 1.0
+MAX_TRANSPORT_EMPTY_RETRIES = 2
 PIPELINE_GRACEFUL_SHUTDOWN_TIMEOUT = 3.0
 THINKING_LEVELS = ("none", "minimal", "low", "medium", "high", "xhigh")
 THINKING_BUDGET_MAP = {"minimal": 0, "low": 128, "medium": 512, "high": 2048}
@@ -287,6 +288,15 @@ def _is_baseten_endpoint(openai_base_url: Optional[str]) -> bool:
     parsed = urllib.parse.urlparse(openai_base_url)
     host = parsed.netloc.lower()
     return host == "inference.baseten.co" or host.endswith(".baseten.co")
+
+
+def _is_baseten_retry_eligible_model(model: str) -> bool:
+    normalized = (model or "").strip().lower()
+    return (
+        "glm-5" in normalized
+        or "glm5" in normalized
+        or "nemotron-3-ultra" in normalized
+    )
 
 
 def _baseten_reasoning_effort(thinking: str) -> str:
@@ -1360,7 +1370,9 @@ class _BenchmarkInferenceController:
         if "no_tool_nudge" not in reasons_snapshot:
             self._no_tool_nudge_count = 0
 
-        dropped_empty_messages = _prune_empty_assistant_context_messages(self._runtime.llm_context)
+        dropped_empty_messages = _prune_empty_assistant_context_messages(
+            getattr(self._runtime, "llm_context", None)
+        )
         if dropped_empty_messages:
             logger.info(
                 "LLM_CONTEXT_PRUNE turn={} dropped_empty_assistant_messages={}",
@@ -1384,6 +1396,54 @@ class _BenchmarkInferenceController:
                 self._runtime.discard_pending_inference_capture(inference_index)
             self._inference_reasons = reasons_snapshot + self._inference_reasons
             raise
+
+    def can_retry_transport_empty_response(self) -> bool:
+        if self._runtime.stop_requested or self._runtime.inference_suppressed:
+            return False
+        if self._llm_inflight or self._tool_call_in_progress:
+            return False
+        if not self._pipeline_task or self._pipeline_task.has_finished():
+            return False
+        return True
+
+    async def retry_transport_empty_response(self, *, retry_number: int) -> bool:
+        if not self.can_retry_transport_empty_response():
+            return False
+
+        if self._no_tool_watchdog_handle:
+            self._no_tool_watchdog_handle.cancel()
+            self._no_tool_watchdog_handle = None
+        if self._inference_watchdog_handle:
+            self._inference_watchdog_handle.cancel()
+            self._inference_watchdog_handle = None
+
+        reasons_snapshot = [f"transport_empty_retry:{retry_number}"]
+        dropped_empty_messages = _prune_empty_assistant_context_messages(
+            getattr(self._runtime, "llm_context", None)
+        )
+        if dropped_empty_messages:
+            logger.info(
+                "LLM_CONTEXT_PRUNE turn={} dropped_empty_assistant_messages={}",
+                self._runtime.turn_count + 1,
+                dropped_empty_messages,
+            )
+
+        logger.info(
+            "LLM_RUN turn={} reasons={} state={}",
+            self._runtime.turn_count + 1,
+            reasons_snapshot,
+            _state_log_label(self._runtime.world.state_snapshot()),
+        )
+        inference_index = self._runtime.queue_inference_capture(reasons_snapshot)
+        self._llm_inflight = True
+        try:
+            await self._pipeline_task.queue_frames([LLMRunFrame()])
+        except Exception:
+            self._llm_inflight = False
+            if inference_index is not None:
+                self._runtime.discard_pending_inference_capture(inference_index)
+            raise
+        return True
 
     def _start_no_tool_watchdog(self) -> None:
         if self._runtime.stop_requested or self._runtime.inference_suppressed:
@@ -1445,6 +1505,7 @@ class _BenchmarkResponseTracker(FrameProcessor):
         super().__init__()
         self._runtime = runtime
         self._controller = controller
+        self._transport_empty_retries = 0
         self._reset_response()
 
     def _reset_response(self) -> None:
@@ -1463,6 +1524,25 @@ class _BenchmarkResponseTracker(FrameProcessor):
         self._tool_call_by_id: dict[str, int] = {}
         self._usage_metrics: Optional[dict[str, Any]] = None
         self._ttfb_metrics: Optional[dict[str, Any]] = None
+
+    def _transport_empty_retry_enabled(self) -> bool:
+        if not getattr(self._runtime, "transport_empty_retry_enabled", False):
+            return False
+        args = getattr(self._runtime, "args", None)
+        return _is_baseten_endpoint(
+            getattr(args, "openai_base_url", None)
+        ) and _is_baseten_retry_eligible_model(getattr(args, "model", ""))
+
+    def _matches_transport_empty_response_signature(self) -> bool:
+        return (
+            self._transport_empty_retry_enabled()
+            and not self._has_function_calls
+            and self._response_text == ""
+            and self._response_text_raw == ""
+            and self._response_thought == ""
+            and self._usage_metrics is None
+            and getattr(self._runtime, "last_error_event", None) is None
+        )
 
     async def process_frame(self, frame: Any, direction: FrameDirection):
         await super().process_frame(frame, direction)
@@ -1561,6 +1641,41 @@ class _BenchmarkResponseTracker(FrameProcessor):
             return
 
         failure_class = "none"
+        transport_empty_exhausted = False
+        if self._matches_transport_empty_response_signature():
+            self._runtime.empty_response_count = getattr(self._runtime, "empty_response_count", 0) + 1
+            if self._transport_empty_retries < MAX_TRANSPORT_EMPTY_RETRIES:
+                if self._controller.can_retry_transport_empty_response():
+                    self._transport_empty_retries += 1
+                    retry_number = self._transport_empty_retries
+                    logger.info(
+                        "TRANSPORT_EMPTY_RETRY turn={} retry={} max_retries={}",
+                        self._runtime.turn_count + 1,
+                        retry_number,
+                        MAX_TRANSPORT_EMPTY_RETRIES,
+                    )
+                    retry_queued = await self._controller.retry_transport_empty_response(
+                        retry_number=retry_number
+                    )
+                    if retry_queued:
+                        self._runtime.discard_active_inference_capture()
+                        self._reset_response()
+                        return
+                    self._transport_empty_retries -= 1
+                    logger.warning(
+                        "TRANSPORT_EMPTY_RETRY_UNAVAILABLE turn={} retry={} falling_back_to_no_tool",
+                        self._runtime.turn_count + 1,
+                        retry_number,
+                    )
+                else:
+                    logger.warning(
+                        "TRANSPORT_EMPTY_RETRY_UNAVAILABLE turn={} falling_back_to_no_tool",
+                        self._runtime.turn_count + 1,
+                    )
+                transport_empty_exhausted = True
+            else:
+                transport_empty_exhausted = True
+
         if not self._has_function_calls:
             failure_class = "no_tool_call"
             self._runtime.no_tool_call_count += 1
@@ -1590,6 +1705,9 @@ class _BenchmarkResponseTracker(FrameProcessor):
             "state_before": self._response_state_before,
             "state_after": state_after,
         }
+        if getattr(self._runtime, "transport_empty_retry_enabled", False):
+            turn_log["transport_empty_retries"] = self._transport_empty_retries
+            turn_log["transport_empty_attempts"] = self._transport_empty_retries + 1
         raw_text_raw = self._response_text_raw.strip()
         if raw_text_raw and raw_text_raw != turn_log["raw_response_text"]:
             turn_log["raw_response_text_raw"] = raw_text_raw
@@ -1610,7 +1728,14 @@ class _BenchmarkResponseTracker(FrameProcessor):
         self._runtime.attach_active_inference_capture(turn_log)
         self._runtime.turn_logs.append(turn_log)
         self._runtime.turn_count += 1
-        self._runtime._append_replay_stream_event("turn", turn=turn_log)
+        if self._transport_empty_retries > 0 and not transport_empty_exhausted:
+            self._runtime.empty_response_retry_success_count = (
+                getattr(self._runtime, "empty_response_retry_success_count", 0) + 1
+            )
+        self._transport_empty_retries = 0
+        append_replay_stream_event = getattr(self._runtime, "_append_replay_stream_event", None)
+        if callable(append_replay_stream_event):
+            append_replay_stream_event("turn", turn=turn_log)
         logger.info(
             "TURN_COMPLETE turn={} decision_ms={} tools={} failure={} before={} after={}",
             turn_log["llm_turn"],
@@ -1659,6 +1784,11 @@ class _BenchmarkRuntime:
         self.no_tool_call_count = 0
         self.post_finished_call_count = 0
         self.async_completion_timeout_count = 0
+        self.transport_empty_retry_enabled = _is_baseten_endpoint(
+            args.openai_base_url
+        ) and _is_baseten_retry_eligible_model(args.model)
+        self.empty_response_count = 0
+        self.empty_response_retry_success_count = 0
 
         self.run_id = str(uuid.uuid4())
         self.started_at_utc = _iso_utc_now()
@@ -1739,7 +1869,7 @@ class _BenchmarkRuntime:
         }
 
     def _append_replay_stream_event(self, event_type: str, **payload: Any) -> None:
-        if self.replay_stream_path is None:
+        if getattr(self, "replay_stream_path", None) is None:
             return
 
         event = {
@@ -1748,8 +1878,9 @@ class _BenchmarkRuntime:
             "recorded_at_utc": _iso_utc_now(),
             **payload,
         }
-        self.replay_stream_path.parent.mkdir(parents=True, exist_ok=True)
-        with self.replay_stream_path.open("a", encoding="utf-8") as handle:
+        replay_stream_path = self.replay_stream_path
+        replay_stream_path.parent.mkdir(parents=True, exist_ok=True)
+        with replay_stream_path.open("a", encoding="utf-8") as handle:
             handle.write(json.dumps(_to_json_compatible(event), ensure_ascii=False) + "\n")
 
     def _initialize_replay_stream(self) -> None:
@@ -1934,6 +2065,14 @@ class _BenchmarkRuntime:
         entry = self._inference_input_entry(inference_index)
         if entry is not None:
             entry["discarded"] = True
+
+    def discard_active_inference_capture(self) -> int | None:
+        self._ensure_inference_capture_state()
+        inference_index = self._active_inference_capture_index
+        if inference_index is None:
+            return None
+        self.discard_pending_inference_capture(inference_index)
+        return inference_index
 
     def _resolve_event_payload_and_response_data(self, event_plan: EventPlan) -> tuple[Any, Any]:
         if event_plan.summary_factory is not None:
@@ -2298,7 +2437,7 @@ class _BenchmarkRuntime:
         )
         max_tool_calls = max(tool_call_counts) if tool_call_counts else 0
 
-        return {
+        summary = {
             "schema_version": RUN_SCHEMA_VERSION,
             "success": success,
             "success_legacy": success,
@@ -2334,6 +2473,14 @@ class _BenchmarkRuntime:
             "thinking_budget": self.args.thinking_budget,
             "max_tokens": self.args.max_tokens,
         }
+        if getattr(self, "transport_empty_retry_enabled", False):
+            summary["empty_response_count"] = getattr(self, "empty_response_count", 0)
+            summary["empty_response_retry_success_count"] = getattr(
+                self,
+                "empty_response_retry_success_count",
+                0,
+            )
+        return summary
 
     def build_output_payload(self) -> dict[str, Any]:
         summary = self.build_summary()
