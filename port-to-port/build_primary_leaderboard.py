@@ -55,6 +55,11 @@ def _effective_budget_for_display(row: dict[str, Any]) -> int | None:
     if isinstance(thinking_budget, float) and thinking_budget.is_integer():
         return int(thinking_budget)
 
+    # Baseten endpoints control reasoning via reasoning.effort levels, not an exact
+    # token budget, so do not synthesize a tb= display value for them.
+    if _is_baseten_endpoint(row.get("openai_base_url")):
+        return None
+
     thinking = str(row.get("thinking") or "").strip().lower()
     if thinking in {"", "none", "minimal"}:
         generic_budget = 0
@@ -135,6 +140,14 @@ def _is_nemotron_vllm_017_default_only_endpoint(base_url: Any) -> bool:
         return False
     host = urllib.parse.urlparse(normalized).netloc.lower()
     return "nemotron-vllm-017" in host and host.endswith(".modal.run")
+
+
+def _is_baseten_endpoint(base_url: Any) -> bool:
+    normalized = _normalize_openai_base_url(base_url)
+    if normalized is None:
+        return False
+    host = urllib.parse.urlparse(normalized).netloc.lower()
+    return host == "inference.baseten.co" or host.endswith(".baseten.co")
 
 
 def _display_base_url(base_url: Any) -> str | None:

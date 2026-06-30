@@ -5,7 +5,7 @@
 - Score rubric version: `port_to_port_primary_v1`
 - Aggregation: Primary=median, Task Complete=rate, Trade/Path/Tools/Report=mean
 - Source runs: `runs/leaderboard-natural-v1-input/*.json`
-- Enriched scores: `runs/leaderboard-natural-v1-refresh-20260404.jsonl`
+- Enriched scores: `runs/leaderboard-natural-v1-refresh-20260629.jsonl`
 - Sort: Primary /100 desc, Task Complete % desc, Total Time P50 (s) asc
 
 | Model | N | Primary /100 | Task Complete % | Trade /15 Avg | Path /15 Avg | Tools /15 Avg | Report /15 Avg | Turn P50 (ms) | Turn P90 (ms) | Total Time P50 (s) |
@@ -32,14 +32,20 @@
 | gemini-3.1-flash-lite-preview (th=minimal) | 25 | 84 | 100.0% | 0.8 | 15.0 | 14.2 | 14.3 | 735.3 | 940.8 | 54.30 |
 | gpt-4.1 (th=none) | 25 | 84 | 100.0% | 1.3 | 14.7 | 13.9 | 14.4 | 702.1 | 1177.2 | 59.66 |
 | gemini-2.5-flash (th=high, tb=2048) | 25 | 84 | 100.0% | 2.3 | 15.0 | 12.8 | 14.3 | 2352.2 | 3831.5 | 126.25 |
+| nemotron-3-ultra-550b (th=high, mt=4096, base=inference.baseten.co) | 25 | 83 | 100.0% | 5.8 | 14.3 | 8.8 | 14.4 | 1243.3 | 3130.4 | 112.46 |
 | gemini-3.1-flash-lite-preview (th=medium) | 25 | 83 | 96.0% | 0.4 | 15.0 | 14.0 | 13.9 | 745.4 | 944.1 | 53.75 |
 | nemotron-3-super-120b (th=medium, tb=512, mt=4096, base=daily--nemotron-super-b200-sglang-serve.modal.run) | 25 | 82 | 100.0% | 1.4 | 13.0 | 13.1 | 14.1 | 4877.7 | 7666.1 | 182.42 |
 | gpt-4o (th=none) | 25 | 82 | 92.0% | 1.1 | 15.0 | 10.2 | 13.9 | 822.7 | 1951.9 | 70.70 |
+| glm-5.2 (th=high, mt=4096, base=inference.baseten.co) | 25 | 82 | 80.0% | 8.0 | 15.0 | 4.3 | 12.0 | 1595.2 | 7335.4 | 174.21 |
+| glm-5.2 (th=low, mt=4096, base=inference.baseten.co) | 25 | 82 | 76.0% | 7.6 | 15.0 | 5.2 | 11.3 | 1515.3 | 7704.0 | 151.49 |
 | nemotron-3-super-120b (th=high, tb=2048, mt=4096, base=daily--nemotron-super-b200-sglang-serve.modal.run) | 25 | 82 | 76.0% | 1.1 | 13.4 | 12.6 | 14.4 | 4552.8 | 25082.0 | 316.11 |
 | gemini-3.1-pro-preview (th=medium) | 25 | 81 | 100.0% | 1.7 | 15.0 | 10.9 | 15.0 | 3062.6 | 5958.4 | 155.53 |
 | nemotron-3-super-120b (th=low, tb=128, mt=4096, base=daily--nemotron-super-b200-sglang-serve.modal.run) | 25 | 81 | 92.0% | 2.2 | 12.3 | 11.1 | 13.7 | 2940.4 | 3566.0 | 169.80 |
 | gpt-5.4-mini (th=medium) | 25 | 81 | 80.0% | 4.1 | 9.8 | 13.9 | 12.5 | 2874.2 | 11905.3 | 222.19 |
 | gpt-5.4-mini (th=low) | 25 | 80 | 64.0% | 2.6 | 9.7 | 14.6 | 13.6 | 1351.9 | 2880.5 | 79.00 |
+| glm-5.2 (th=none, mt=4096, base=inference.baseten.co) | 25 | 77 | 88.0% | 6.7 | 14.2 | 3.9 | 12.9 | 1421.2 | 2887.9 | 149.05 |
+| glm-5.2 (th=medium, mt=4096, base=inference.baseten.co) | 25 | 77 | 68.0% | 6.4 | 15.0 | 3.8 | 10.0 | 1614.2 | 12915.7 | 176.48 |
+| nemotron-3-ultra-550b (th=none, mt=4096, base=inference.baseten.co) | 25 | 76 | 100.0% | 2.4 | 15.0 | 4.4 | 15.0 | 894.0 | 1806.5 | 100.70 |
 | gpt-5.4-mini (th=high, mt=4096) | 25 | 71 | 56.0% | 5.6 | 11.9 | 4.5 | 8.2 | 7661.1 | 26354.6 | 465.29 |
 | qwen3.5-9b (th=high, mt=4096, base=daily--qwen35-sglang-serve-9b.modal.run) | 25 | 64 | 56.0% | 0.6 | 7.8 | 5.8 | 10.8 | 3237.6 | 9443.8 | 270.02 |
 | nemotron-3-nano-30b (th=high, tb=2048, mt=4096, base=daily--nemotron-nano-b200-sglang-serve.modal.run) | 25 | 45 | 8.0% | 0.1 | 12.5 | 8.6 | 10.0 | 15943.9 | 17104.7 | 381.63 |

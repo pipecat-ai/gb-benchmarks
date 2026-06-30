@@ -280,6 +280,28 @@ def _is_nemotron_vllm_017_default_only_endpoint(openai_base_url: Optional[str]) 
     ) and host.endswith(".modal.run")
 
 
+def _is_baseten_endpoint(openai_base_url: Optional[str]) -> bool:
+    if not openai_base_url:
+        return False
+
+    parsed = urllib.parse.urlparse(openai_base_url)
+    host = parsed.netloc.lower()
+    return host == "inference.baseten.co" or host.endswith(".baseten.co")
+
+
+def _baseten_reasoning_effort(thinking: str) -> str:
+    # Baseten Model APIs accept OpenAI-style reasoning.effort (none|minimal|low|
+    # medium|high). "none" disables reasoning; any other level enables it. GLM-5.2
+    # honors the intermediate levels; Nemotron-3-Ultra is effectively binary
+    # (on/off) on this stack, so minimal..high behave the same for it.
+    normalized = _normalize_benchmark_thinking_level(thinking)
+    if normalized == "none":
+        return "none"
+    if normalized == "xhigh":
+        return "high"
+    return normalized
+
+
 def _sanitize_assistant_replay_text(text: str) -> str:
     sanitized = text
     for pattern in CONTROL_TOKEN_REPLAY_PATTERNS:
@@ -699,6 +721,16 @@ def _validate_generation_controls(args: argparse.Namespace, parser: argparse.Arg
                 )
             return
 
+        if args.openai_base_url and _is_baseten_endpoint(args.openai_base_url):
+            # Baseten controls reasoning via reasoning.effort (level-based), not an
+            # exact token budget. All benchmark thinking levels map to an effort.
+            if thinking_budget is not None:
+                parser.error(
+                    "Baseten endpoints control reasoning via reasoning.effort levels; "
+                    "use --thinking none|minimal|low|medium|high instead of --thinking-budget."
+                )
+            return
+
         if args.openai_base_url and _is_glm_sglang_binary_reasoning_model(model_lower):
             if args.thinking not in {"none", "high"}:
                 parser.error(
@@ -817,11 +849,23 @@ def _apply_benchmark_thinking_mode(
         extra.pop(key, None)
 
     if provider == LLMProvider.CEREBRAS:
-        # Kimi K2.6: Thinking (default) vs Instant (reasoning_effort="none").
-        # Sampling follows Cerebras's guide: Thinking T=1.0, Instant T=0.6,
-        # top_p=0.95. CerebrasLLMService merges extra into the top-level request,
-        # so reasoning_effort lands as a chat param.
+        # CerebrasLLMService merges extra into the top-level chat request, so
+        # reasoning_effort lands as a chat param. Sampling follows Cerebras's
+        # per-model guides.
         settings["top_p"] = 0.95
+        if model_lower.startswith("gemma-4"):
+            # Gemma 4 31B: reasoning OFF by default. low/medium/high are
+            # equivalent today; "medium" is Cerebras's agentic-workflow pick.
+            # Agentic T=0.8 (thinking), Fast Q&A T=0.6 (no reasoning).
+            if normalized_thinking == "none":
+                extra["reasoning_effort"] = "none"
+                settings["temperature"] = 0.6
+                return "cerebras:gemma-4 no-reasoning reasoning_effort=none T=0.6"
+            extra["reasoning_effort"] = "medium"
+            settings["temperature"] = 0.8
+            return "cerebras:gemma-4 reasoning reasoning_effort=medium T=0.8"
+        # Default: Kimi K2.6 — Thinking by default, Instant via reasoning_effort=none.
+        # Thinking T=1.0, Instant T=0.6.
         if normalized_thinking == "none":
             extra["reasoning_effort"] = "none"
             settings["temperature"] = 0.6
@@ -842,6 +886,22 @@ def _apply_benchmark_thinking_mode(
 
         if model_lower.startswith("gpt-4.1"):
             return "openai:gpt-4.1 reasoning_n/a"
+
+        if openai_base_url and _is_baseten_endpoint(openai_base_url):
+            # Baseten ignores vllm_xargs/chat_template_kwargs; thinking is
+            # controlled via OpenAI-style reasoning.effort in extra_body.
+            effort = _baseten_reasoning_effort(thinking)
+            existing_extra_body = extra.get("extra_body")
+            extra_body = dict(existing_extra_body) if isinstance(existing_extra_body, dict) else {}
+            existing_reasoning = extra_body.get("reasoning")
+            reasoning = dict(existing_reasoning) if isinstance(existing_reasoning, dict) else {}
+            reasoning["effort"] = effort
+            extra_body["reasoning"] = reasoning
+            # Drop controls Baseten does not honor so they don't linger in extra_body.
+            extra_body.pop("vllm_xargs", None)
+            extra_body.pop("chat_template_kwargs", None)
+            extra["extra_body"] = extra_body
+            return f"openai-compatible:baseten reasoning.effort={effort}"
 
         if openai_base_url and _is_gpt_oss_model(model_lower):
             level = _gpt_oss_reasoning_level(thinking)
