@@ -6,9 +6,11 @@
 #   nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B thinking: none, high
 # (Nemotron Ultra reasoning is binary on Baseten, so only none + high are run.)
 #
-# Each config runs ROUNDS episodes. Configs run as parallel background workers;
-# each worker runs its rounds sequentially. Already-completed rounds (valid JSON
-# with a "success" key) are skipped, so the script is resumable.
+# Each config runs ROUNDS episodes in one strictly sequential process: one
+# CONFIGS loop, one rounds loop, and one mini-rl-env.py process in flight at any
+# moment. Already-completed rounds (valid JSON with a "success" key) are skipped,
+# so the script is resumable. Console output is tee'd to per-run .log files, with
+# RUN_START/RUN_EXIT markers in the sweep log.
 set -uo pipefail
 
 cd "$(dirname "$0")"
@@ -22,6 +24,7 @@ FC_TIMEOUT="${FC_TIMEOUT:-30}"
 PER_RUN_TIMEOUT="${PER_RUN_TIMEOUT:-600}"
 BASE_URL="https://inference.baseten.co/v1"
 ENV_FILE="/home/khkramer/src/gb-benchmarks/.env"
+CONFIG_FILTER="${CONFIG_FILTER:-}"
 
 TS="$(date -u +%Y%m%d-%H%M%S)"
 RUN_DIR="runs/baseten-sweep-${TS}"
@@ -46,7 +49,7 @@ CONFIGS=(
 )
 
 mkdir -p "$RUN_DIR"
-echo "RUN_DIR=$RUN_DIR ROUNDS=$ROUNDS configs=${#CONFIGS[@]}" | tee "$RUN_DIR/sweep.log"
+echo "RUN_DIR=$RUN_DIR ROUNDS=$ROUNDS configs=${#CONFIGS[@]} config_filter=${CONFIG_FILTER:-<none>}" | tee "$RUN_DIR/sweep.log"
 
 round_is_done() {
   local f="$1"
@@ -60,24 +63,46 @@ except Exception:
 PYEOF
 }
 
-run_config() {
-  local spec="$1"
-  local slug="${spec%%|*}"
-  local rest="${spec#*|}"
-  local model="${rest%%|*}"
-  local thinking="${rest##*|}"
-  local cfg_dir="$RUN_DIR/$slug"
+config_is_selected() {
+  local slug="$1"
+  if [[ -z "$CONFIG_FILTER" ]]; then
+    return 0
+  fi
+  local filters="${CONFIG_FILTER//[[:space:]]/}"
+  filters=",$filters,"
+  [[ "$filters" == *",$slug,"* ]]
+}
+
+fail=0
+for spec in "${CONFIGS[@]}"; do
+  slug="${spec%%|*}"
+  rest="${spec#*|}"
+  model="${rest%%|*}"
+  thinking="${rest##*|}"
+
+  if ! config_is_selected "$slug"; then
+    echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) CONFIG_SKIP slug=$slug reason=config_filter" | tee -a "$RUN_DIR/sweep.log"
+    continue
+  fi
+
+  cfg_dir="$RUN_DIR/$slug"
   mkdir -p "$cfg_dir"
-  local plog="$cfg_dir/progress.log"
+  echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) CONFIG_START slug=$slug model=$model thinking=$thinking" | tee -a "$RUN_DIR/sweep.log"
 
   for ((r=1; r<=ROUNDS; r++)); do
-    local rr; printf -v rr "%02d" "$r"
-    local json_file="$cfg_dir/${slug}-r${rr}.json"
+    printf -v rr "%02d" "$r"
+    json_file="$cfg_dir/${slug}-r${rr}.json"
+    log_file="$cfg_dir/${slug}-r${rr}.log"
+
     if round_is_done "$json_file"; then
-      echo "$(date -u +%H:%M:%S) SKIP  $slug r$rr (already complete)" >> "$plog"
+      echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) SKIP slug=$slug round=r$rr reason=already_complete json=$json_file" | tee -a "$RUN_DIR/sweep.log"
       continue
     fi
-    local t0=$(date +%s)
+
+    start_ts="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    t0="$(date +%s)"
+    echo "RUN_START timestamp=$start_ts slug=$slug round=r$rr rc=NA ok=NA elapsed_s=0 model=$model thinking=$thinking json=$json_file log=$log_file" | tee -a "$RUN_DIR/sweep.log"
+
     timeout "$PER_RUN_TIMEOUT" "$PY" mini-rl-env.py \
       --provider openai \
       --model "$model" \
@@ -87,26 +112,23 @@ run_config() {
       --max-tokens "$MAX_TOKENS" \
       --max-turns "$MAX_TURNS" \
       --function-call-timeout-secs "$FC_TIMEOUT" \
-      --log-json "$json_file" > "$cfg_dir/${slug}-r${rr}.out" 2>&1
-    local rc=$?
-    local elapsed=$(( $(date +%s) - t0 ))
-    local ok="?"
-    round_is_done "$json_file" && ok="yes" || ok="NO"
-    echo "$(date -u +%H:%M:%S) DONE  $slug r$rr rc=$rc ok=$ok elapsed_s=$elapsed" >> "$plog"
+      --log-json "$json_file" 2>&1 | tee "$log_file"
+    rc="${PIPESTATUS[0]}"
+
+    elapsed="$(( $(date +%s) - t0 ))"
+    ok="NO"
+    if round_is_done "$json_file"; then
+      ok="yes"
+    fi
+    exit_ts="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    echo "RUN_EXIT timestamp=$exit_ts slug=$slug round=r$rr rc=$rc ok=$ok elapsed_s=$elapsed model=$model thinking=$thinking json=$json_file log=$log_file" | tee -a "$RUN_DIR/sweep.log"
+
+    if [[ "$rc" -ne 0 ]]; then
+      fail=1
+    fi
   done
-  echo "$(date -u +%H:%M:%S) CONFIG_COMPLETE $slug" >> "$plog"
-}
 
-pids=()
-for spec in "${CONFIGS[@]}"; do
-  run_config "$spec" &
-  pids+=("$!")
-  echo "launched worker pid=$! for ${spec%%|*}" | tee -a "$RUN_DIR/sweep.log"
-done
-
-fail=0
-for pid in "${pids[@]}"; do
-  wait "$pid" || fail=1
+  echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) CONFIG_COMPLETE slug=$slug" | tee -a "$RUN_DIR/sweep.log"
 done
 
 echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) SWEEP_COMPLETE fail=$fail run_dir=$RUN_DIR" | tee -a "$RUN_DIR/sweep.log"
