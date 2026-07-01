@@ -25,6 +25,7 @@ Here are scores for all of the models we've tested that have a per-turn P50 time
 | Model                                | Score | Task Complete | Trade /15 | Path /15 | Tools /15 | Report /15 | Turn P50 | Turn P90 | Total Time |
 | ------------------------------------ | ----: | ------------: | --------: | -------: | --------: | ---------: | -------: | -------: | ---------: |
 | gemini-3.5-flash (high)              |    97 |        100.0% |      12.0 |     15.0 |      15.0 |       15.0 |   1862.2 |   5388.5 |     140.97 |
+| claude-sonnet-5 (xhigh)              |    93 |        100.0% |       9.6 |     15.0 |      14.1 |       15.0 |   2527.3 |  13172.9 |     246.87 |
 | kimi-2.6 Cerebras (thinking)         |    92 |        100.0% |       7.0 |     15.0 |      15.0 |       15.0 |    497.8 |   2352.2 |      67.06 |
 | glm-5 (thinking)                     |    92 |        100.0% |       5.9 |     14.8 |      15.0 |       14.9 |   1420.1 |   4623.0 |     107.98 |
 | claude-sonnet-4-6 (none)             |    92 |        100.0% |       8.2 |     15.0 |      14.5 |       13.6 |   1998.1 |   4948.2 |     125.53 |
