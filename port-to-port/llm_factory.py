@@ -180,6 +180,39 @@ def _create_google_service(
     )
 
 
+def _install_anthropic_thinking_roundtrip_fix() -> None:
+    """Runtime monkeypatch: tolerate empty-thinking assistant turns in the Anthropic adapter.
+
+    Newer adaptive Anthropic models (Sonnet 5, Opus 4.7/4.8, Fable) return thinking
+    blocks with empty text when thinking is disabled (``--thinking none``) or when the
+    model's ``display`` defaults to ``"omitted"``. pipecat stores these as "thought"
+    LLMSpecificMessages; on the next turn ``AnthropicLLMAdapter._from_anthropic_specific_message``
+    hits its fallthrough and returns the raw thought dict, which has no ``"role"`` key,
+    raising ``KeyError: 'role'`` in ``_from_universal_context_messages``. We wrap that
+    method so a role-less result becomes a benign empty assistant turn (which pipecat's
+    consecutive-message merge folds into the adjacent assistant content). Idempotent;
+    patches the in-memory class only -- it does not modify the installed package on disk.
+    """
+    from pipecat.adapters.services.anthropic_adapter import AnthropicLLMAdapter
+
+    if getattr(AnthropicLLMAdapter, "_gb_thinking_roundtrip_fix", False):
+        return
+
+    _orig_from_specific = AnthropicLLMAdapter._from_anthropic_specific_message
+
+    def _from_anthropic_specific_message(self, message):
+        result = _orig_from_specific(self, message)
+        if not (isinstance(result, dict) and "role" in result):
+            # Empty/blank "thought" fallthrough -> emit a benign, role-carrying
+            # assistant turn instead of a role-less dict.
+            return {"role": "assistant", "content": []}
+        return result
+
+    AnthropicLLMAdapter._from_anthropic_specific_message = _from_anthropic_specific_message
+    AnthropicLLMAdapter._gb_thinking_roundtrip_fix = True
+    logger.info("Installed AnthropicLLMAdapter empty-thinking round-trip monkeypatch")
+
+
 def _create_anthropic_service(
     *,
     api_key: str,
@@ -188,6 +221,8 @@ def _create_anthropic_service(
     function_call_timeout_secs: Optional[float],
 ) -> LLMService:
     from pipecat.services.anthropic.llm import AnthropicLLMService
+
+    _install_anthropic_thinking_roundtrip_fix()
 
     params_kwargs: dict[str, object] = {"enable_prompt_caching": True}
     if thinking and thinking.enabled:

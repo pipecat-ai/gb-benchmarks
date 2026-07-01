@@ -7,9 +7,11 @@ import argparse
 import asyncio
 import base64
 import contextlib
+from email.utils import parsedate_to_datetime
 import hashlib
 import json
 import os
+import random
 import re
 import subprocess
 import sys
@@ -23,6 +25,7 @@ from types import MethodType, SimpleNamespace
 from typing import Any, Optional
 
 from loguru import logger
+import openai
 from pipecat.frames.frames import (
     EndFrame,
     FunctionCallResultFrame,
@@ -157,6 +160,10 @@ MAX_NO_TOOL_NUDGES = 3
 NO_TOOL_WATCHDOG_DELAY = 5.0
 EVENT_BATCH_INFERENCE_DELAY = 1.0
 MAX_TRANSPORT_EMPTY_RETRIES = 2
+BASETEN_RATE_LIMIT_MAX_ATTEMPTS = 5
+BASETEN_RATE_LIMIT_BACKOFF_BASE_SECS = 2.0
+BASETEN_RATE_LIMIT_BACKOFF_FACTOR = 2.0
+BASETEN_RATE_LIMIT_BACKOFF_MAX_SECS = 30.0
 PIPELINE_GRACEFUL_SHUTDOWN_TIMEOUT = 3.0
 THINKING_LEVELS = ("none", "minimal", "low", "medium", "high", "xhigh")
 THINKING_BUDGET_MAP = {"minimal": 0, "low": 128, "medium": 512, "high": 2048}
@@ -434,6 +441,200 @@ def _apply_openai_non_streaming_tool_call_workaround(
         return _iter_chunks()
 
     llm_service.get_chat_completions = MethodType(_patched_get_chat_completions, llm_service)
+    return "enabled"
+
+
+def _openai_error_status_code(exc: BaseException) -> Optional[int]:
+    status_code = getattr(exc, "status_code", None)
+    if isinstance(status_code, int):
+        return status_code
+
+    response = getattr(exc, "response", None)
+    response_status = getattr(response, "status_code", None)
+    if isinstance(response_status, int):
+        return response_status
+    return None
+
+
+def _is_openai_rate_limit_error(exc: BaseException) -> bool:
+    return isinstance(exc, openai.RateLimitError) or (
+        isinstance(exc, openai.APIStatusError) and _openai_error_status_code(exc) == 429
+    )
+
+
+def _retry_after_seconds_from_error(exc: BaseException) -> Optional[float]:
+    response = getattr(exc, "response", None)
+    headers = getattr(response, "headers", None)
+    if headers is None:
+        return None
+
+    raw_retry_after = None
+    get_header = getattr(headers, "get", None)
+    if callable(get_header):
+        raw_retry_after = get_header("retry-after")
+    if raw_retry_after is None:
+        return None
+
+    retry_after_text = str(raw_retry_after).strip()
+    if not retry_after_text:
+        return None
+
+    try:
+        return max(0.0, float(retry_after_text))
+    except ValueError:
+        pass
+
+    try:
+        retry_at = parsedate_to_datetime(retry_after_text)
+    except (TypeError, ValueError, IndexError, OverflowError):
+        return None
+    if retry_at.tzinfo is None:
+        retry_at = retry_at.replace(tzinfo=timezone.utc)
+    return max(0.0, (retry_at - datetime.now(timezone.utc)).total_seconds())
+
+
+def _baseten_rate_limit_backoff_seconds(exc: BaseException, *, failed_attempt: int) -> float:
+    retry_after = _retry_after_seconds_from_error(exc)
+    if retry_after is not None:
+        return min(retry_after, BASETEN_RATE_LIMIT_BACKOFF_MAX_SECS)
+
+    exponent = max(0, failed_attempt - 1)
+    base_delay = BASETEN_RATE_LIMIT_BACKOFF_BASE_SECS * (
+        BASETEN_RATE_LIMIT_BACKOFF_FACTOR**exponent
+    )
+    capped_delay = min(base_delay, BASETEN_RATE_LIMIT_BACKOFF_MAX_SECS)
+    jitter = random.uniform(0.0, min(1.0, capped_delay * 0.25))
+    return min(capped_delay + jitter, BASETEN_RATE_LIMIT_BACKOFF_MAX_SECS)
+
+
+async def _sleep_for_rate_limit_backoff(delay_seconds: float) -> None:
+    await asyncio.sleep(delay_seconds)
+
+
+def _runtime_turn_for_rate_limit_log(runtime: Any) -> int:
+    turn_count = getattr(runtime, "turn_count", 0)
+    return int(turn_count) + 1 if isinstance(turn_count, int) else 1
+
+
+def _record_baseten_rate_limit_event(
+    runtime: Any,
+    *,
+    failed_attempt: int,
+    backoff_s: float,
+    exhausted: bool,
+) -> None:
+    runtime.rate_limit_count = getattr(runtime, "rate_limit_count", 0) + 1
+    logger.warning(
+        "RATE_LIMIT_429 ts={} turn={} attempt={} backoff_s={:.3f} max_attempts={} exhausted={}",
+        _iso_utc_now(),
+        _runtime_turn_for_rate_limit_log(runtime),
+        failed_attempt,
+        backoff_s,
+        BASETEN_RATE_LIMIT_MAX_ATTEMPTS,
+        exhausted,
+    )
+
+
+def _record_baseten_rate_limit_retry_success(runtime: Any, *, recovered_attempt: int) -> None:
+    runtime.rate_limit_retry_success_count = (
+        getattr(runtime, "rate_limit_retry_success_count", 0) + 1
+    )
+    logger.info(
+        "RATE_LIMIT_RETRY_SUCCESS ts={} turn={} attempts={}",
+        _iso_utc_now(),
+        _runtime_turn_for_rate_limit_log(runtime),
+        recovered_attempt,
+    )
+
+
+def _mark_baseten_rate_limit_exhausted(
+    runtime: Any,
+    *,
+    failed_attempt: int,
+    exc: BaseException,
+) -> None:
+    status_code = _openai_error_status_code(exc) or 429
+    event = {
+        "endpoint": "inference",
+        "error_class": "rate_limit_exhausted",
+        "error": str(exc),
+        "source": {"type": "baseten_rate_limit_retry"},
+        "synthesized": True,
+        "status": status_code,
+        "attempts": failed_attempt,
+        "max_attempts": BASETEN_RATE_LIMIT_MAX_ATTEMPTS,
+    }
+    runtime.rate_limit_exhausted_pending = True
+    runtime.rate_limit_exhausted_event = event
+    logger.error(
+        "RATE_LIMIT_EXHAUSTED ts={} turn={} attempts={} status={}",
+        _iso_utc_now(),
+        _runtime_turn_for_rate_limit_log(runtime),
+        failed_attempt,
+        status_code,
+    )
+
+
+def _apply_baseten_rate_limit_retry_wrapper(
+    *,
+    llm_service: LLMService,
+    provider: LLMProvider,
+    openai_base_url: Optional[str],
+    runtime: Any,
+) -> str:
+    """Retry Baseten 429s at the OpenAI stream-open boundary before Pipecat sees them."""
+    if provider != LLMProvider.OPENAI or not _is_baseten_endpoint(openai_base_url):
+        return "disabled"
+
+    if getattr(llm_service, "_baseten_rate_limit_retry_wrapped", False):
+        return "already_enabled"
+
+    original = getattr(llm_service, "get_chat_completions", None)
+    if not callable(original):
+        logger.warning("Baseten rate-limit retry unavailable: get_chat_completions missing.")
+        return "unavailable"
+
+    async def _patched_get_chat_completions(self: Any, params_from_context: Any) -> Any:
+        attempt = 1
+        saw_rate_limit = False
+        while True:
+            try:
+                chunks = await original(params_from_context)
+            except (openai.RateLimitError, openai.APIStatusError) as exc:
+                if not _is_openai_rate_limit_error(exc):
+                    raise
+
+                saw_rate_limit = True
+                exhausted = attempt >= BASETEN_RATE_LIMIT_MAX_ATTEMPTS
+                backoff_s = (
+                    0.0
+                    if exhausted
+                    else _baseten_rate_limit_backoff_seconds(exc, failed_attempt=attempt)
+                )
+                _record_baseten_rate_limit_event(
+                    runtime,
+                    failed_attempt=attempt,
+                    backoff_s=backoff_s,
+                    exhausted=exhausted,
+                )
+                if exhausted:
+                    _mark_baseten_rate_limit_exhausted(
+                        runtime,
+                        failed_attempt=attempt,
+                        exc=exc,
+                    )
+                    raise
+
+                await _sleep_for_rate_limit_backoff(backoff_s)
+                attempt += 1
+                continue
+
+            if saw_rate_limit:
+                _record_baseten_rate_limit_retry_success(runtime, recovered_attempt=attempt)
+            return chunks
+
+    llm_service.get_chat_completions = MethodType(_patched_get_chat_completions, llm_service)
+    setattr(llm_service, "_baseten_rate_limit_retry_wrapped", True)
     return "enabled"
 
 
@@ -818,7 +1019,9 @@ def _validate_generation_controls(args: argparse.Namespace, parser: argparse.Arg
         return
 
     if args.provider == "anthropic" and (
-        "claude-opus-4-6" in model_lower or "claude-sonnet-4-6" in model_lower
+        "claude-opus-4-6" in model_lower
+        or "claude-sonnet-4-6" in model_lower
+        or "claude-sonnet-5" in model_lower
     ):
         parser.error(
             "Claude Sonnet/Opus adaptive reasoning models support benchmark --thinking levels, "
@@ -998,12 +1201,23 @@ def _apply_benchmark_thinking_mode(
     if provider == LLMProvider.ANTHROPIC:
         from pipecat.services.anthropic.llm import AnthropicLLMService
 
-        if "claude-opus-4-6" in model_lower or "claude-sonnet-4-6" in model_lower:
+        if (
+            "claude-opus-4-6" in model_lower
+            or "claude-sonnet-4-6" in model_lower
+            or "claude-sonnet-5" in model_lower
+        ):
             settings["thinking"] = None
             if normalized_thinking == "none":
                 return "anthropic:adaptive disabled"
             effort = normalized_thinking
-            extra["thinking"] = {"type": "adaptive"}
+            # display="summarized" keeps thinking-block text non-empty. Newer
+            # adaptive models (Sonnet 5, Opus 4.7/4.8, Fable) default to
+            # display="omitted" -> empty thinking text, which pipecat's Anthropic
+            # adapter cannot round-trip (it returns the raw thought dict without a
+            # "role" key, crashing on the next turn). No-op for Opus/Sonnet 4.6,
+            # which already default to summarized. Does not change model behavior
+            # or billing -- only whether the reasoning summary is returned.
+            extra["thinking"] = {"type": "adaptive", "display": "summarized"}
             extra["output_config"] = {"effort": effort}
             return f"anthropic:adaptive effort={effort}"
 
@@ -1542,6 +1756,7 @@ class _BenchmarkResponseTracker(FrameProcessor):
             and self._response_thought == ""
             and self._usage_metrics is None
             and getattr(self._runtime, "last_error_event", None) is None
+            and not getattr(self._runtime, "rate_limit_exhausted_pending", False)
         )
 
     async def process_frame(self, frame: Any, direction: FrameDirection):
@@ -1642,7 +1857,16 @@ class _BenchmarkResponseTracker(FrameProcessor):
 
         failure_class = "none"
         transport_empty_exhausted = False
-        if self._matches_transport_empty_response_signature():
+        rate_limit_exhausted = bool(
+            getattr(self._runtime, "rate_limit_exhausted_pending", False)
+        )
+        rate_limit_exhausted_event = None
+        if rate_limit_exhausted:
+            event = getattr(self._runtime, "rate_limit_exhausted_event", None)
+            if isinstance(event, dict):
+                rate_limit_exhausted_event = dict(event)
+
+        if not rate_limit_exhausted and self._matches_transport_empty_response_signature():
             self._runtime.empty_response_count = getattr(self._runtime, "empty_response_count", 0) + 1
             if self._transport_empty_retries < MAX_TRANSPORT_EMPTY_RETRIES:
                 if self._controller.can_retry_transport_empty_response():
@@ -1676,7 +1900,9 @@ class _BenchmarkResponseTracker(FrameProcessor):
             else:
                 transport_empty_exhausted = True
 
-        if not self._has_function_calls:
+        if rate_limit_exhausted:
+            failure_class = "rate_limit_exhausted"
+        elif not self._has_function_calls:
             failure_class = "no_tool_call"
             self._runtime.no_tool_call_count += 1
             self._runtime.world.increment_bad_action()
@@ -1708,6 +1934,11 @@ class _BenchmarkResponseTracker(FrameProcessor):
         if getattr(self._runtime, "transport_empty_retry_enabled", False):
             turn_log["transport_empty_retries"] = self._transport_empty_retries
             turn_log["transport_empty_attempts"] = self._transport_empty_retries + 1
+        if rate_limit_exhausted:
+            turn_log["rate_limit_exhausted"] = True
+            if rate_limit_exhausted_event is not None:
+                turn_log["rate_limit_event"] = rate_limit_exhausted_event
+                turn_log["error_event"] = rate_limit_exhausted_event
         raw_text_raw = self._response_text_raw.strip()
         if raw_text_raw and raw_text_raw != turn_log["raw_response_text"]:
             turn_log["raw_response_text_raw"] = raw_text_raw
@@ -1728,6 +1959,9 @@ class _BenchmarkResponseTracker(FrameProcessor):
         self._runtime.attach_active_inference_capture(turn_log)
         self._runtime.turn_logs.append(turn_log)
         self._runtime.turn_count += 1
+        if rate_limit_exhausted:
+            self._runtime.rate_limit_exhausted_pending = False
+            self._runtime.rate_limit_exhausted_event = None
         if self._transport_empty_retries > 0 and not transport_empty_exhausted:
             self._runtime.empty_response_retry_success_count = (
                 getattr(self._runtime, "empty_response_retry_success_count", 0) + 1
@@ -1745,6 +1979,9 @@ class _BenchmarkResponseTracker(FrameProcessor):
             _state_log_label(self._response_state_before),
             _state_log_label(state_after),
         )
+
+        if rate_limit_exhausted and not self._runtime.stop_requested:
+            self._runtime.request_stop("rate_limit_exhausted")
 
         if self._runtime.turn_count >= self._runtime.max_turns and not self._runtime.stop_requested:
             self._runtime.request_stop("max_turns_exhausted", wait_for_pending_async=True)
@@ -1789,6 +2026,13 @@ class _BenchmarkRuntime:
         ) and _is_baseten_retry_eligible_model(args.model)
         self.empty_response_count = 0
         self.empty_response_retry_success_count = 0
+        self.rate_limit_retry_enabled = args.provider == "openai" and _is_baseten_endpoint(
+            args.openai_base_url
+        )
+        self.rate_limit_count = 0
+        self.rate_limit_retry_success_count = 0
+        self.rate_limit_exhausted_pending = False
+        self.rate_limit_exhausted_event: Optional[dict[str, Any]] = None
 
         self.run_id = str(uuid.uuid4())
         self.started_at_utc = _iso_utc_now()
@@ -2480,6 +2724,13 @@ class _BenchmarkRuntime:
                 "empty_response_retry_success_count",
                 0,
             )
+        if getattr(self, "rate_limit_retry_enabled", False):
+            summary["rate_limit_count"] = getattr(self, "rate_limit_count", 0)
+            summary["rate_limit_retry_success_count"] = getattr(
+                self,
+                "rate_limit_retry_success_count",
+                0,
+            )
         return summary
 
     def build_output_payload(self) -> dict[str, Any]:
@@ -2556,9 +2807,15 @@ async def _run_benchmark(args: argparse.Namespace) -> int:
         system_instruction=system_instruction,
         system_instruction_path=system_instruction_path,
     )
+    rate_limit_retry_policy = _apply_baseten_rate_limit_retry_wrapper(
+        llm_service=llm_service,
+        provider=provider,
+        openai_base_url=args.openai_base_url,
+        runtime=runtime,
+    )
 
     logger.info(
-        "HARNESS_CONFIG provider={} model={} openai_base_url={} thinking={} thinking_budget={} openai_no_budget_thinking_toggle={} thinking_policy={} tool_call_workaround={} max_tokens={} max_turns={}",
+        "HARNESS_CONFIG provider={} model={} openai_base_url={} thinking={} thinking_budget={} openai_no_budget_thinking_toggle={} thinking_policy={} tool_call_workaround={} rate_limit_retry={} max_tokens={} max_turns={}",
         provider.value,
         args.model,
         args.openai_base_url or "(default)",
@@ -2567,6 +2824,7 @@ async def _run_benchmark(args: argparse.Namespace) -> int:
         getattr(args, "openai_no_budget_thinking_toggle", False),
         thinking_policy,
         tool_call_streaming_workaround,
+        rate_limit_retry_policy,
         args.max_tokens,
         args.max_turns,
     )
@@ -2655,6 +2913,9 @@ async def _run_benchmark(args: argparse.Namespace) -> int:
     print(f"COHERENT_REPORT={summary['coherent_report']}")
     print(f"TURNS={summary['turns_executed']}")
     print(f"ELAPSED_MS={summary['elapsed_ms']}")
+    if "rate_limit_count" in summary:
+        print(f"RATE_LIMIT_COUNT={summary['rate_limit_count']}")
+        print(f"RATE_LIMIT_RETRY_SUCCESS_COUNT={summary['rate_limit_retry_success_count']}")
     if summary.get("finished_message"):
         print(f"FINISH_MESSAGE={summary['finished_message']}")
 

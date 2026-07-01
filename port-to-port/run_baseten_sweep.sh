@@ -27,7 +27,9 @@ ENV_FILE="/home/khkramer/src/gb-benchmarks/.env"
 CONFIG_FILTER="${CONFIG_FILTER:-}"
 
 TS="$(date -u +%Y%m%d-%H%M%S)"
-RUN_DIR="runs/baseten-sweep-${TS}"
+# RUN_DIR may be overridden (e.g. to run one config per process into a shared
+# parent) so several single-config sequential invocations can run in parallel.
+RUN_DIR="${RUN_DIR:-runs/baseten-sweep-${TS}}"
 PY=".venv/bin/python"
 
 # Baseten uses the OpenAI-compatible client; the harness reads OPENAI_API_KEY.
