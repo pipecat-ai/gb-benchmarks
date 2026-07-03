@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Natural-variant port-to-port sweep for Baseten-hosted models.
 #
-# Configs (6):
-#   zai-org/GLM-5.2                          thinking: none, low, medium, high
+# Configs (5):
+#   zai-org/GLM-5.2                          thinking: none, high, xhigh
 #   nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B thinking: none, high
 # (Nemotron Ultra reasoning is binary on Baseten, so only none + high are run.)
 #
@@ -43,9 +43,8 @@ export OPENAI_API_KEY="$BASETEN_API_KEY"
 # config slug | model | thinking
 CONFIGS=(
   "glm52-none|zai-org/GLM-5.2|none"
-  "glm52-low|zai-org/GLM-5.2|low"
-  "glm52-medium|zai-org/GLM-5.2|medium"
   "glm52-high|zai-org/GLM-5.2|high"
+  "glm52-xhigh|zai-org/GLM-5.2|xhigh"
   "nemotron-ultra-none|nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B|none"
   "nemotron-ultra-high|nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B|high"
 )

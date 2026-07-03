@@ -44,6 +44,11 @@ tool_catalog = _load_module("tool_catalog_test", "tool_catalog.py")
 synthetic_world = _load_module("synthetic_world_test", "synthetic_world.py")
 
 
+class CapturingArgumentParser(argparse.ArgumentParser):
+    def error(self, message):  # type: ignore[override]
+        raise ValueError(message)
+
+
 class EvaluateRunsRegressionTests(unittest.TestCase):
     def test_summary_fallback_accepts_sector_only_mega_reference(self) -> None:
         payload = {
@@ -1616,6 +1621,67 @@ class MiniRLEnvRegressionTests(unittest.TestCase):
             True,
         )
 
+    def test_apply_benchmark_thinking_mode_maps_baseten_glm52_efforts(self) -> None:
+        for thinking, expected_effort in (
+            ("none", "none"),
+            ("high", "high"),
+            ("xhigh", "max"),
+        ):
+            with self.subTest(thinking=thinking):
+                llm_service = types.SimpleNamespace(
+                    _settings={
+                        "extra": {
+                            "extra_body": {
+                                "chat_template_kwargs": {"enable_thinking": True},
+                                "vllm_xargs": {"thinking_budget": 2048},
+                            }
+                        }
+                    }
+                )
+
+                policy = mini_rl_env._apply_benchmark_thinking_mode(
+                    llm_service=llm_service,
+                    provider=mini_rl_env.LLMProvider.OPENAI,
+                    model="zai-org/GLM-5.2",
+                    thinking=thinking,
+                    thinking_budget=None,
+                    openai_base_url="https://inference.baseten.co/v1",
+                )
+
+                self.assertEqual(
+                    policy,
+                    f"openai-compatible:baseten reasoning.effort={expected_effort}",
+                )
+                extra_body = llm_service._settings["extra"]["extra_body"]
+                self.assertEqual(extra_body["reasoning"], {"effort": expected_effort})
+                self.assertNotIn("chat_template_kwargs", extra_body)
+                self.assertNotIn("vllm_xargs", extra_body)
+
+    def test_apply_benchmark_thinking_mode_keeps_baseten_nemotron_none_high_mapping(
+        self,
+    ) -> None:
+        for thinking, expected_effort in (("none", "none"), ("high", "high")):
+            with self.subTest(thinking=thinking):
+                llm_service = types.SimpleNamespace(_settings={})
+
+                policy = mini_rl_env._apply_benchmark_thinking_mode(
+                    llm_service=llm_service,
+                    provider=mini_rl_env.LLMProvider.OPENAI,
+                    model="nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B",
+                    thinking=thinking,
+                    thinking_budget=None,
+                    openai_base_url="https://inference.baseten.co/v1",
+                )
+
+                self.assertEqual(
+                    policy,
+                    f"openai-compatible:baseten reasoning.effort={expected_effort}",
+                )
+                self.assertEqual(
+                    llm_service._settings["extra"]["extra_body"]["reasoning"],
+                    {"effort": expected_effort},
+                )
+
     def test_apply_benchmark_thinking_mode_sets_nemotron_enable_thinking_toggle_without_budget(self) -> None:
         llm_service = types.SimpleNamespace(
             _settings={
@@ -1824,6 +1890,44 @@ class MiniRLEnvRegressionTests(unittest.TestCase):
 
         with self.assertRaises(SystemExit):
             mini_rl_env._validate_generation_controls(args, parser)
+
+    def test_validate_generation_controls_rejects_baseten_glm52_low_medium_minimal(
+        self,
+    ) -> None:
+        parser = CapturingArgumentParser()
+        for thinking in ("minimal", "low", "medium"):
+            with self.subTest(thinking=thinking):
+                args = types.SimpleNamespace(
+                    provider="openai",
+                    model="zai-org/GLM-5.2",
+                    openai_base_url="https://inference.baseten.co/v1",
+                    thinking=thinking,
+                    thinking_budget=None,
+                    max_tokens=8192,
+                )
+
+                with self.assertRaisesRegex(
+                    ValueError,
+                    "GLM-5.2 on Baseten supports only --thinking none, high, or xhigh",
+                ):
+                    mini_rl_env._validate_generation_controls(args, parser)
+
+    def test_validate_generation_controls_allows_baseten_glm52_none_high_xhigh(
+        self,
+    ) -> None:
+        parser = argparse.ArgumentParser()
+        for thinking in ("none", "high", "xhigh"):
+            with self.subTest(thinking=thinking):
+                args = types.SimpleNamespace(
+                    provider="openai",
+                    model="zai-org/GLM-5.2",
+                    openai_base_url="https://inference.baseten.co/v1",
+                    thinking=thinking,
+                    thinking_budget=None,
+                    max_tokens=8192,
+                )
+
+                mini_rl_env._validate_generation_controls(args, parser)
 
     def test_later_batched_call_waits_for_async_completion(self) -> None:
         async def _run() -> None:

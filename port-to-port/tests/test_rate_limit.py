@@ -118,6 +118,11 @@ def _api_status_error(status_code: int):
     )
 
 
+def _api_error():
+    request = httpx.Request("POST", "https://inference.baseten.co/v1/chat/completions")
+    return openai.APIError("upstream disconnected", request=request, body=None)
+
+
 class BasetenRateLimitRetryTests(unittest.TestCase):
     def _bind_capture_runtime_methods(self, runtime) -> None:
         for name in (
@@ -181,6 +186,8 @@ class BasetenRateLimitRetryTests(unittest.TestCase):
         runtime.rate_limit_retry_success_count = 0
         runtime.rate_limit_exhausted_pending = False
         runtime.rate_limit_exhausted_event = None
+        runtime.api_error_pending = False
+        runtime.api_error_event = None
         runtime.llm_context = None
         runtime.llm_service = types.SimpleNamespace()
         runtime.inference_inputs = []
@@ -354,38 +361,97 @@ class BasetenRateLimitRetryTests(unittest.TestCase):
 
         asyncio.run(_run())
 
-    def test_non_429_api_status_error_is_not_retried(self) -> None:
+    def test_non_429_api_status_error_finalizes_as_inference_failure(self) -> None:
         async def _run() -> None:
-            for status_code in (400, 500):
-                with self.subTest(status_code=status_code):
-                    service = FakeOpenAIService([_api_status_error(status_code), object()])
-                    runtime = self._make_runtime()
-                    sleeps = []
+            service = FakeOpenAIService([_api_status_error(400), object()])
+            runtime = self._make_runtime()
+            tracker, controller, pipeline_task = await self._make_tracker(runtime)
+            sleeps = []
 
-                    async def fake_sleep(delay_seconds: float) -> None:
-                        sleeps.append(delay_seconds)
+            async def fake_sleep(delay_seconds: float) -> None:
+                sleeps.append(delay_seconds)
 
-                    mini_rl_env._apply_baseten_rate_limit_retry_wrapper(
-                        llm_service=service,
-                        provider=mini_rl_env.LLMProvider.OPENAI,
-                        openai_base_url=runtime.args.openai_base_url,
-                        runtime=runtime,
-                    )
+            mini_rl_env._apply_baseten_rate_limit_retry_wrapper(
+                llm_service=service,
+                provider=mini_rl_env.LLMProvider.OPENAI,
+                openai_base_url=runtime.args.openai_base_url,
+                runtime=runtime,
+            )
 
-                    with mock.patch.object(
-                        mini_rl_env,
-                        "_sleep_for_rate_limit_backoff",
-                        side_effect=fake_sleep,
-                    ):
-                        with self.assertRaises(openai.APIStatusError):
-                            await service.get_chat_completions({"stream": True})
+            with mock.patch.object(
+                mini_rl_env,
+                "_sleep_for_rate_limit_backoff",
+                side_effect=fake_sleep,
+            ):
+                with self.assertRaises(openai.APIStatusError):
+                    await service.get_chat_completions({"stream": True})
 
-                    self.assertEqual(service.completions.calls, 1)
-                    self.assertEqual(sleeps, [])
-                    self.assertEqual(runtime.rate_limit_count, 0)
-                    self.assertEqual(runtime.rate_limit_retry_success_count, 0)
-                    self.assertFalse(runtime.rate_limit_exhausted_pending)
-                    self.assertIsNone(runtime.rate_limit_exhausted_event)
+            self.assertEqual(service.completions.calls, 1)
+            self.assertEqual(sleeps, [])
+            self.assertEqual(runtime.rate_limit_count, 0)
+            self.assertEqual(runtime.rate_limit_retry_success_count, 0)
+            self.assertFalse(runtime.rate_limit_exhausted_pending)
+            self.assertIsNone(runtime.rate_limit_exhausted_event)
+            self.assertTrue(runtime.api_error_pending)
+            self.assertEqual(runtime.api_error_event["status"], 400)
+
+            await tracker.process_frame(
+                mini_rl_env.LLMFullResponseStartFrame(),
+                mini_rl_env.FrameDirection.DOWNSTREAM,
+            )
+            self.assertFalse(tracker._matches_transport_empty_response_signature())
+            await tracker.process_frame(
+                mini_rl_env.LLMFullResponseEndFrame(),
+                mini_rl_env.FrameDirection.DOWNSTREAM,
+            )
+
+            self.assertFalse(runtime.api_error_pending)
+            self.assertIsNone(runtime.api_error_event)
+            self.assertEqual(runtime.empty_response_count, 0)
+            self.assertEqual(runtime.empty_response_retry_success_count, 0)
+            self.assertEqual(runtime.no_tool_call_count, 0)
+            self.assertEqual(runtime.world.bad_actions_count, 0)
+            self.assertEqual(runtime.turn_count, 1)
+            self.assertEqual(len(runtime.turn_logs), 1)
+            turn = runtime.turn_logs[0]
+            self.assertEqual(turn["failure_class"], "inference_failure")
+            self.assertTrue(turn["api_error"])
+            self.assertEqual(turn["api_error_event"]["status"], 400)
+            self.assertEqual(turn["error_event"]["status"], 400)
+            self.assertEqual(turn["bad_action_increment"], 0)
+            self.assertEqual(turn["transport_empty_retries"], 0)
+            self.assertEqual(turn["transport_empty_attempts"], 1)
+            self.assertEqual(pipeline_task.queued_frames, [])
+            self.assertTrue(runtime.stop_requested)
+            self.assertEqual(runtime.terminal_reason, "inference_error")
+
+            await tracker.cleanup()
+            controller.close()
+            await asyncio.sleep(0)
+
+        asyncio.run(_run())
+
+    def test_non_status_api_error_sets_marker_without_retry(self) -> None:
+        async def _run() -> None:
+            service = FakeOpenAIService([_api_error(), object()])
+            runtime = self._make_runtime()
+
+            mini_rl_env._apply_baseten_rate_limit_retry_wrapper(
+                llm_service=service,
+                provider=mini_rl_env.LLMProvider.OPENAI,
+                openai_base_url=runtime.args.openai_base_url,
+                runtime=runtime,
+            )
+
+            with self.assertRaises(openai.APIError):
+                await service.get_chat_completions({"stream": True})
+
+            self.assertEqual(service.completions.calls, 1)
+            self.assertTrue(runtime.api_error_pending)
+            self.assertIsNone(runtime.api_error_event["status"])
+            self.assertEqual(runtime.api_error_event["exception_type"], "APIError")
+            self.assertEqual(runtime.rate_limit_count, 0)
+            self.assertFalse(runtime.rate_limit_exhausted_pending)
 
         asyncio.run(_run())
 

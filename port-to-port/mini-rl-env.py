@@ -306,17 +306,36 @@ def _is_baseten_retry_eligible_model(model: str) -> bool:
     )
 
 
+def _is_baseten_glm_reasoning_model(model_lower: str) -> bool:
+    normalized = model_lower.strip().lower()
+    return "glm-5" in normalized or "glm5" in normalized
+
+
 def _baseten_reasoning_effort(thinking: str) -> str:
     # Baseten Model APIs accept OpenAI-style reasoning.effort (none|minimal|low|
-    # medium|high). "none" disables reasoning; any other level enables it. GLM-5.2
-    # honors the intermediate levels; Nemotron-3-Ultra is effectively binary
-    # (on/off) on this stack, so minimal..high behave the same for it.
+    # medium|high). "none" disables reasoning; any other level enables it. Some
+    # models are effectively binary on this stack, so minimal..high may behave
+    # the same for them. GLM-5.2 on Baseten is handled by the GLM-specific mapper.
     normalized = _normalize_benchmark_thinking_level(thinking)
     if normalized == "none":
         return "none"
     if normalized == "xhigh":
         return "high"
     return normalized
+
+
+def _baseten_glm_reasoning_effort(thinking: str) -> str:
+    normalized = thinking.strip().lower()
+    if normalized == "none":
+        return "none"
+    if normalized == "high":
+        return "high"
+    if normalized == "xhigh":
+        return "max"
+    raise ValueError(
+        "GLM-5.2 on Baseten supports only benchmark thinking none/high/xhigh "
+        "(xhigh maps to reasoning.effort=max)."
+    )
 
 
 def _sanitize_assistant_replay_text(text: str) -> str:
@@ -575,6 +594,31 @@ def _mark_baseten_rate_limit_exhausted(
     )
 
 
+def _mark_baseten_api_error(runtime: Any, *, exc: BaseException) -> None:
+    status_code = _openai_error_status_code(exc)
+    message = str(exc)
+    event = {
+        "endpoint": "inference",
+        "error_class": "api_error",
+        "error": message,
+        "message": message,
+        "source": {"type": "baseten_api_error"},
+        "synthesized": True,
+        "status": status_code,
+        "exception_type": exc.__class__.__name__,
+    }
+    runtime.api_error_pending = True
+    runtime.api_error_event = event
+    logger.error(
+        "BASETEN_API_ERROR ts={} turn={} status={} exception_type={} message={}",
+        _iso_utc_now(),
+        _runtime_turn_for_rate_limit_log(runtime),
+        status_code if status_code is not None else "(unknown)",
+        exc.__class__.__name__,
+        message,
+    )
+
+
 def _apply_baseten_rate_limit_retry_wrapper(
     *,
     llm_service: LLMService,
@@ -600,8 +644,9 @@ def _apply_baseten_rate_limit_retry_wrapper(
         while True:
             try:
                 chunks = await original(params_from_context)
-            except (openai.RateLimitError, openai.APIStatusError) as exc:
+            except openai.APIError as exc:
                 if not _is_openai_rate_limit_error(exc):
+                    _mark_baseten_api_error(runtime, exc=exc)
                     raise
 
                 saw_rate_limit = True
@@ -934,11 +979,21 @@ def _validate_generation_controls(args: argparse.Namespace, parser: argparse.Arg
 
         if args.openai_base_url and _is_baseten_endpoint(args.openai_base_url):
             # Baseten controls reasoning via reasoning.effort (level-based), not an
-            # exact token budget. All benchmark thinking levels map to an effort.
+            # exact token budget. GLM-5.2 currently exposes only none/high/max.
             if thinking_budget is not None:
                 parser.error(
                     "Baseten endpoints control reasoning via reasoning.effort levels; "
-                    "use --thinking none|minimal|low|medium|high instead of --thinking-budget."
+                    "use --thinking instead of --thinking-budget."
+                )
+            if _is_baseten_glm_reasoning_model(model_lower) and args.thinking not in {
+                "none",
+                "high",
+                "xhigh",
+            }:
+                parser.error(
+                    "GLM-5.2 on Baseten supports only --thinking none, high, or xhigh "
+                    "(xhigh maps to reasoning.effort=max); low, medium, and minimal "
+                    "are rejected by the Baseten API."
                 )
             return
 
@@ -1103,7 +1158,10 @@ def _apply_benchmark_thinking_mode(
         if openai_base_url and _is_baseten_endpoint(openai_base_url):
             # Baseten ignores vllm_xargs/chat_template_kwargs; thinking is
             # controlled via OpenAI-style reasoning.effort in extra_body.
-            effort = _baseten_reasoning_effort(thinking)
+            if _is_baseten_glm_reasoning_model(model_lower):
+                effort = _baseten_glm_reasoning_effort(thinking)
+            else:
+                effort = _baseten_reasoning_effort(thinking)
             existing_extra_body = extra.get("extra_body")
             extra_body = dict(existing_extra_body) if isinstance(existing_extra_body, dict) else {}
             existing_reasoning = extra_body.get("reasoning")
@@ -1757,6 +1815,7 @@ class _BenchmarkResponseTracker(FrameProcessor):
             and self._usage_metrics is None
             and getattr(self._runtime, "last_error_event", None) is None
             and not getattr(self._runtime, "rate_limit_exhausted_pending", False)
+            and not getattr(self._runtime, "api_error_pending", False)
         )
 
     async def process_frame(self, frame: Any, direction: FrameDirection):
@@ -1865,8 +1924,18 @@ class _BenchmarkResponseTracker(FrameProcessor):
             event = getattr(self._runtime, "rate_limit_exhausted_event", None)
             if isinstance(event, dict):
                 rate_limit_exhausted_event = dict(event)
+        api_error_pending = bool(getattr(self._runtime, "api_error_pending", False))
+        api_error_event = None
+        if api_error_pending:
+            event = getattr(self._runtime, "api_error_event", None)
+            if isinstance(event, dict):
+                api_error_event = dict(event)
 
-        if not rate_limit_exhausted and self._matches_transport_empty_response_signature():
+        if (
+            not rate_limit_exhausted
+            and not api_error_pending
+            and self._matches_transport_empty_response_signature()
+        ):
             self._runtime.empty_response_count = getattr(self._runtime, "empty_response_count", 0) + 1
             if self._transport_empty_retries < MAX_TRANSPORT_EMPTY_RETRIES:
                 if self._controller.can_retry_transport_empty_response():
@@ -1902,6 +1971,8 @@ class _BenchmarkResponseTracker(FrameProcessor):
 
         if rate_limit_exhausted:
             failure_class = "rate_limit_exhausted"
+        elif api_error_pending:
+            failure_class = "inference_failure"
         elif not self._has_function_calls:
             failure_class = "no_tool_call"
             self._runtime.no_tool_call_count += 1
@@ -1939,6 +2010,11 @@ class _BenchmarkResponseTracker(FrameProcessor):
             if rate_limit_exhausted_event is not None:
                 turn_log["rate_limit_event"] = rate_limit_exhausted_event
                 turn_log["error_event"] = rate_limit_exhausted_event
+        if api_error_pending:
+            turn_log["api_error"] = True
+            if api_error_event is not None:
+                turn_log["api_error_event"] = api_error_event
+                turn_log["error_event"] = api_error_event
         raw_text_raw = self._response_text_raw.strip()
         if raw_text_raw and raw_text_raw != turn_log["raw_response_text"]:
             turn_log["raw_response_text_raw"] = raw_text_raw
@@ -1962,6 +2038,9 @@ class _BenchmarkResponseTracker(FrameProcessor):
         if rate_limit_exhausted:
             self._runtime.rate_limit_exhausted_pending = False
             self._runtime.rate_limit_exhausted_event = None
+        if api_error_pending:
+            self._runtime.api_error_pending = False
+            self._runtime.api_error_event = None
         if self._transport_empty_retries > 0 and not transport_empty_exhausted:
             self._runtime.empty_response_retry_success_count = (
                 getattr(self._runtime, "empty_response_retry_success_count", 0) + 1
@@ -1982,6 +2061,9 @@ class _BenchmarkResponseTracker(FrameProcessor):
 
         if rate_limit_exhausted and not self._runtime.stop_requested:
             self._runtime.request_stop("rate_limit_exhausted")
+
+        if api_error_pending and not self._runtime.stop_requested:
+            self._runtime.request_stop("inference_error")
 
         if self._runtime.turn_count >= self._runtime.max_turns and not self._runtime.stop_requested:
             self._runtime.request_stop("max_turns_exhausted", wait_for_pending_async=True)
@@ -2033,6 +2115,8 @@ class _BenchmarkRuntime:
         self.rate_limit_retry_success_count = 0
         self.rate_limit_exhausted_pending = False
         self.rate_limit_exhausted_event: Optional[dict[str, Any]] = None
+        self.api_error_pending = False
+        self.api_error_event: Optional[dict[str, Any]] = None
 
         self.run_id = str(uuid.uuid4())
         self.started_at_utc = _iso_utc_now()
