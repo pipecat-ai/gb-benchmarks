@@ -93,6 +93,6 @@ The 2026-06-29 Baseten sweep (`runs/baseten-sweep-20260629-231133/`, see `codex-
 | 2 | Raise per-turn token cap (≥8192) | done | 88a2df5 | MAX_TOKENS default 4096→8192; no hard clamp; non-Baseten unaffected |
 | 3 | Empty/no-usage transport-retry | done | 80eb877 | retry≤2, gated Baseten+GLM/Nemotron; capture/watchdog owned; telemetry ≠ accounting; 9 unit + 82 regression pass |
 | 4 | GLM reasoning_content preservation | deferred | — | gated on 5b smoke results; A+B were the real causes (steps 2+3) |
-| 5 | Staged sequential validation + Nemotron finding | in-progress | — | 5a ✅ 03f7a0c; 5b ✅ GLM 100%/92-100; 5c ran but glm-low/medium 0% (Baseten API change → step 7); valid: glm-none/high + Nemotron |
-| 7 | Baseten GLM effort restriction + non-429 surfacing | done | (pending) | GLM xhigh→max, reject low/medium/minimal; non-429→inference_failure (marker); sweep GLM none/high/xhigh; 7+9+86 tests; review clean |
+| 5 | Staged sequential validation + Nemotron finding | done | (pending) | 5a ✅; 5b ✅; 5c ✅ 125 eps seq @ mt=8192 all 100% complete; GLM 92-97 (was 77-82), Nemotron 83-88; leaderboard+README refreshed; see step5-validation.md |
+| 7 | Baseten GLM effort restriction + non-429 surfacing | done | 8464a20 | GLM xhigh→max, reject low/medium/minimal; non-429→inference_failure (marker); sweep GLM none/high/xhigh; 7+9+86 tests; review clean |
 | 6 | Surface + backoff-retry HTTP 429 | done | 0d6df17 | 429 caught+backoff-retried; exhaustion→rate_limit_exhausted (not empty/bad-action)+request_stop; telemetry rate_limit_count; 6+9+82 tests pass |
