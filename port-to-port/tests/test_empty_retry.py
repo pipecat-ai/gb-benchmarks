@@ -135,9 +135,9 @@ class EmptyRetryTests(unittest.TestCase):
             max_turns=50,
             request_stop=mock.Mock(),
             world=FakeWorld(),
-            transport_empty_retry_enabled=mini_rl_env._is_baseten_endpoint(
-                base_url
-            ) and mini_rl_env._is_baseten_retry_eligible_model(model),
+            transport_empty_retry_enabled=mini_rl_env._baseten_transport_retry_enabled(
+                base_url, model
+            ),
             empty_response_count=0,
             empty_response_retry_success_count=0,
             llm_context=FakeContext(),
@@ -239,6 +239,8 @@ class EmptyRetryTests(unittest.TestCase):
             "glm5.2",
             "nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B",
             "nemotron-3-ultra-550b",
+            "thinkingmachines/inkling",
+            "inkling",
         ):
             with self.subTest(model=model):
                 self.assertTrue(mini_rl_env._is_baseten_retry_eligible_model(model))
@@ -247,9 +249,45 @@ class EmptyRetryTests(unittest.TestCase):
             "glm-4.7-flash",
             "nemotron-3-super-120b",
             "some-other-model",
+            "my-inkling",
+            "inkling-v2",
+            "thinkingmachines/inkling-preview",
         ):
             with self.subTest(model=model):
                 self.assertFalse(mini_rl_env._is_baseten_retry_eligible_model(model))
+
+    def test_baseten_transport_retry_helper_scopes_endpoint_and_model(self) -> None:
+        enabled_cases = (
+            ("https://inference.baseten.co/v1", "thinkingmachines/inkling"),
+            ("https://model-abc.api.baseten.co/v1", "inkling"),
+            ("https://inference.baseten.co/v1", "zai-org/GLM-5.2"),
+            (
+                "https://inference.baseten.co/v1",
+                "nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B",
+            ),
+        )
+        disabled_cases = (
+            ("https://api.openai.com/v1", "thinkingmachines/inkling"),
+            ("https://inference.baseten.co/v1", "some-other-model"),
+            ("https://inference.baseten.co/v1", "my-inkling"),
+            ("https://inference.baseten.co/v1", "inkling-v2"),
+            ("https://inference.baseten.co/v1", "thinkingmachines/inkling-preview"),
+        )
+
+        for expected, cases in ((True, enabled_cases), (False, disabled_cases)):
+            for base_url, model in cases:
+                with self.subTest(expected=expected, base_url=base_url, model=model):
+                    self.assertEqual(
+                        mini_rl_env._baseten_transport_retry_enabled(base_url, model),
+                        expected,
+                    )
+                    runtime = self._make_runtime(base_url=base_url, model=model)
+                    tracker = mini_rl_env._BenchmarkResponseTracker.__new__(
+                        mini_rl_env._BenchmarkResponseTracker
+                    )
+                    tracker._runtime = runtime
+                    self.assertEqual(runtime.transport_empty_retry_enabled, expected)
+                    self.assertEqual(tracker._transport_empty_retry_enabled(), expected)
 
     def test_empty_retry_success_does_not_count_bad_action_or_append_nudge(self) -> None:
         async def _run() -> None:

@@ -297,12 +297,26 @@ def _is_baseten_endpoint(openai_base_url: Optional[str]) -> bool:
     return host == "inference.baseten.co" or host.endswith(".baseten.co")
 
 
+def _is_baseten_inkling_model(model_lower: str) -> bool:
+    normalized = (model_lower or "").strip().lower()
+    return normalized in {"inkling", "thinkingmachines/inkling"}
+
+
 def _is_baseten_retry_eligible_model(model: str) -> bool:
     normalized = (model or "").strip().lower()
     return (
         "glm-5" in normalized
         or "glm5" in normalized
         or "nemotron-3-ultra" in normalized
+        or _is_baseten_inkling_model(normalized)
+    )
+
+
+def _baseten_transport_retry_enabled(
+    openai_base_url: Optional[str], model: str
+) -> bool:
+    return _is_baseten_endpoint(openai_base_url) and _is_baseten_retry_eligible_model(
+        model
     )
 
 
@@ -336,6 +350,31 @@ def _baseten_glm_reasoning_effort(thinking: str) -> str:
         "GLM-5.2 on Baseten supports only benchmark thinking none/high/xhigh "
         "(xhigh maps to reasoning.effort=max)."
     )
+
+
+def _baseten_inkling_reasoning_effort(thinking: str) -> str:
+    requested = thinking.strip().lower()
+    normalized = _normalize_benchmark_thinking_level(requested)
+    # The generic normalizer aliases minimal to none for budget-based models,
+    # while Inkling exposes minimal as a distinct native API value.
+    if requested == "minimal":
+        normalized = "minimal"
+    effort_by_level = {
+        "none": "none",
+        "minimal": "minimal",
+        "low": "low",
+        "medium": "medium",
+        "high": "high",
+        "xhigh": "max",
+    }
+    try:
+        return effort_by_level[normalized]
+    except KeyError as exc:
+        raise ValueError(
+            "Inkling on Baseten supports benchmark thinking "
+            "none/minimal/low/medium/high/xhigh "
+            "(xhigh maps to reasoning_effort=max)."
+        ) from exc
 
 
 def _sanitize_assistant_replay_text(text: str) -> str:
@@ -995,6 +1034,7 @@ def _validate_generation_controls(args: argparse.Namespace, parser: argparse.Arg
                     "(xhigh maps to reasoning.effort=max); low, medium, and minimal "
                     "are rejected by the Baseten API."
                 )
+            # Inkling intentionally accepts none/minimal/low/medium/high/xhigh with no budget.
             return
 
         if args.openai_base_url and _is_glm_sglang_binary_reasoning_model(model_lower):
@@ -1156,6 +1196,27 @@ def _apply_benchmark_thinking_mode(
             return "openai:gpt-4.1 reasoning_n/a"
 
         if openai_base_url and _is_baseten_endpoint(openai_base_url):
+            if _is_baseten_inkling_model(model_lower):
+                effort = _baseten_inkling_reasoning_effort(thinking)
+                # Pipecat settings extra -> SDK create() kwarg -> top-level HTTP field.
+                extra["reasoning_effort"] = effort
+                settings["temperature"] = 1.0
+                existing_extra_body = extra.get("extra_body")
+                if isinstance(existing_extra_body, dict):
+                    extra_body = dict(existing_extra_body)
+                    extra_body.pop("reasoning", None)
+                    extra_body.pop("reasoning_effort", None)
+                    extra_body.pop("chat_template_kwargs", None)
+                    extra_body.pop("vllm_xargs", None)
+                    if extra_body:
+                        extra["extra_body"] = extra_body
+                    else:
+                        extra.pop("extra_body", None)
+                return (
+                    "openai-compatible:baseten-inkling "
+                    f"reasoning_effort={effort} T=1.0"
+                )
+
             # Baseten ignores vllm_xargs/chat_template_kwargs; thinking is
             # controlled via OpenAI-style reasoning.effort in extra_body.
             if _is_baseten_glm_reasoning_model(model_lower):
@@ -1801,9 +1862,9 @@ class _BenchmarkResponseTracker(FrameProcessor):
         if not getattr(self._runtime, "transport_empty_retry_enabled", False):
             return False
         args = getattr(self._runtime, "args", None)
-        return _is_baseten_endpoint(
-            getattr(args, "openai_base_url", None)
-        ) and _is_baseten_retry_eligible_model(getattr(args, "model", ""))
+        return _baseten_transport_retry_enabled(
+            getattr(args, "openai_base_url", None), getattr(args, "model", "")
+        )
 
     def _matches_transport_empty_response_signature(self) -> bool:
         return (
@@ -2103,9 +2164,9 @@ class _BenchmarkRuntime:
         self.no_tool_call_count = 0
         self.post_finished_call_count = 0
         self.async_completion_timeout_count = 0
-        self.transport_empty_retry_enabled = _is_baseten_endpoint(
-            args.openai_base_url
-        ) and _is_baseten_retry_eligible_model(args.model)
+        self.transport_empty_retry_enabled = _baseten_transport_retry_enabled(
+            args.openai_base_url, args.model
+        )
         self.empty_response_count = 0
         self.empty_response_retry_success_count = 0
         self.rate_limit_retry_enabled = args.provider == "openai" and _is_baseten_endpoint(
