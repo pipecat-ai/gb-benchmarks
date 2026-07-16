@@ -1,9 +1,11 @@
 #!/usr/bin/env bash
 # Natural-variant port-to-port sweep for Baseten-hosted models.
 #
-# Configs (5):
+# Configs (8):
 #   zai-org/GLM-5.2                          thinking: none, high, xhigh
 #   nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B thinking: none, high
+#   thinkingmachines/inkling                  thinking: low, high, xhigh
+# Inkling runs use max_tokens=16384; GLM/Nemotron use the 8192 default.
 # (Nemotron Ultra reasoning is binary on Baseten, so only none + high are run.)
 #
 # Each config runs ROUNDS episodes in one strictly sequential process: one
@@ -25,6 +27,67 @@ PER_RUN_TIMEOUT="${PER_RUN_TIMEOUT:-600}"
 BASE_URL="https://inference.baseten.co/v1"
 ENV_FILE="/home/khkramer/src/gb-benchmarks/.env"
 CONFIG_FILTER="${CONFIG_FILTER:-}"
+PRINT_CONFIGS="${PRINT_CONFIGS:-0}"
+
+# config slug | model | thinking | max_tokens (optional; defaults to MAX_TOKENS)
+CONFIGS=(
+  "glm52-none|zai-org/GLM-5.2|none"
+  "glm52-high|zai-org/GLM-5.2|high"
+  "glm52-xhigh|zai-org/GLM-5.2|xhigh"
+  "nemotron-ultra-none|nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B|none"
+  "nemotron-ultra-high|nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B|high"
+  "inkling-low|thinkingmachines/inkling|low|16384"
+  "inkling-high|thinkingmachines/inkling|high|16384"
+  "inkling-max|thinkingmachines/inkling|xhigh|16384"
+)
+
+config_is_selected() {
+  local slug="$1"
+  if [[ -z "$CONFIG_FILTER" ]]; then
+    return 0
+  fi
+  local filters="${CONFIG_FILTER//[[:space:]]/}"
+  filters=",$filters,"
+  [[ "$filters" == *",$slug,"* ]]
+}
+
+CONFIG_SLUG=""
+CONFIG_MODEL=""
+CONFIG_THINKING=""
+CONFIG_MAX_TOKENS=""
+parse_config() {
+  local spec="$1"
+  local pipes="${spec//[^|]/}"
+  local n="${#pipes}"
+  if (( n != 2 && n != 3 )); then
+    echo "ERROR: malformed config (expected slug|model|thinking[|max_tokens]): $spec" >&2
+    return 1
+  fi
+
+  IFS='|' read -r CONFIG_SLUG CONFIG_MODEL CONFIG_THINKING CONFIG_MAX_TOKENS <<< "$spec"
+  CONFIG_MAX_TOKENS="${CONFIG_MAX_TOKENS:-$MAX_TOKENS}"
+  if [[ -z "$CONFIG_SLUG" || -z "$CONFIG_MODEL" || -z "$CONFIG_THINKING" ]]; then
+    echo "ERROR: malformed config (expected slug|model|thinking[|max_tokens]): $spec" >&2
+    return 1
+  fi
+}
+
+if [[ "$PRINT_CONFIGS" == "1" ]]; then
+  if (( $# > 0 )); then
+    PRINT_CONFIG_SPECS=("$@")
+  else
+    PRINT_CONFIG_SPECS=("${CONFIGS[@]}")
+  fi
+  for spec in "${PRINT_CONFIG_SPECS[@]}"; do
+    if ! parse_config "$spec"; then
+      exit 2
+    fi
+    if config_is_selected "$CONFIG_SLUG"; then
+      echo "CONFIG_PLAN slug=$CONFIG_SLUG model=$CONFIG_MODEL thinking=$CONFIG_THINKING max_tokens=$CONFIG_MAX_TOKENS"
+    fi
+  done
+  exit 0
+fi
 
 TS="$(date -u +%Y%m%d-%H%M%S)"
 # RUN_DIR may be overridden (e.g. to run one config per process into a shared
@@ -39,15 +102,6 @@ if [[ -z "$BASETEN_API_KEY" ]]; then
   exit 1
 fi
 export OPENAI_API_KEY="$BASETEN_API_KEY"
-
-# config slug | model | thinking
-CONFIGS=(
-  "glm52-none|zai-org/GLM-5.2|none"
-  "glm52-high|zai-org/GLM-5.2|high"
-  "glm52-xhigh|zai-org/GLM-5.2|xhigh"
-  "nemotron-ultra-none|nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B|none"
-  "nemotron-ultra-high|nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B|high"
-)
 
 mkdir -p "$RUN_DIR"
 echo "RUN_DIR=$RUN_DIR ROUNDS=$ROUNDS configs=${#CONFIGS[@]} config_filter=${CONFIG_FILTER:-<none>}" | tee "$RUN_DIR/sweep.log"
@@ -64,22 +118,15 @@ except Exception:
 PYEOF
 }
 
-config_is_selected() {
-  local slug="$1"
-  if [[ -z "$CONFIG_FILTER" ]]; then
-    return 0
-  fi
-  local filters="${CONFIG_FILTER//[[:space:]]/}"
-  filters=",$filters,"
-  [[ "$filters" == *",$slug,"* ]]
-}
-
 fail=0
 for spec in "${CONFIGS[@]}"; do
-  slug="${spec%%|*}"
-  rest="${spec#*|}"
-  model="${rest%%|*}"
-  thinking="${rest##*|}"
+  if ! parse_config "$spec"; then
+    exit 2
+  fi
+  slug="$CONFIG_SLUG"
+  model="$CONFIG_MODEL"
+  thinking="$CONFIG_THINKING"
+  mt="$CONFIG_MAX_TOKENS"
 
   if ! config_is_selected "$slug"; then
     echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) CONFIG_SKIP slug=$slug reason=config_filter" | tee -a "$RUN_DIR/sweep.log"
@@ -88,7 +135,7 @@ for spec in "${CONFIGS[@]}"; do
 
   cfg_dir="$RUN_DIR/$slug"
   mkdir -p "$cfg_dir"
-  echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) CONFIG_START slug=$slug model=$model thinking=$thinking" | tee -a "$RUN_DIR/sweep.log"
+  echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) CONFIG_START slug=$slug model=$model thinking=$thinking max_tokens=$mt" | tee -a "$RUN_DIR/sweep.log"
 
   for ((r=1; r<=ROUNDS; r++)); do
     printf -v rr "%02d" "$r"
@@ -102,7 +149,7 @@ for spec in "${CONFIGS[@]}"; do
 
     start_ts="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
     t0="$(date +%s)"
-    echo "RUN_START timestamp=$start_ts slug=$slug round=r$rr rc=NA ok=NA elapsed_s=0 model=$model thinking=$thinking json=$json_file log=$log_file" | tee -a "$RUN_DIR/sweep.log"
+    echo "RUN_START timestamp=$start_ts slug=$slug round=r$rr rc=NA ok=NA elapsed_s=0 model=$model thinking=$thinking max_tokens=$mt json=$json_file log=$log_file" | tee -a "$RUN_DIR/sweep.log"
 
     timeout "$PER_RUN_TIMEOUT" "$PY" mini-rl-env.py \
       --provider openai \
@@ -110,7 +157,7 @@ for spec in "${CONFIGS[@]}"; do
       --openai-base-url "$BASE_URL" \
       --task-variant natural \
       --thinking "$thinking" \
-      --max-tokens "$MAX_TOKENS" \
+      --max-tokens "$mt" \
       --max-turns "$MAX_TURNS" \
       --function-call-timeout-secs "$FC_TIMEOUT" \
       --log-json "$json_file" 2>&1 | tee "$log_file"
@@ -122,7 +169,7 @@ for spec in "${CONFIGS[@]}"; do
       ok="yes"
     fi
     exit_ts="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-    echo "RUN_EXIT timestamp=$exit_ts slug=$slug round=r$rr rc=$rc ok=$ok elapsed_s=$elapsed model=$model thinking=$thinking json=$json_file log=$log_file" | tee -a "$RUN_DIR/sweep.log"
+    echo "RUN_EXIT timestamp=$exit_ts slug=$slug round=r$rr rc=$rc ok=$ok elapsed_s=$elapsed model=$model thinking=$thinking max_tokens=$mt json=$json_file log=$log_file" | tee -a "$RUN_DIR/sweep.log"
 
     if [[ "$rc" -ne 0 ]]; then
       fail=1
