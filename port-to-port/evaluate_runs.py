@@ -24,9 +24,13 @@ from pathlib import Path
 from statistics import median
 from typing import Any, Optional
 
+from report_contract import (
+    MEGA_PORT_NAME,
+    MEGA_PORT_SECTOR,
+    is_coherent_finished_report as _is_coherent_finished_report,
+)
+
 DEFAULT_START_SECTOR = 3080
-MEGA_PORT_SECTOR = 1611
-MEGA_PORT_NAME = "MEGA SSS"
 RUN_SCHEMA_VERSION = "mini_rl_run.v3"
 SCORE_RUBRIC_VERSION = "port_to_port_primary_v1"
 
@@ -262,8 +266,11 @@ def _variant_display_label(row: dict[str, Any]) -> str:
     details: list[str] = []
 
     thinking = row.get("thinking")
-    if thinking not in {None, ""}:
+    effective_effort = row.get("effective_effort")
+    if effective_effort in {None, ""} and thinking not in {None, ""}:
         details.append(f"th={thinking}")
+    if effective_effort not in {None, ""}:
+        details.append(f"eff={effective_effort}")
 
     thinking_budget = row.get("thinking_budget")
     if thinking_budget is not None:
@@ -899,43 +906,6 @@ def _normalize_commodity(value: Any) -> Optional[str]:
     return None
 
 
-def _is_coherent_finished_report(message: str) -> bool:
-    lowered = message.lower()
-    recharge_like = (
-        "recharg" in lowered
-        or "refill" in lowered
-        or (
-            "warp" in lowered
-            and any(
-                phrase in lowered
-                for phrase in (
-                    "topped off",
-                    "topped up",
-                    "top off",
-                    "top up",
-                    "filled up",
-                    "fill up",
-                    "full warp",
-                    "restored",
-                )
-            )
-        )
-    )
-    return (
-        any(
-            token in lowered
-            for token in ("profit", "net change", "net result", "overall gain", "overall loss", "overall net")
-        )
-        and ("trade" in lowered or "traded" in lowered or "ports" in lowered)
-        and recharge_like
-        and (
-            "mega" in lowered
-            or "mega sss" in lowered
-            or re.search(rf"\b{MEGA_PORT_SECTOR}\b", lowered) is not None
-        )
-    )
-
-
 def _iter_turn_tool_call_contexts(
     turn: dict[str, Any],
     *,
@@ -1285,6 +1255,11 @@ def _derive_run_metrics(
     )
     thinking_budget = config.get("thinking_budget", summary.get("thinking_budget"))
     max_tokens = config.get("max_tokens", summary.get("max_tokens"))
+    effective_effort = config.get(
+        "effective_effort",
+        summary.get("effective_effort", metadata.get("effective_effort")),
+    )
+    round_id = config.get("round_id", summary.get("round_id", metadata.get("round_id")))
     openai_base_url = _normalize_openai_base_url(
         config.get("openai_base_url", summary.get("openai_base_url"))
     )
@@ -1901,8 +1876,13 @@ def _derive_run_metrics(
     else:
         terminal_class = "other_failure"
 
+    effort_identity = (
+        f"th={thinking}"
+        if effective_effort in {None, ""}
+        else f"eff={effective_effort}"
+    )
     group_key = (
-        f"{provider}|{model}|th={thinking}|tb={thinking_budget}|mt={max_tokens}|"
+        f"{provider}|{model}|{effort_identity}|tb={thinking_budget}|mt={max_tokens}|"
         f"base={openai_base_url or 'default'}|"
         f"prompt_id={leaderboard_prompt_id or 'unknown'}|"
         f"prompt_version={task_prompt_version or 'none'}|"
@@ -1930,6 +1910,8 @@ def _derive_run_metrics(
         "thinking": thinking,
         "thinking_budget": thinking_budget,
         "max_tokens": max_tokens,
+        "effective_effort": effective_effort,
+        "round_id": round_id,
         "openai_base_url": openai_base_url,
         "turns_executed": turns_executed,
         "elapsed_ms": elapsed_ms,

@@ -36,6 +36,8 @@ class LLMServiceConfig:
     run_in_parallel: Optional[bool] = None
     openai_base_url: Optional[str] = None
     openai_params: Optional[dict[str, Any]] = None
+    llm_request_timeout_secs: Optional[float] = None
+    llm_stream_idle_timeout_secs: Optional[float] = None
 
 
 def _is_google_thinking_level_model(model: str) -> bool:
@@ -63,9 +65,27 @@ def _normalize_openai_base_url(base_url: str) -> str:
     return f"{normalized}/v1"
 
 
+GPT56_RESPONSES_MODELS = frozenset(
+    {
+        "gpt-5.6-luna",
+        "gpt-5.6-sol",
+        "gpt-5.6-terra",
+    }
+)
+
+
+def _is_gpt56_responses_model(model: str, openai_base_url: Optional[str]) -> bool:
+    """Return the full routing decision for the exact hosted GPT-5.6 set."""
+
+    normalized = (model or "").strip().lower()
+    return openai_base_url is None and normalized in GPT56_RESPONSES_MODELS
+
+
 def _is_openai_responses_model(model: str, openai_base_url: Optional[str]) -> bool:
     normalized = model.strip().lower()
-    return openai_base_url is None and normalized.startswith("gpt-5.4")
+    return (
+        openai_base_url is None and normalized.startswith("gpt-5.4")
+    ) or _is_gpt56_responses_model(model, openai_base_url)
 
 
 def _merge_openai_extra(existing_extra: Any, *, thinking_budget: int) -> dict[str, Any]:
@@ -126,6 +146,8 @@ def create_llm_service(config: LLMServiceConfig) -> LLMService:
             function_call_timeout_secs=config.function_call_timeout_secs,
             openai_base_url=config.openai_base_url,
             openai_params=config.openai_params,
+            llm_request_timeout_secs=config.llm_request_timeout_secs,
+            llm_stream_idle_timeout_secs=config.llm_stream_idle_timeout_secs,
         )
     elif config.provider == LLMProvider.CEREBRAS:
         service = _create_cerebras_service(
@@ -252,8 +274,12 @@ def _create_openai_service(
     function_call_timeout_secs: Optional[float],
     openai_base_url: Optional[str],
     openai_params: Optional[dict[str, Any]],
+    llm_request_timeout_secs: Optional[float] = None,
+    llm_stream_idle_timeout_secs: Optional[float] = None,
 ) -> LLMService:
-    if _is_openai_responses_model(model, openai_base_url):
+    uses_responses = _is_openai_responses_model(model, openai_base_url)
+    is_gpt56_responses = _is_gpt56_responses_model(model, openai_base_url)
+    if uses_responses:
         from openai_responses_service import OpenAIResponsesLLMService as OpenAIServiceClass
     else:
         from pipecat.services.openai.llm import OpenAILLMService as OpenAIServiceClass
@@ -288,6 +314,12 @@ def _create_openai_service(
         kwargs["base_url"] = normalized_base_url
     if params is not None:
         kwargs["params"] = params
+    if is_gpt56_responses:
+        kwargs["benchmark_observability_enabled"] = True
+        if llm_request_timeout_secs is not None:
+            kwargs["request_timeout_secs"] = float(llm_request_timeout_secs)
+        if llm_stream_idle_timeout_secs is not None:
+            kwargs["stream_idle_timeout_secs"] = float(llm_stream_idle_timeout_secs)
 
     return OpenAIServiceClass(
         api_key=api_key,

@@ -62,7 +62,12 @@ REPO_ROOT = _find_repo_root(HARNESS_DIR)
 from llm_factory import (  # noqa: E402
     LLMProvider,
     LLMServiceConfig,
+    _is_gpt56_responses_model,
     create_llm_service,
+)
+from report_contract import (  # noqa: E402
+    MEGA_PORT_NAME,
+    is_coherent_finished_report as _is_coherent_finished_report,
 )
 
 from synthetic_world import (  # noqa: E402
@@ -151,10 +156,9 @@ TASK_PROMPTS: dict[str, dict[str, str]] = {
 }
 DEFAULT_BENCHMARK_TASK = TASK_PROMPTS[DEFAULT_TASK_VARIANT]["text"]
 
-MEGA_PORT_NAME = "MEGA SSS"
 RUN_SCHEMA_VERSION = "mini_rl_run.v3"
 REPLAY_STREAM_SCHEMA_VERSION = "mini_rl_replay_stream.v1"
-RUNNER_VERSION = "2026-02-25"
+RUNNER_VERSION = "2026-07-17-gpt56-aiewf-responses-v3"
 ASYNC_COMPLETION_TIMEOUT = 5.0
 MAX_NO_TOOL_NUDGES = 3
 NO_TOOL_WATCHDOG_DELAY = 5.0
@@ -165,7 +169,9 @@ BASETEN_RATE_LIMIT_BACKOFF_BASE_SECS = 2.0
 BASETEN_RATE_LIMIT_BACKOFF_FACTOR = 2.0
 BASETEN_RATE_LIMIT_BACKOFF_MAX_SECS = 30.0
 PIPELINE_GRACEFUL_SHUTDOWN_TIMEOUT = 3.0
+GPT56_PIPELINE_IDLE_GRACE_SECS = 30.0
 THINKING_LEVELS = ("none", "minimal", "low", "medium", "high", "xhigh")
+GPT56_REASONING_EFFORTS = ("none", "low", "medium", "high", "xhigh", "max")
 THINKING_BUDGET_MAP = {"minimal": 0, "low": 128, "medium": 512, "high": 2048}
 ANTHROPIC_HAIKU_THINKING_BUDGET_MAP = {"low": 1024, "medium": 2048, "high": 4096}
 GEMINI_25_FLASH_THINKING_BUDGET_MAP = {"low": 1024, "medium": 2048, "high": 4096}
@@ -180,6 +186,17 @@ CONTROL_TOKEN_REPLAY_PATTERNS = (
 
 def _iso_utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _atomic_write_json(path: Path, payload: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    try:
+        temp.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        os.replace(temp, path)
+    finally:
+        with contextlib.suppress(FileNotFoundError):
+            temp.unlink()
 
 
 def _sha256_text(text: str) -> str:
@@ -964,12 +981,101 @@ def _parse_optional_nonnegative_int(raw: Optional[str], *, label: str) -> Option
     return value
 
 
-def _validate_generation_controls(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
-    model_lower = str(args.model).strip().lower()
-    thinking_budget = args.thinking_budget
-    openai_no_budget_thinking_toggle = bool(getattr(args, "openai_no_budget_thinking_toggle", False))
+def _resolve_gpt56_effective_effort(
+    *,
+    model: str,
+    openai_base_url: Optional[str],
+    thinking: str,
+    reasoning_effort: Optional[str],
+) -> Optional[str]:
+    if not _is_gpt56_responses_model(model, openai_base_url):
+        return None
+    if reasoning_effort is not None:
+        return reasoning_effort
+    normalized = _normalize_benchmark_thinking_level(thinking)
+    return "low" if normalized == "minimal" else normalized
 
-    if args.max_tokens is not None and args.provider != "openai":
+
+def _resolve_gpt56_pipeline_idle_timeout_secs(args: argparse.Namespace) -> Optional[float]:
+    if not _is_gpt56_responses_model(
+        str(getattr(args, "model", "")), getattr(args, "openai_base_url", None)
+    ):
+        return None
+    request_timeout = float(getattr(args, "llm_request_timeout_secs", 900.0) or 900.0)
+    stream_idle_timeout = float(
+        getattr(args, "llm_stream_idle_timeout_secs", 600.0) or 600.0
+    )
+    # The pipeline watchdog observes emitted Pipecat frames, not raw Responses
+    # events. It must remain a fallback after both provider-I/O controls so a
+    # long silent reasoning turn cannot cancel the pipeline while the service
+    # is still blocked inside the stream iterator.
+    return max(request_timeout, stream_idle_timeout) + GPT56_PIPELINE_IDLE_GRACE_SECS
+
+
+def _validate_generation_controls(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
+    model = str(getattr(args, "model", ""))
+    provider = getattr(args, "provider", None)
+    openai_base_url = getattr(args, "openai_base_url", None)
+    model_lower = model.strip().lower()
+    thinking_budget = getattr(args, "thinking_budget", None)
+    openai_no_budget_thinking_toggle = bool(getattr(args, "openai_no_budget_thinking_toggle", False))
+    reasoning_effort = getattr(args, "reasoning_effort", None)
+    round_id = getattr(args, "round_id", None)
+    request_timeout = getattr(args, "llm_request_timeout_secs", None)
+    stream_idle_timeout = getattr(args, "llm_stream_idle_timeout_secs", None)
+
+    for label, value in (
+        ("--llm-request-timeout-secs", request_timeout),
+        ("--llm-stream-idle-timeout-secs", stream_idle_timeout),
+    ):
+        if value is not None and value <= 0:
+            parser.error(f"{label} must be greater than zero.")
+    if round_id is not None and not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}", round_id):
+        parser.error(
+            "--round-id must be 1-64 characters using only letters, digits, '.', '_', or '-'."
+        )
+
+    if reasoning_effort is not None:
+        if provider != "openai" or not _is_gpt56_responses_model(model, openai_base_url):
+            parser.error(
+                "--reasoning-effort is valid only for provider openai, an exact hosted "
+                "GPT-5.6 model (luna/sol/terra), and the default OpenAI base URL."
+            )
+        if reasoning_effort not in GPT56_REASONING_EFFORTS:
+            parser.error(
+                "--reasoning-effort must be one of: " + ", ".join(GPT56_REASONING_EFFORTS)
+            )
+        if thinking_budget is not None:
+            parser.error("GPT-5.6 --reasoning-effort cannot be combined with --thinking-budget.")
+        native_effort = _resolve_gpt56_effective_effort(
+            model=model,
+            openai_base_url=openai_base_url,
+            thinking=getattr(args, "thinking", "high"),
+            reasoning_effort=None,
+        )
+        if reasoning_effort == native_effort:
+            parser.error(
+                "--reasoning-effort duplicates the native --thinking mapping; "
+                "omit the redundant override."
+            )
+
+    if _is_gpt56_responses_model(model, openai_base_url):
+        openai_params = getattr(args, "openai_params", None)
+        if isinstance(openai_params, dict):
+            extra = openai_params.get("extra")
+            if "service_tier" in openai_params or (
+                isinstance(extra, dict) and "service_tier" in extra
+            ):
+                parser.error(
+                    "GPT-5.6 benchmark requests must omit service_tier; Priority is not allowed."
+                )
+    elif request_timeout is not None or stream_idle_timeout is not None:
+        parser.error(
+            "--llm-request-timeout-secs and --llm-stream-idle-timeout-secs are valid "
+            "only for the exact hosted GPT-5.6 Responses route."
+        )
+
+    if getattr(args, "max_tokens", None) is not None and provider != "openai":
         parser.error("--max-tokens is only supported when --provider openai is selected.")
 
     if args.provider == "cerebras":
@@ -1139,6 +1245,7 @@ def _apply_benchmark_thinking_mode(
     thinking_budget: Optional[int],
     openai_base_url: Optional[str],
     openai_no_budget_thinking_toggle: bool = False,
+    reasoning_effort: Optional[str] = None,
 ) -> str:
     model_lower = model.strip().lower()
     normalized_thinking = _normalize_benchmark_thinking_level(thinking)
@@ -1182,6 +1289,18 @@ def _apply_benchmark_thinking_mode(
         return "cerebras:kimi thinking (default) T=1.0"
 
     if provider == LLMProvider.OPENAI:
+        if _is_gpt56_responses_model(model, openai_base_url):
+            effort = _resolve_gpt56_effective_effort(
+                model=model,
+                openai_base_url=openai_base_url,
+                thinking=normalized_thinking,
+                reasoning_effort=reasoning_effort,
+            )
+            assert effort is not None
+            extra["reasoning"] = {"effort": effort}
+            extra["store"] = False
+            return f"openai:gpt-5.6 responses reasoning.effort={effort} store=false"
+
         if model_lower.startswith("gpt-5.4"):
             effort = "none" if thinking == "none" else ("low" if thinking == "minimal" else thinking)
             extra["reasoning"] = {"effort": effort}
@@ -1460,43 +1579,6 @@ def _event_xml_message(event_name: str, response_data: Any) -> dict[str, str]:
         "role": "user",
         "content": f"<event name={event_name}>\n{serialize_response_data(response_data)}\n</event>",
     }
-
-
-def _is_coherent_finished_report(message: str) -> bool:
-    lowered = message.lower()
-    recharge_like = (
-        "recharg" in lowered
-        or "refill" in lowered
-        or (
-            "warp" in lowered
-            and any(
-                phrase in lowered
-                for phrase in (
-                    "topped off",
-                    "topped up",
-                    "top off",
-                    "top up",
-                    "filled up",
-                    "fill up",
-                    "full warp",
-                    "restored",
-                )
-            )
-        )
-    )
-    return (
-        any(
-            token in lowered
-            for token in ("profit", "net change", "net result", "overall gain", "overall loss", "overall net")
-        )
-        and ("trade" in lowered or "traded" in lowered or "ports" in lowered)
-        and recharge_like
-        and (
-            "mega" in lowered
-            or MEGA_PORT_NAME.lower() in lowered
-            or re.search(rf"\b{MEGA_PORT_SECTOR}\b", lowered) is not None
-        )
-    )
 
 
 def _event_payload_as_dict(event: dict[str, Any]) -> dict[str, Any]:
@@ -1877,6 +1959,7 @@ class _BenchmarkResponseTracker(FrameProcessor):
             and getattr(self._runtime, "last_error_event", None) is None
             and not getattr(self._runtime, "rate_limit_exhausted_pending", False)
             and not getattr(self._runtime, "api_error_pending", False)
+            and not getattr(self._runtime, "responses_incomplete_pending", False)
         )
 
     async def process_frame(self, frame: Any, direction: FrameDirection):
@@ -1991,10 +2074,19 @@ class _BenchmarkResponseTracker(FrameProcessor):
             event = getattr(self._runtime, "api_error_event", None)
             if isinstance(event, dict):
                 api_error_event = dict(event)
+        responses_incomplete = bool(
+            getattr(self._runtime, "responses_incomplete_pending", False)
+        )
+        responses_incomplete_event = None
+        if responses_incomplete:
+            event = getattr(self._runtime, "responses_incomplete_event", None)
+            if isinstance(event, dict):
+                responses_incomplete_event = dict(event)
 
         if (
             not rate_limit_exhausted
             and not api_error_pending
+            and not responses_incomplete
             and self._matches_transport_empty_response_signature()
         ):
             self._runtime.empty_response_count = getattr(self._runtime, "empty_response_count", 0) + 1
@@ -2034,6 +2126,8 @@ class _BenchmarkResponseTracker(FrameProcessor):
             failure_class = "rate_limit_exhausted"
         elif api_error_pending:
             failure_class = "inference_failure"
+        elif responses_incomplete:
+            failure_class = "response_incomplete"
         elif not self._has_function_calls:
             failure_class = "no_tool_call"
             self._runtime.no_tool_call_count += 1
@@ -2076,6 +2170,15 @@ class _BenchmarkResponseTracker(FrameProcessor):
             if api_error_event is not None:
                 turn_log["api_error_event"] = api_error_event
                 turn_log["error_event"] = api_error_event
+        if responses_incomplete:
+            turn_log["response_incomplete"] = True
+            if responses_incomplete_event is not None:
+                turn_log["response_incomplete_event"] = responses_incomplete_event
+                turn_log["error_event"] = responses_incomplete_event
+        claim_trace_index = getattr(self._runtime, "claim_responses_trace_index", None)
+        responses_trace_index = claim_trace_index() if callable(claim_trace_index) else None
+        if responses_trace_index is not None:
+            turn_log["responses_trace_index"] = responses_trace_index
         raw_text_raw = self._response_text_raw.strip()
         if raw_text_raw and raw_text_raw != turn_log["raw_response_text"]:
             turn_log["raw_response_text_raw"] = raw_text_raw
@@ -2102,6 +2205,9 @@ class _BenchmarkResponseTracker(FrameProcessor):
         if api_error_pending:
             self._runtime.api_error_pending = False
             self._runtime.api_error_event = None
+        if responses_incomplete:
+            self._runtime.responses_incomplete_pending = False
+            self._runtime.responses_incomplete_event = None
         if self._transport_empty_retries > 0 and not transport_empty_exhausted:
             self._runtime.empty_response_retry_success_count = (
                 getattr(self._runtime, "empty_response_retry_success_count", 0) + 1
@@ -2126,8 +2232,15 @@ class _BenchmarkResponseTracker(FrameProcessor):
         if api_error_pending and not self._runtime.stop_requested:
             self._runtime.request_stop("inference_error")
 
+        if responses_incomplete and not self._runtime.stop_requested:
+            self._runtime.request_stop("response_incomplete")
+
         if self._runtime.turn_count >= self._runtime.max_turns and not self._runtime.stop_requested:
             self._runtime.request_stop("max_turns_exhausted", wait_for_pending_async=True)
+
+        write_partial_checkpoint = getattr(self._runtime, "write_partial_checkpoint", None)
+        if callable(write_partial_checkpoint):
+            write_partial_checkpoint(reason="turn_complete")
 
         self._response_started = False
 
@@ -2178,6 +2291,10 @@ class _BenchmarkRuntime:
         self.rate_limit_exhausted_event: Optional[dict[str, Any]] = None
         self.api_error_pending = False
         self.api_error_event: Optional[dict[str, Any]] = None
+        self.responses_incomplete_pending = False
+        self.responses_incomplete_event: Optional[dict[str, Any]] = None
+        self.responses_traces: list[dict[str, Any]] = []
+        self._pending_responses_trace_indexes: deque[int] = deque()
 
         self.run_id = str(uuid.uuid4())
         self.started_at_utc = _iso_utc_now()
@@ -2211,8 +2328,69 @@ class _BenchmarkRuntime:
         self._async_dependency_waiters: list[asyncio.Future[bool]] = []
         self._initialize_replay_stream()
 
+    @staticmethod
+    def _responses_trace_is_rate_limit(trace: dict[str, Any]) -> bool:
+        error = trace.get("error") if isinstance(trace.get("error"), dict) else {}
+        return error.get("status_code") == 429 or error.get("code") in {
+            "rate_limit_exceeded",
+            "rate_limit_error",
+        }
+
+    def record_responses_trace(self, trace: dict[str, Any]) -> None:
+        sanitized = _to_json_compatible(trace)
+        if not isinstance(sanitized, dict):
+            return
+        self.responses_traces.append(sanitized)
+        trace_index = sanitized.get("trace_index")
+        if isinstance(trace_index, int):
+            self._pending_responses_trace_indexes.append(trace_index)
+
+        status = sanitized.get("response_status")
+        if status == "completed":
+            return
+        if status == "incomplete":
+            self.responses_incomplete_pending = True
+            self.responses_incomplete_event = {
+                "endpoint": "inference",
+                "error_class": "response_incomplete",
+                "source": {"type": "openai_responses_terminal"},
+                "synthesized": False,
+                "response_id": sanitized.get("response_id"),
+                "request_id": sanitized.get("request_id"),
+                "reason": sanitized.get("incomplete_reason"),
+                "trace_index": trace_index,
+            }
+            return
+
+        error = sanitized.get("error") if isinstance(sanitized.get("error"), dict) else {}
+        event = {
+            "endpoint": "inference",
+            "error_class": "responses_error",
+            "source": {"type": "openai_responses_terminal"},
+            "synthesized": False,
+            "status": error.get("status_code"),
+            "code": error.get("code"),
+            "exception_type": error.get("type"),
+            "message": error.get("message"),
+            "request_id": sanitized.get("request_id"),
+            "response_id": sanitized.get("response_id"),
+            "trace_index": trace_index,
+        }
+        if self._responses_trace_is_rate_limit(sanitized):
+            self.rate_limit_exhausted_pending = True
+            self.rate_limit_exhausted_event = event
+        else:
+            self.api_error_pending = True
+            self.api_error_event = event
+
+    def claim_responses_trace_index(self) -> Optional[int]:
+        pending = getattr(self, "_pending_responses_trace_indexes", None)
+        if not pending:
+            return None
+        return pending.popleft()
+
     def build_config_snapshot(self) -> dict[str, Any]:
-        return {
+        snapshot = {
             "provider": self.args.provider,
             "model": self.args.model,
             "openai_base_url": self.args.openai_base_url,
@@ -2223,15 +2401,28 @@ class _BenchmarkRuntime:
             "max_tokens": self.args.max_tokens,
             "max_turns": self.args.max_turns,
             "function_call_timeout_secs": self.args.function_call_timeout_secs,
+            "llm_request_timeout_secs": getattr(self.args, "llm_request_timeout_secs", None),
+            "llm_stream_idle_timeout_secs": getattr(
+                self.args, "llm_stream_idle_timeout_secs", None
+            ),
+            "pipeline_idle_timeout_secs": getattr(
+                self.args, "pipeline_idle_timeout_secs", None
+            ),
             "capture_inference_inputs": self.args.capture_inference_inputs,
             "task": self.args.task,
             "task_variant": self.args.task_variant,
             "task_prompt_version": self.args.task_prompt_version,
             "leaderboard_prompt_id": self.leaderboard_prompt_id,
         }
+        if getattr(self.args, "round_id", None) is not None:
+            snapshot["round_id"] = self.args.round_id
+        if getattr(self.args, "effective_effort", None) is not None:
+            snapshot["reasoning_effort"] = getattr(self.args, "reasoning_effort", None)
+            snapshot["effective_effort"] = self.args.effective_effort
+        return snapshot
 
     def build_metadata_snapshot(self, *, ended_at_utc: Optional[str] = None) -> dict[str, Any]:
-        return {
+        snapshot = {
             "run_id": self.run_id,
             "runner_version": RUNNER_VERSION,
             "started_at_utc": self.started_at_utc,
@@ -2247,7 +2438,21 @@ class _BenchmarkRuntime:
             "initial_state": self.initial_state_snapshot,
             "run_file": self.args.log_json,
             "replay_stream_jsonl": self.args.replay_stream_jsonl,
+            "llm_request_timeout_secs": getattr(self.args, "llm_request_timeout_secs", None),
+            "llm_stream_idle_timeout_secs": getattr(
+                self.args, "llm_stream_idle_timeout_secs", None
+            ),
+            "pipeline_idle_timeout_secs": getattr(
+                self.args, "pipeline_idle_timeout_secs", None
+            ),
         }
+        if getattr(self.args, "round_id", None) is not None:
+            snapshot["round_id"] = self.args.round_id
+        if getattr(self.args, "effective_effort", None) is not None:
+            snapshot["thinking"] = self.args.thinking
+            snapshot["reasoning_effort"] = getattr(self.args, "reasoning_effort", None)
+            snapshot["effective_effort"] = self.args.effective_effort
+        return snapshot
 
     def build_termination_snapshot(self, *, elapsed_ms: Any) -> dict[str, Any]:
         return {
@@ -2315,6 +2520,11 @@ class _BenchmarkRuntime:
             ]
         )
 
+        pipeline_task_kwargs: dict[str, Any] = {}
+        pipeline_idle_timeout = getattr(self.args, "pipeline_idle_timeout_secs", None)
+        if pipeline_idle_timeout is not None:
+            pipeline_task_kwargs["idle_timeout_secs"] = float(pipeline_idle_timeout)
+
         pipeline_task = PipelineTask(
             pipeline,
             params=PipelineParams(
@@ -2327,7 +2537,24 @@ class _BenchmarkRuntime:
                 FunctionCallsStartedFrame,
                 LLMFullResponseStartFrame,
             ),
+            **pipeline_task_kwargs,
         )
+
+        if pipeline_idle_timeout is not None:
+
+            @pipeline_task.event_handler("on_idle_timeout")
+            async def on_idle_timeout(_task: PipelineTask) -> None:
+                if not self.stop_requested:
+                    self.last_error_event = {
+                        "endpoint": "inference",
+                        "error_class": "pipeline_idle_timeout",
+                        "source": {"type": "pipeline_watchdog"},
+                        "synthesized": True,
+                        "status": 504,
+                    }
+                    self.request_stop("inference_error")
+                self.write_partial_checkpoint(reason="pipeline_idle_timeout")
+
         pipeline_runner = PipelineRunner(handle_sigint=False, handle_sigterm=False)
         runner_task = asyncio.create_task(pipeline_runner.run(pipeline_task))
 
@@ -2861,7 +3088,19 @@ class _BenchmarkRuntime:
             "thinking": self.args.thinking,
             "thinking_budget": self.args.thinking_budget,
             "max_tokens": self.args.max_tokens,
+            "llm_request_timeout_secs": getattr(self.args, "llm_request_timeout_secs", None),
+            "llm_stream_idle_timeout_secs": getattr(
+                self.args, "llm_stream_idle_timeout_secs", None
+            ),
+            "pipeline_idle_timeout_secs": getattr(
+                self.args, "pipeline_idle_timeout_secs", None
+            ),
         }
+        if getattr(self.args, "round_id", None) is not None:
+            summary["round_id"] = self.args.round_id
+        if getattr(self.args, "effective_effort", None) is not None:
+            summary["reasoning_effort"] = getattr(self.args, "reasoning_effort", None)
+            summary["effective_effort"] = self.args.effective_effort
         if getattr(self, "transport_empty_retry_enabled", False):
             summary["empty_response_count"] = getattr(self, "empty_response_count", 0)
             summary["empty_response_retry_success_count"] = getattr(
@@ -2878,12 +3117,19 @@ class _BenchmarkRuntime:
             )
         return summary
 
-    def build_output_payload(self) -> dict[str, Any]:
+    def build_output_payload(
+        self,
+        *,
+        partial: bool = False,
+        checkpoint_reason: Optional[str] = None,
+    ) -> dict[str, Any]:
         summary = self.build_summary()
-        ended_at_utc = _iso_utc_now()
+        ended_at_utc = None if partial else _iso_utc_now()
         config_snapshot = self.build_config_snapshot()
         metadata = self.build_metadata_snapshot(ended_at_utc=ended_at_utc)
         termination = self.build_termination_snapshot(elapsed_ms=summary.get("elapsed_ms"))
+        if partial:
+            termination["reason"] = "checkpoint_partial"
         payload = {
             "schema_version": RUN_SCHEMA_VERSION,
             "metadata": metadata,
@@ -2892,9 +3138,36 @@ class _BenchmarkRuntime:
             "summary": summary,
             "turns": self.turn_logs,
         }
-        if self.args.capture_inference_inputs:
+        if self.args.capture_inference_inputs and not partial:
             payload["inference_inputs"] = self.inference_inputs
+        if self.responses_traces:
+            payload["responses_traces"] = list(self.responses_traces)
+        if partial:
+            payload["checkpoint"] = {
+                "partial": True,
+                "reason": checkpoint_reason or "inference_in_progress",
+                "written_at_utc": _iso_utc_now(),
+                "omitted_fields": ["inference_inputs"]
+                if self.args.capture_inference_inputs
+                else [],
+            }
         return payload
+
+    def write_partial_checkpoint(self, *, reason: str) -> None:
+        log_json = getattr(self.args, "log_json", None)
+        if not log_json or getattr(
+            self.args, "pipeline_idle_timeout_secs", None
+        ) is None:
+            return
+        payload = self.build_output_payload(partial=True, checkpoint_reason=reason)
+        _atomic_write_json(Path(log_json), payload)
+        logger.info(
+            "CHECKPOINT {} reason={} turns={} traces={}",
+            log_json,
+            reason,
+            len(self.turn_logs),
+            len(self.responses_traces),
+        )
 
 
 async def _run_benchmark(args: argparse.Namespace) -> int:
@@ -2905,6 +3178,20 @@ async def _run_benchmark(args: argparse.Namespace) -> int:
 
     assert_catalog_parity()
 
+    if _is_gpt56_responses_model(args.model, args.openai_base_url):
+        if getattr(args, "llm_request_timeout_secs", None) is None:
+            args.llm_request_timeout_secs = 900.0
+        if getattr(args, "llm_stream_idle_timeout_secs", None) is None:
+            args.llm_stream_idle_timeout_secs = 600.0
+    args.pipeline_idle_timeout_secs = _resolve_gpt56_pipeline_idle_timeout_secs(args)
+
+    args.effective_effort = _resolve_gpt56_effective_effort(
+        model=args.model,
+        openai_base_url=args.openai_base_url,
+        thinking=args.thinking,
+        reasoning_effort=getattr(args, "reasoning_effort", None),
+    )
+
     config = LLMServiceConfig(
         provider=provider,
         model=args.model,
@@ -2914,6 +3201,8 @@ async def _run_benchmark(args: argparse.Namespace) -> int:
         run_in_parallel=False,
         openai_base_url=args.openai_base_url,
         openai_params=args.openai_params,
+        llm_request_timeout_secs=getattr(args, "llm_request_timeout_secs", None),
+        llm_stream_idle_timeout_secs=getattr(args, "llm_stream_idle_timeout_secs", None),
     )
     llm_service = create_llm_service(config)
     tool_call_streaming_workaround = _apply_openai_non_streaming_tool_call_workaround(
@@ -2930,6 +3219,7 @@ async def _run_benchmark(args: argparse.Namespace) -> int:
         thinking_budget=args.thinking_budget,
         openai_base_url=args.openai_base_url,
         openai_no_budget_thinking_toggle=getattr(args, "openai_no_budget_thinking_toggle", False),
+        reasoning_effort=getattr(args, "reasoning_effort", None),
     )
 
     harness_dir = Path(__file__).resolve().parent
@@ -2952,6 +3242,9 @@ async def _run_benchmark(args: argparse.Namespace) -> int:
         system_instruction=system_instruction,
         system_instruction_path=system_instruction_path,
     )
+    set_outcome_callback = getattr(llm_service, "set_benchmark_outcome_callback", None)
+    if callable(set_outcome_callback):
+        set_outcome_callback(runtime.record_responses_trace)
     rate_limit_retry_policy = _apply_baseten_rate_limit_retry_wrapper(
         llm_service=llm_service,
         provider=provider,
@@ -2960,11 +3253,14 @@ async def _run_benchmark(args: argparse.Namespace) -> int:
     )
 
     logger.info(
-        "HARNESS_CONFIG provider={} model={} openai_base_url={} thinking={} thinking_budget={} openai_no_budget_thinking_toggle={} thinking_policy={} tool_call_workaround={} rate_limit_retry={} max_tokens={} max_turns={}",
+        "HARNESS_CONFIG provider={} model={} openai_base_url={} thinking={} reasoning_effort={} effective_effort={} round_id={} thinking_budget={} openai_no_budget_thinking_toggle={} thinking_policy={} tool_call_workaround={} rate_limit_retry={} max_tokens={} max_turns={} llm_request_timeout_secs={} llm_stream_idle_timeout_secs={} pipeline_idle_timeout_secs={}",
         provider.value,
         args.model,
         args.openai_base_url or "(default)",
         args.thinking,
+        getattr(args, "reasoning_effort", None) or "(mapped)",
+        getattr(args, "effective_effort", None) or "(n/a)",
+        getattr(args, "round_id", None) or "(none)",
         args.thinking_budget if args.thinking_budget is not None else "(mapped)",
         getattr(args, "openai_no_budget_thinking_toggle", False),
         thinking_policy,
@@ -2972,6 +3268,9 @@ async def _run_benchmark(args: argparse.Namespace) -> int:
         rate_limit_retry_policy,
         args.max_tokens,
         args.max_turns,
+        getattr(args, "llm_request_timeout_secs", None),
+        getattr(args, "llm_stream_idle_timeout_secs", None),
+        getattr(args, "pipeline_idle_timeout_secs", None),
     )
 
     pipeline_task: Optional[PipelineTask] = None
@@ -3015,6 +3314,7 @@ async def _run_benchmark(args: argparse.Namespace) -> int:
                 runtime.turn_count += 1
                 runtime._append_replay_stream_event("turn", turn=runtime.turn_logs[-1])
                 runtime.request_stop("inference_failure")
+                runtime.write_partial_checkpoint(reason="pipeline_failure")
 
         runner_task.add_done_callback(_runner_done)
 
@@ -3050,6 +3350,7 @@ async def _run_benchmark(args: argparse.Namespace) -> int:
     summary = runtime.build_summary()
 
     print(f"SUCCESS={summary['success']}")
+    print(f"TERMINAL_REASON={summary['terminal_reason']}")
     print(f"BAD_ACTIONS_COUNT={summary['bad_actions_count']}")
     print(f"NO_TOOL_CALL_COUNT={summary['no_tool_call_count']}")
     print(f"FINAL_SECTOR={summary['final_sector']}")
@@ -3071,7 +3372,7 @@ async def _run_benchmark(args: argparse.Namespace) -> int:
             summary=payload.get("summary"),
             termination=payload.get("termination"),
         )
-        Path(args.log_json).write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        _atomic_write_json(Path(args.log_json), payload)
         runtime._append_replay_stream_event("output_written", path=args.log_json)
         logger.info("WROTE {}", args.log_json)
     else:
@@ -3148,6 +3449,20 @@ def _build_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
+        "--reasoning-effort",
+        default=None,
+        choices=list(GPT56_REASONING_EFFORTS),
+        help=(
+            "Exact GPT-5.6 Responses reasoning effort override. Valid only for hosted "
+            "gpt-5.6-luna/sol/terra; distinct from the requested --thinking label."
+        ),
+    )
+    parser.add_argument(
+        "--round-id",
+        default=None,
+        help="Optional deterministic round identity (the GPT-5.6 runner uses r01...r25).",
+    )
+    parser.add_argument(
         "--max-tokens",
         type=int,
         default=None,
@@ -3164,6 +3479,18 @@ def _build_parser() -> argparse.ArgumentParser:
         type=float,
         default=float(os.getenv("TASK_LLM_FUNCTION_CALL_TIMEOUT_SECS", "20")),
         help="LLM function call timeout passed to service config",
+    )
+    parser.add_argument(
+        "--llm-request-timeout-secs",
+        type=float,
+        default=None,
+        help="Total wall timeout for one hosted GPT-5.6 Responses request (default: 900).",
+    )
+    parser.add_argument(
+        "--llm-stream-idle-timeout-secs",
+        type=float,
+        default=None,
+        help="Maximum idle wait between GPT-5.6 Responses events (default: 600).",
     )
     parser.add_argument(
         "--log-json",

@@ -821,6 +821,18 @@ class EvaluateRunsRegressionTests(unittest.TestCase):
 
         self.assertTrue(evaluate_runs._is_coherent_finished_report(message))
 
+    def test_coherent_report_accepts_net_on_hand_credit_change(self) -> None:
+        message = (
+            "Used MEGA SSS and recharged 33 warp for 66 credits. Traded at 4 distinct ports. "
+            "Net on-hand credits increased from 16,564 to 18,568: +2,004 overall."
+        )
+
+        self.assertTrue(evaluate_runs._is_coherent_finished_report(message))
+        self.assertIs(
+            evaluate_runs._is_coherent_finished_report,
+            mini_rl_env._is_coherent_finished_report,
+        )
+
     def test_report_element_verdicts_require_recharge_context_for_recharge_cost(self) -> None:
         verdicts = evaluate_runs._compute_report_element_verdicts(
             finished_message=(
@@ -939,6 +951,14 @@ class MiniRLEnvRegressionTests(unittest.TestCase):
     def test_coherent_report_accepts_semantic_recharge_wording(self) -> None:
         message = (
             "Used MEGA SSS, topped off 33 warp for 66 credits, visited 3 ports, overall gain 120 credits."
+        )
+
+        self.assertTrue(mini_rl_env._is_coherent_finished_report(message))
+
+    def test_run_coherent_report_accepts_net_on_hand_credit_change(self) -> None:
+        message = (
+            "Used MEGA SSS and recharged 33 warp for 66 credits. Traded at 4 distinct ports. "
+            "Net on-hand credits increased from 16,564 to 18,568: +2,004 overall."
         )
 
         self.assertTrue(mini_rl_env._is_coherent_finished_report(message))
@@ -2937,7 +2957,7 @@ class LlmFactoryRegressionTests(unittest.TestCase):
         self.assertEqual(params.kwargs["temperature"], 0.2)
 
 class OpenAIResponsesServiceRegressionTests(unittest.TestCase):
-    def test_assistant_history_uses_input_text_when_replayed(self) -> None:
+    def test_unremembered_assistant_history_uses_easy_input_fallback(self) -> None:
         service = object.__new__(openai_responses_service.OpenAIResponsesLLMService)
 
         items = service._message_to_responses_items(

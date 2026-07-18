@@ -1,0 +1,66 @@
+{
+  "schema_version": "gpt56_authorization_ledger.v1",
+  "as_of_utc": "2026-07-17T15:00:00+00:00",
+  "accounting_basis": "Conservative authorization accounting through production-core-v1. Both production-v1 attempts retain their full 55,000,000-token and dollar reservations because each final JSON contains a replay_error trace with null usage. The 20,328 tokens returned by the three completed provider requests are recorded separately as known returned usage. No prior charge is rebased to measured usage; this is not a statement of billed spend.",
+  "entries": [
+    {
+      "entry_id": "v1-through-v5",
+      "accounted_tokens": 62875403,
+      "estimated_usd": 176.520130225,
+      "wall_secs": 7872.506,
+      "physical_requests": 223,
+      "known_returned_tokens": 2548798,
+      "evidence": [
+        {
+          "path": "proj-2026-07-16-1632/step4-authorization-ledger-production-core-v1.json",
+          "sha256": "8403fed5d00f60d529e93f090882ba785dd435877f96cb6f012546880eeea1ad"
+        }
+      ]
+    },
+    {
+      "entry_id": "production-core-v1-failed-closed",
+      "accounted_tokens": 110000000,
+      "estimated_usd": 307.5,
+      "wall_secs": 12.0,
+      "physical_requests": 3,
+      "known_returned_tokens": 20328,
+      "evidence": [
+        {
+          "path": "proj-2026-07-16-1632/step4-core-production-v1-runner-state.json",
+          "sha256": "997132baae971e1c7140ce8d185faeaa94a249d2b6006b04eea76297478be76f"
+        },
+        {
+          "path": "proj-2026-07-16-1632/core-production-v1-manifest.json",
+          "sha256": "39f214decb48ed068e4583871bbd2eff74eab3d9a24c24e6e0071e48153e1b63"
+        },
+        {
+          "path": "proj-2026-07-16-1632/step4-core-production-worker-v1.log",
+          "sha256": "02573cf9c3e4cdcac865933e4112a0fb7189e573fcfa999060820bc3db3c4431"
+        },
+        {
+          "path": "runs/gpt56-luna-low-r01-a001.json",
+          "sha256": "4e12b1ec71fbe9ef6cb4223d50cc03e7b229fca0243effea27346c53436fe871"
+        },
+        {
+          "path": "runs/gpt56-luna-low-r01-a001.log",
+          "sha256": "bebeecf2d1dd66a5d2f37f763b3b19a144eace529220f482d32bacbba87a7b35"
+        },
+        {
+          "path": "runs/gpt56-luna-low-r01-a002.json",
+          "sha256": "de6e60acc60d927b4d77099b7ffa593f4567d5c0d9246b9d85976defb0b99590"
+        },
+        {
+          "path": "runs/gpt56-luna-low-r01-a002.log",
+          "sha256": "8f96449acf3dc38c42565d73eca33c339a7a0409478ed1216e34c2af7e4e4953"
+        }
+      ]
+    }
+  ],
+  "cumulative": {
+    "accounted_tokens": 172875403,
+    "estimated_usd": 484.020130225,
+    "wall_secs": 7884.506,
+    "physical_requests": 226,
+    "known_returned_tokens": 2569126
+  }
+}
