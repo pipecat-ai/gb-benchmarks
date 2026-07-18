@@ -1141,7 +1141,7 @@ class AnthropicReportJudge:
         retry_text, retry_err = self._request_text(
             system_prompt=system_prompt,
             user_prompt=retry_prompt,
-            max_tokens=8,
+            max_tokens=1024,
         )
         if retry_err is not None:
             return None, retry_err

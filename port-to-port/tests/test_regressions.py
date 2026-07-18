@@ -890,6 +890,40 @@ class EvaluateRunsRegressionTests(unittest.TestCase):
         self.assertIn("Net change: -66 credits (warp recharge cost only)", prompt)
         self.assertIn("'for 66 credits'", prompt)
 
+    def test_report_judge_retry_allows_room_for_verdict_after_analysis(self) -> None:
+        judge = evaluate_runs.AnthropicReportJudge(
+            evaluate_runs.ReportJudgeConfig(
+                model="dummy",
+                api_key="dummy",
+                timeout_secs=1.0,
+            )
+        )
+
+        with mock.patch.object(
+            judge,
+            "_request_text",
+            side_effect=[
+                ("I need to check the requirements first.", None),
+                ("After checking each requirement, FAIL", None),
+            ],
+        ) as request_mock:
+            verdict, reason = judge.judge(
+                finished_message="Used MEGA SSS but reported the wrong profit.",
+                expected_finish_sector=3080,
+                report_truth={
+                    "mega_port_sector": 1611,
+                    "recharge_units": 33,
+                    "recharge_cost": 66,
+                    "trade_port_count": 1,
+                    "total_profit_credits": 24,
+                },
+            )
+
+        self.assertFalse(verdict)
+        self.assertEqual(reason, "FAIL(retry)")
+        self.assertEqual(request_mock.call_count, 2)
+        self.assertEqual(request_mock.call_args_list[1].kwargs["max_tokens"], 1024)
+
 
 class MiniRLEnvRegressionTests(unittest.TestCase):
     def _bind_capture_runtime_methods(

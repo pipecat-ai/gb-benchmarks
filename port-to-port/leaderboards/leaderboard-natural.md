@@ -4,8 +4,8 @@
 - Prompt hash: `68d2c77be6548b77cd2e65ca0489edb2080c4a652feeb11f5ef5317f91e4b1f0`
 - Score rubric version: `port_to_port_primary_v1`
 - Aggregation: Primary=median, Task Complete=rate, Trade/Path/Tools/Report=mean
-- Source runs: `runs/leaderboard-natural-v1-input/*.json`
-- Enriched scores: `runs/leaderboard-natural-v1-refresh-20260718.jsonl`
+- Source runs: `runs/leaderboard-natural-v2-linked-input/*.json`
+- Enriched scores: `runs/leaderboard-natural-v2-linked-refresh-20260718.jsonl`
 - Sort: Primary /100 desc, Task Complete % desc, Total Time P50 (s) asc
 
 | Model | N | Primary /100 | Task Complete % | Trade /15 Avg | Path /15 Avg | Tools /15 Avg | Report /15 Avg | Turn P50 (ms) | Turn P90 (ms) | Total Time P50 (s) |
@@ -37,6 +37,7 @@
 | gpt-5.6-luna (eff=xhigh, mt=50000) | 25 | 88 | 96.0% | 6.8 | 12.9 | 14.1 | 14.0 | 1490.2 | 5967.5 | 125.40 |
 | gpt-5.6-luna (eff=max, mt=50000) | 25 | 88 | 84.0% | 8.4 | 11.6 | 14.1 | 12.0 | 1467.1 | 10290.2 | 189.36 |
 | gemini-3.1-flash-lite-preview (th=high) | 25 | 87 | 100.0% | 2.4 | 14.8 | 14.6 | 14.3 | 802.8 | 2814.8 | 67.01 |
+| gpt-5.6-sol (eff=medium, mt=16384) | 25 | 87 | 100.0% | 3.6 | 15.0 | 14.8 | 14.8 | 1809.4 | 4705.2 | 116.62 |
 | claude-haiku-4-5-20251001 (th=medium) | 25 | 87 | 100.0% | 3.3 | 14.2 | 14.4 | 14.8 | 2151.4 | 7263.9 | 131.10 |
 | gpt-5.4 (th=none, mt=4096) | 25 | 87 | 96.0% | 4.0 | 14.0 | 14.6 | 14.6 | 1206.0 | 2547.9 | 50.23 |
 | inkling (th=low, mt=16384, base=inference.baseten.co) | 25 | 86 | 100.0% | 2.6 | 15.0 | 13.7 | 14.6 | 594.0 | 1337.1 | 57.16 |
@@ -44,6 +45,8 @@
 | inkling (th=high, mt=16384, base=inference.baseten.co) | 25 | 86 | 100.0% | 3.2 | 14.8 | 13.2 | 14.5 | 605.6 | 3402.2 | 111.73 |
 | inkling (th=xhigh, mt=16384, base=inference.baseten.co) | 25 | 86 | 100.0% | 2.8 | 15.0 | 13.2 | 14.7 | 606.1 | 3155.9 | 129.79 |
 | gpt-4.1 (th=low) | 25 | 85 | 100.0% | 2.4 | 14.8 | 14.0 | 14.0 | 814.5 | 1455.0 | 63.23 |
+| gpt-5.6-sol (eff=none, mt=16384) | 25 | 85 | 100.0% | 0.0 | 15.0 | 14.9 | 15.0 | 1472.0 | 3100.0 | 85.31 |
+| gpt-5.6-sol (eff=xhigh, mt=16384) | 25 | 85 | 100.0% | 2.0 | 15.0 | 14.9 | 14.9 | 1844.2 | 9069.8 | 154.77 |
 | glm-5-fp8 (th=none, mt=4096, base=daily--glm5-sglang-serve.modal.run) | 25 | 85 | 96.0% | 2.9 | 13.6 | 14.5 | 13.8 | 988.5 | 1906.0 | 74.06 |
 | gpt-5.6-luna (eff=low, mt=50000) | 25 | 85 | 88.0% | 2.6 | 11.4 | 13.5 | 14.1 | 1165.2 | 2484.4 | 77.92 |
 | claude-haiku-4-5-20251001 (th=none) | 25 | 85 | 84.0% | 2.1 | 11.2 | 14.7 | 13.7 | 1991.1 | 3785.7 | 108.06 |
