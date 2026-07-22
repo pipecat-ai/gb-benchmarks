@@ -5,6 +5,13 @@
   "sample_batch": "20260722T113400Z",
   "rows": [
     {
+      "label": "gemini-3.6-flash (high)",
+      "method": "token_history",
+      "rate": "google-gemini-3-6-flash",
+      "task_complete_rate": 1.0,
+      "source_tsv": "runs/gemini36-flash-thinking-plus-gemini35-flash-lite-default-20260722T030842Z/gemini36-high/results.tsv"
+    },
+    {
       "label": "gemini-3.5-flash (high)",
       "method": "token_history",
       "rate": "google-gemini-3-5-flash",
@@ -31,13 +38,6 @@
       "rate": "baseten-kimi-k2-6-proxy",
       "task_complete_rate": 1.0,
       "source_tsv": "runs/kimi-k26-cerebras-sweep-20260525T224514Z/thinking/results.tsv"
-    },
-    {
-      "label": "glm-5 (thinking)",
-      "method": "modal_history",
-      "task_complete_rate": 1.0,
-      "selector": {"model": "glm-5-fp8", "thinking": "high", "max_tokens": 4096},
-      "resource": {"gpu": "b200", "count": 8}
     },
     {
       "label": "claude-sonnet-4-6 (none)",
@@ -105,6 +105,13 @@
       "sample": "runs/gpt56-cost-luna-xhigh-20260722T113400Z.json"
     },
     {
+      "label": "poolside/laguna-s-2.1 (none)",
+      "method": "token_history",
+      "rate": "openrouter-poolside-laguna-s-2-1",
+      "task_complete_rate": 0.84,
+      "selector": {"model": "poolside/laguna-s-2.1", "thinking": "none", "max_tokens": 4096, "openai_base_url": "https://openrouter.ai/api/v1"}
+    },
+    {
       "label": "gemini-3.1-flash-lite-preview (high)",
       "method": "token_history",
       "rate": "google-gemini-3-1-flash-lite",
@@ -131,6 +138,13 @@
       "rate": "google-gemini-2-5-flash",
       "task_complete_rate": 1.0,
       "selector": {"model": "gemini-2.5-flash", "thinking": "high", "thinking_budget": 2048}
+    },
+    {
+      "label": "gemini-3.5-flash-lite (minimal)",
+      "method": "token_history",
+      "rate": "google-gemini-3-5-flash-lite",
+      "task_complete_rate": 1.0,
+      "source_tsv": "runs/gemini36-flash-thinking-plus-gemini35-flash-lite-default-20260722T030842Z/gemini35-flash-lite-default-minimal/results.tsv"
     },
     {
       "label": "nemotron-3-super-120b (tb=512)",

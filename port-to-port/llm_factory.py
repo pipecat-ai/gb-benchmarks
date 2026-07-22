@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import urllib.parse
 from dataclasses import dataclass
 from enum import Enum
 from typing import Any, Optional
@@ -63,6 +64,17 @@ def _normalize_openai_base_url(base_url: str) -> str:
     if normalized.endswith("/v1"):
         return normalized
     return f"{normalized}/v1"
+
+
+def _is_openrouter_laguna_model(model: str, openai_base_url: Optional[str]) -> bool:
+    if not openai_base_url:
+        return False
+    host = (urllib.parse.urlparse(openai_base_url).hostname or "").lower()
+    normalized_model = model.strip().lower()
+    return host in {"openrouter.ai", "www.openrouter.ai"} and normalized_model in {
+        "poolside/laguna-s-2.1",
+        "poolside/laguna-s-2.1-20260720",
+    }
 
 
 GPT56_RESPONSES_MODELS = frozenset(
@@ -281,6 +293,10 @@ def _create_openai_service(
     is_gpt56_responses = _is_gpt56_responses_model(model, openai_base_url)
     if uses_responses:
         from openai_responses_service import OpenAIResponsesLLMService as OpenAIServiceClass
+    elif _is_openrouter_laguna_model(model, openai_base_url):
+        from openrouter_reasoning_service import (
+            OpenRouterReasoningLLMService as OpenAIServiceClass,
+        )
     else:
         from pipecat.services.openai.llm import OpenAILLMService as OpenAIServiceClass
 

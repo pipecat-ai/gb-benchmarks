@@ -6,11 +6,11 @@ Estimated cost per completed task is mean representative cost per attempt divide
 
 | Model | Method | Cost samples | Task complete | Cost / attempt | Est. cost / complete | Sample check |
 |---|---|---:|---:|---:|---:|---|
+| gemini-3.6-flash (high) | 25-run token usage | 25 | 100.0% | $0.4487 | $0.4487 | n/a |
 | gemini-3.5-flash (high) | 25-run token usage | 25 | 100.0% | $0.5353 | $0.5353 | n/a |
 | glm-5.2 (max) | 25-run token usage | 25 | 100.0% | $0.2275 | $0.2275 | n/a |
 | claude-sonnet-5 (xhigh) | 25-run token usage | 25 | 100.0% | $0.3837 | $0.3837 | n/a |
 | kimi-2.6 Cerebras (thinking) | 25-run token usage, price proxy | 25 | 100.0% | $0.1369 | $0.1369 | n/a |
-| glm-5 (thinking) | 25-run GPU active time | 25 | 100.0% | $1.046 | $1.046 | n/a |
 | claude-sonnet-4-6 (none) | 25-run token usage | 25 | 100.0% | $0.2809 | $0.2809 | n/a |
 | gpt-5.4 (low) | 25-run token usage | 25 | 100.0% | $0.2564 | $0.2564 | n/a |
 | gpt-5.6-terra (xhigh) | 1-run token sample | 1 | 100.0% | $0.2217 | $0.2217 | pass |
@@ -20,10 +20,12 @@ Estimated cost per completed task is mean representative cost per attempt divide
 | nemotron-3-ultra-550b (thinking) | 25-run token usage | 25 | 100.0% | $0.2992 | $0.2992 | n/a |
 | gpt-5.1 (low) | 25-run token usage | 25 | 100.0% | $0.1729 | $0.1729 | n/a |
 | gpt-5.6-luna (xhigh) | 1-run token sample | 1 | 96.0% | $0.1065 | $0.1110 | pass |
+| poolside/laguna-s-2.1 (none) | 25-run token usage | 25 | 84.0% | $0.0109 | $0.0130 | n/a |
 | gemini-3.1-flash-lite-preview (high) | 25-run token usage | 25 | 100.0% | $0.0490 | $0.0490 | n/a |
 | inkling (low) | 25-run token usage | 25 | 100.0% | $0.0735 | $0.0735 | n/a |
 | gpt-4.1 | 25-run token usage | 25 | 100.0% | $0.2103 | $0.2103 | n/a |
 | gemini-2.5-flash (2048) | 25-run token usage | 25 | 100.0% | $0.0589 | $0.0589 | n/a |
+| gemini-3.5-flash-lite (minimal) | 25-run token usage | 25 | 100.0% | $0.1043 | $0.1043 | n/a |
 | nemotron-3-super-120b (tb=512) | 25-run GPU active time | 25 | 100.0% | $0.5479 | $0.5479 | n/a |
 | gpt-4o | 25-run token usage | 25 | 92.0% | $0.4286 | $0.4659 | n/a |
 | gemini-3.1-pro-preview (medium) | 25-run token usage | 25 | 100.0% | $0.2873 | $0.2873 | n/a |

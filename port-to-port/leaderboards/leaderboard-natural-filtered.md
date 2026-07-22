@@ -5,16 +5,19 @@
 - Score rubric version: `port_to_port_primary_v1`
 - Aggregation: Primary=median, Task Complete=rate, Trade/Path/Tools/Report=mean
 - Source runs: `runs/leaderboard-natural-v1-input/*.json`
-- Enriched scores: `runs/leaderboard-natural-v1-refresh-20260718.jsonl`
+- Enriched scores: `runs/leaderboard-natural-v1-refresh-20260722-newmodels.jsonl`
 - Sort: Primary /100 desc, Task Complete % desc, Total Time P50 (s) asc
 
 | Model | N | Primary /100 | Task Complete % | Trade /15 Avg | Path /15 Avg | Tools /15 Avg | Report /15 Avg | Turn P50 (ms) | Turn P90 (ms) | Total Time P50 (s) |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| gemini-3.6-flash (th=high) | 25 | 97 | 100.0% | 9.2 | 15.0 | 15.0 | 15.0 | 1176.2 | 3498.5 | 97.07 |
 | glm-5.2 (th=xhigh, mt=8192, base=inference.baseten.co) | 25 | 97 | 100.0% | 11.0 | 14.8 | 14.3 | 14.8 | 1190.8 | 14458.6 | 212.72 |
 | gpt-5.4 (th=medium, mt=4096) | 25 | 97 | 100.0% | 12.2 | 15.0 | 15.0 | 14.9 | 6309.5 | 25817.6 | 347.89 |
 | glm-5.2 (th=high, mt=8192, base=inference.baseten.co) | 25 | 94 | 100.0% | 10.2 | 14.7 | 15.0 | 14.9 | 809.4 | 6025.9 | 117.31 |
 | claude-sonnet-5 (th=xhigh) | 25 | 93 | 100.0% | 9.6 | 15.0 | 14.1 | 15.0 | 2527.3 | 13172.9 | 246.87 |
 | glm-5.2 (th=none, mt=8192, base=inference.baseten.co) | 25 | 92 | 100.0% | 8.9 | 14.5 | 14.8 | 14.9 | 784.6 | 2447.0 | 80.42 |
+| gemini-3.6-flash (th=low) | 25 | 92 | 100.0% | 8.7 | 14.7 | 14.9 | 15.0 | 1020.2 | 2186.8 | 81.51 |
+| gemini-3.6-flash (th=medium) | 25 | 92 | 100.0% | 9.0 | 15.0 | 14.9 | 15.0 | 1111.3 | 2904.5 | 90.13 |
 | glm-5-fp8 (th=high, mt=4096, base=daily--glm5-sglang-serve.modal.run) | 25 | 92 | 100.0% | 5.9 | 14.8 | 15.0 | 14.9 | 1420.1 | 4623.0 | 107.98 |
 | claude-sonnet-4-6 (th=none) | 25 | 92 | 100.0% | 8.2 | 15.0 | 14.5 | 13.6 | 1998.1 | 4948.2 | 125.53 |
 | gpt-5.4 (th=low, mt=4096) | 25 | 92 | 100.0% | 7.6 | 15.0 | 15.0 | 14.9 | 2433.8 | 10455.4 | 136.22 |
@@ -35,6 +38,7 @@
 | nemotron-3-ultra-550b (th=high, mt=8192, base=inference.baseten.co) | 25 | 88 | 100.0% | 4.6 | 13.2 | 14.9 | 14.0 | 989.3 | 2817.5 | 81.03 |
 | gpt-5.1 (th=low) | 25 | 88 | 100.0% | 4.2 | 15.0 | 14.8 | 14.4 | 1798.2 | 12660.8 | 162.69 |
 | gpt-5.6-luna (eff=xhigh, mt=50000) | 25 | 88 | 96.0% | 6.8 | 12.9 | 14.1 | 14.0 | 1490.2 | 5967.5 | 125.40 |
+| poolside/laguna-s-2.1 (th=none, mt=4096, base=openrouter.ai/api) | 25 | 88 | 84.0% | 4.8 | 12.0 | 14.4 | 12.0 | 834.0 | 2592.3 | 93.44 |
 | gpt-5.6-luna (eff=max, mt=50000) | 25 | 88 | 84.0% | 8.4 | 11.6 | 14.1 | 12.0 | 1467.1 | 10290.2 | 189.36 |
 | gemini-3.1-flash-lite-preview (th=high) | 25 | 87 | 100.0% | 2.4 | 14.8 | 14.6 | 14.3 | 802.8 | 2814.8 | 67.01 |
 | claude-haiku-4-5-20251001 (th=medium) | 25 | 87 | 100.0% | 3.3 | 14.2 | 14.4 | 14.8 | 2151.4 | 7263.9 | 131.10 |
@@ -44,9 +48,11 @@
 | inkling (th=high, mt=16384, base=inference.baseten.co) | 25 | 86 | 100.0% | 3.2 | 14.8 | 13.2 | 14.5 | 605.6 | 3402.2 | 111.73 |
 | inkling (th=xhigh, mt=16384, base=inference.baseten.co) | 25 | 86 | 100.0% | 2.8 | 15.0 | 13.2 | 14.7 | 606.1 | 3155.9 | 129.79 |
 | gpt-4.1 (th=low) | 25 | 85 | 100.0% | 2.4 | 14.8 | 14.0 | 14.0 | 814.5 | 1455.0 | 63.23 |
+| gemini-3.6-flash (th=minimal) | 25 | 85 | 96.0% | 3.2 | 12.9 | 13.7 | 14.3 | 813.3 | 935.2 | 60.58 |
 | glm-5-fp8 (th=none, mt=4096, base=daily--glm5-sglang-serve.modal.run) | 25 | 85 | 96.0% | 2.9 | 13.6 | 14.5 | 13.8 | 988.5 | 1906.0 | 74.06 |
 | gpt-5.6-luna (eff=low, mt=50000) | 25 | 85 | 88.0% | 2.6 | 11.4 | 13.5 | 14.1 | 1165.2 | 2484.4 | 77.92 |
 | claude-haiku-4-5-20251001 (th=none) | 25 | 85 | 84.0% | 2.1 | 11.2 | 14.7 | 13.7 | 1991.1 | 3785.7 | 108.06 |
+| gemini-3.5-flash-lite (th=minimal) | 25 | 84 | 100.0% | 0.7 | 15.0 | 13.4 | 14.4 | 598.2 | 717.2 | 49.87 |
 | gemini-3.1-flash-lite-preview (th=minimal) | 25 | 84 | 100.0% | 0.8 | 15.0 | 14.2 | 14.3 | 735.3 | 940.8 | 54.30 |
 | gpt-4.1 (th=none) | 25 | 84 | 100.0% | 1.3 | 14.7 | 13.9 | 14.4 | 702.1 | 1177.2 | 59.66 |
 | gemini-2.5-flash (th=high, tb=2048) | 25 | 84 | 100.0% | 2.3 | 15.0 | 12.8 | 14.3 | 2352.2 | 3831.5 | 126.25 |

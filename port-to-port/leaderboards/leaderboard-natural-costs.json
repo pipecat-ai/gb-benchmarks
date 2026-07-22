@@ -9,6 +9,7 @@
     "baseten": "https://www.baseten.co/pricing/",
     "google": "https://ai.google.dev/gemini-api/docs/pricing",
     "modal": "https://modal.com/pricing",
+    "openrouter": "https://openrouter.ai/poolside/laguna-s-2.1",
     "openai": "https://developers.openai.com/api/docs/pricing",
     "openai_gpt_5_2": "https://developers.openai.com/api/docs/models/gpt-5.2",
     "openai_gpt_5_1": "https://developers.openai.com/api/docs/models/gpt-5.1",
@@ -16,6 +17,24 @@
     "openai_gpt_4o": "https://developers.openai.com/api/docs/models/gpt-4o"
   },
   "results": [
+    {
+      "label": "gemini-3.6-flash (high)",
+      "method": "token_history",
+      "historical_runs": 25,
+      "task_complete_rate": 1.0,
+      "cost_samples": 25,
+      "price_key": "google-gemini-3-6-flash",
+      "proxy_price": false,
+      "mean_cost_per_attempt": 0.448742394,
+      "median_cost_per_attempt": 0.45295290000000005,
+      "estimated_cost_per_completed_task": 0.448742394,
+      "aggregate_billable_tokens": {
+        "uncached_input": 5575377,
+        "cached_input": 8940929,
+        "cache_write": 0,
+        "output": 201914
+      }
+    },
     {
       "label": "gemini-3.5-flash (high)",
       "method": "token_history",
@@ -87,20 +106,6 @@
         "cache_write": 0,
         "output": 428000
       }
-    },
-    {
-      "label": "glm-5 (thinking)",
-      "method": "modal_history",
-      "historical_runs": 25,
-      "task_complete_rate": 1.0,
-      "cost_samples": 25,
-      "resource": {
-        "gpu": "b200",
-        "count": 8
-      },
-      "mean_cost_per_attempt": 1.0464897537024,
-      "median_cost_per_attempt": 1.02546756032,
-      "estimated_cost_per_completed_task": 1.0464897537024
     },
     {
       "label": "claude-sonnet-4-6 (none)",
@@ -316,6 +321,24 @@
       }
     },
     {
+      "label": "poolside/laguna-s-2.1 (none)",
+      "method": "token_history",
+      "historical_runs": 25,
+      "task_complete_rate": 0.84,
+      "cost_samples": 25,
+      "price_key": "openrouter-poolside-laguna-s-2-1",
+      "proxy_price": false,
+      "mean_cost_per_attempt": 0.0109493248,
+      "median_cost_per_attempt": 0.010539980000000001,
+      "estimated_cost_per_completed_task": 0.013034910476190476,
+      "aggregate_billable_tokens": {
+        "uncached_input": 1046380,
+        "cached_input": 13865792,
+        "cache_write": 0,
+        "output": 152186
+      }
+    },
+    {
       "label": "gemini-3.1-flash-lite-preview (high)",
       "method": "token_history",
       "historical_runs": 25,
@@ -385,6 +408,24 @@
         "cached_input": 8236563,
         "cache_write": 0,
         "output": 241850
+      }
+    },
+    {
+      "label": "gemini-3.5-flash-lite (minimal)",
+      "method": "token_history",
+      "historical_runs": 25,
+      "task_complete_rate": 1.0,
+      "cost_samples": 25,
+      "price_key": "google-gemini-3-5-flash-lite",
+      "proxy_price": false,
+      "mean_cost_per_attempt": 0.1043245916,
+      "median_cost_per_attempt": 0.1022679,
+      "estimated_cost_per_completed_task": 0.1043245916,
+      "aggregate_billable_tokens": {
+        "uncached_input": 8550348,
+        "cached_input": 122513,
+        "cache_write": 0,
+        "output": 15734
       }
     },
     {
