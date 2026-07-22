@@ -1,0 +1,511 @@
+{
+  "schema_version": "leaderboard_cost_estimates.v1",
+  "pricing_as_of": "2026-07-22",
+  "currency": "USD",
+  "definition": "mean representative cost per attempt divided by official-judge Task Complete rate",
+  "pricing_basis": "Standard synchronous API list prices and Modal pay-as-you-go resource prices, before credits, discounts, taxes, and data-residency uplifts.",
+  "sources": {
+    "anthropic": "https://platform.claude.com/docs/en/about-claude/pricing",
+    "baseten": "https://www.baseten.co/pricing/",
+    "google": "https://ai.google.dev/gemini-api/docs/pricing",
+    "modal": "https://modal.com/pricing",
+    "openai": "https://developers.openai.com/api/docs/pricing",
+    "openai_gpt_5_2": "https://developers.openai.com/api/docs/models/gpt-5.2",
+    "openai_gpt_5_1": "https://developers.openai.com/api/docs/models/gpt-5.1",
+    "openai_gpt_4_1": "https://developers.openai.com/api/docs/models/gpt-4.1",
+    "openai_gpt_4o": "https://developers.openai.com/api/docs/models/gpt-4o"
+  },
+  "results": [
+    {
+      "label": "gemini-3.5-flash (high)",
+      "method": "token_history",
+      "historical_runs": 25,
+      "task_complete_rate": 1.0,
+      "cost_samples": 25,
+      "price_key": "google-gemini-3-5-flash",
+      "proxy_price": false,
+      "mean_cost_per_attempt": 0.535310172,
+      "median_cost_per_attempt": 0.5382399,
+      "estimated_cost_per_completed_task": 0.535310172,
+      "aggregate_billable_tokens": {
+        "uncached_input": 6785622,
+        "cached_input": 8821242,
+        "cache_write": 0,
+        "output": 209015
+      }
+    },
+    {
+      "label": "glm-5.2 (max)",
+      "method": "token_history",
+      "historical_runs": 25,
+      "task_complete_rate": 1.0,
+      "cost_samples": 25,
+      "price_key": "baseten-glm-5-2",
+      "proxy_price": false,
+      "mean_cost_per_attempt": 0.22746514240000001,
+      "median_cost_per_attempt": 0.23170456000000003,
+      "estimated_cost_per_completed_task": 0.22746514240000001,
+      "aggregate_billable_tokens": {
+        "uncached_input": 523874,
+        "cached_input": 11101376,
+        "cache_write": 0,
+        "output": 469738
+      }
+    },
+    {
+      "label": "claude-sonnet-5 (xhigh)",
+      "method": "token_history",
+      "historical_runs": 25,
+      "task_complete_rate": 1.0,
+      "cost_samples": 25,
+      "price_key": "anthropic-sonnet-5-intro",
+      "proxy_price": false,
+      "mean_cost_per_attempt": 0.38372226400000004,
+      "median_cost_per_attempt": 0.3844525,
+      "estimated_cost_per_completed_task": 0.38372226400000004,
+      "aggregate_billable_tokens": {
+        "uncached_input": 3508,
+        "cached_input": 20939553,
+        "cache_write": 865780,
+        "output": 323368
+      }
+    },
+    {
+      "label": "kimi-2.6 Cerebras (thinking)",
+      "method": "token_history_proxy",
+      "historical_runs": 25,
+      "task_complete_rate": 1.0,
+      "cost_samples": 25,
+      "price_key": "baseten-kimi-k2-6-proxy",
+      "proxy_price": true,
+      "mean_cost_per_attempt": 0.1368886508,
+      "median_cost_per_attempt": 0.12681045999999999,
+      "estimated_cost_per_completed_task": 0.1368886508,
+      "aggregate_billable_tokens": {
+        "uncached_input": 286885,
+        "cached_input": 8985472,
+        "cache_write": 0,
+        "output": 428000
+      }
+    },
+    {
+      "label": "glm-5 (thinking)",
+      "method": "modal_history",
+      "historical_runs": 25,
+      "task_complete_rate": 1.0,
+      "cost_samples": 25,
+      "resource": {
+        "gpu": "b200",
+        "count": 8
+      },
+      "mean_cost_per_attempt": 1.0464897537024,
+      "median_cost_per_attempt": 1.02546756032,
+      "estimated_cost_per_completed_task": 1.0464897537024
+    },
+    {
+      "label": "claude-sonnet-4-6 (none)",
+      "method": "token_history",
+      "historical_runs": 25,
+      "task_complete_rate": 1.0,
+      "cost_samples": 25,
+      "price_key": "anthropic-sonnet-4-6",
+      "proxy_price": false,
+      "mean_cost_per_attempt": 0.280906134,
+      "median_cost_per_attempt": 0.27791685,
+      "estimated_cost_per_completed_task": 0.280906134,
+      "aggregate_billable_tokens": {
+        "uncached_input": 4780,
+        "cached_input": 11738982,
+        "cache_write": 525161,
+        "output": 101151
+      }
+    },
+    {
+      "label": "gpt-5.4 (low)",
+      "method": "token_history",
+      "historical_runs": 25,
+      "task_complete_rate": 1.0,
+      "cost_samples": 25,
+      "price_key": "openai-gpt-5-4",
+      "proxy_price": false,
+      "mean_cost_per_attempt": 0.2564473,
+      "median_cost_per_attempt": 0.249545,
+      "estimated_cost_per_completed_task": 0.2564473,
+      "aggregate_billable_tokens": {
+        "uncached_input": 929019,
+        "cached_input": 7179520,
+        "cache_write": 0,
+        "output": 152917
+      }
+    },
+    {
+      "label": "gpt-5.6-terra (xhigh)",
+      "method": "token_sample",
+      "historical_runs": 25,
+      "task_complete_rate": 1.0,
+      "cost_samples": 1,
+      "sample": "runs/gpt56-cost-terra-xhigh-20260722T113400Z.json",
+      "sample_sha256": "c398257aaa5b20bf8533998dad9a58e01739667bb3bfb758480ce43eecfb60ca",
+      "sanity_check": {
+        "representative": true,
+        "acceptance_band": [
+          0.6666666666666666,
+          1.5
+        ],
+        "sample": {
+          "turns": 34,
+          "accounted_tokens": 355153,
+          "active_seconds": 118.69545,
+          "elapsed_seconds": 155.61589,
+          "terminal_reason": "finished_tool",
+          "raw_success": true
+        },
+        "historical_medians": {
+          "turns": 34.0,
+          "accounted_tokens": 356440.0,
+          "active_seconds": 98.32784,
+          "elapsed_seconds": 136.56228
+        },
+        "sample_to_median_ratios": {
+          "turns": 1.0,
+          "accounted_tokens": 0.9963892941308495,
+          "active_seconds": 1.2071398090306875
+        }
+      },
+      "price_key": "openai-gpt-5-6-terra",
+      "mean_cost_per_attempt": 0.22170975,
+      "estimated_cost_per_completed_task": 0.22170975,
+      "sample_billable_tokens": {
+        "uncached_input": 102,
+        "cached_input": 334254,
+        "cache_write": 14658,
+        "output": 6139
+      }
+    },
+    {
+      "label": "gpt-5.2 (medium)",
+      "method": "token_history",
+      "historical_runs": 25,
+      "task_complete_rate": 1.0,
+      "cost_samples": 25,
+      "price_key": "openai-gpt-5-2",
+      "proxy_price": false,
+      "mean_cost_per_attempt": 0.170620366,
+      "median_cost_per_attempt": 0.1675198,
+      "estimated_cost_per_completed_task": 0.170620366,
+      "aggregate_billable_tokens": {
+        "uncached_input": 454181,
+        "cached_input": 8119168,
+        "cache_write": 0,
+        "output": 146417
+      }
+    },
+    {
+      "label": "gemma-4-31b (thinking)",
+      "method": "modal_history_range",
+      "historical_runs": 25,
+      "task_complete_rate": 1.0,
+      "cost_samples": 25,
+      "resource": {
+        "gpu": "a100-80gb",
+        "count": 2,
+        "fallback_gpu": "h100"
+      },
+      "mean_cost_per_attempt": 0.041600142747199996,
+      "median_cost_per_attempt": 0.039328397040000004,
+      "estimated_cost_per_completed_task": 0.041600142747199996,
+      "fallback_cost_per_attempt": 0.0657569979736,
+      "fallback_cost_per_completed_task": 0.0657569979736
+    },
+    {
+      "label": "claude-haiku-4-5-20251001 (low)",
+      "method": "token_history",
+      "historical_runs": 25,
+      "task_complete_rate": 1.0,
+      "cost_samples": 25,
+      "price_key": "anthropic-haiku-4-5",
+      "proxy_price": false,
+      "mean_cost_per_attempt": 0.115896604,
+      "median_cost_per_attempt": 0.10773285,
+      "estimated_cost_per_completed_task": 0.115896604,
+      "aggregate_billable_tokens": {
+        "uncached_input": 15780,
+        "cached_input": 10796876,
+        "cache_write": 508542,
+        "output": 233254
+      }
+    },
+    {
+      "label": "nemotron-3-ultra-550b (thinking)",
+      "method": "token_history",
+      "historical_runs": 25,
+      "task_complete_rate": 1.0,
+      "cost_samples": 25,
+      "price_key": "baseten-nemotron-3-ultra",
+      "proxy_price": false,
+      "mean_cost_per_attempt": 0.299188056,
+      "median_cost_per_attempt": 0.2937606,
+      "estimated_cost_per_completed_task": 0.299188056,
+      "aggregate_billable_tokens": {
+        "uncached_input": 11710529,
+        "cached_input": 0,
+        "cache_write": 0,
+        "output": 188910
+      }
+    },
+    {
+      "label": "gpt-5.1 (low)",
+      "method": "token_history",
+      "historical_runs": 25,
+      "task_complete_rate": 1.0,
+      "cost_samples": 25,
+      "price_key": "openai-gpt-5-1",
+      "proxy_price": false,
+      "mean_cost_per_attempt": 0.1729235,
+      "median_cost_per_attempt": 0.1681115,
+      "estimated_cost_per_completed_task": 0.1729235,
+      "aggregate_billable_tokens": {
+        "uncached_input": 1002494,
+        "cached_input": 6725120,
+        "cache_write": 0,
+        "output": 222933
+      }
+    },
+    {
+      "label": "gpt-5.6-luna (xhigh)",
+      "method": "token_sample",
+      "historical_runs": 25,
+      "task_complete_rate": 0.96,
+      "cost_samples": 1,
+      "sample": "runs/gpt56-cost-luna-xhigh-20260722T113400Z.json",
+      "sample_sha256": "5b55f57c8e4bbeeb164481e23efdc23417670eb6734e742ed65dfc3432cde54e",
+      "sanity_check": {
+        "representative": true,
+        "acceptance_band": [
+          0.6666666666666666,
+          1.5
+        ],
+        "sample": {
+          "turns": 32,
+          "accounted_tokens": 367619,
+          "active_seconds": 109.91109,
+          "elapsed_seconds": 144.75325,
+          "terminal_reason": "finished_tool",
+          "raw_success": true
+        },
+        "historical_medians": {
+          "turns": 35.0,
+          "accounted_tokens": 404728.0,
+          "active_seconds": 85.78432000000001,
+          "elapsed_seconds": 125.40381
+        },
+        "sample_to_median_ratios": {
+          "turns": 0.9142857142857143,
+          "accounted_tokens": 0.9083112608962068,
+          "active_seconds": 1.2812491840000595
+        }
+      },
+      "price_key": "openai-gpt-5-6-luna",
+      "mean_cost_per_attempt": 0.10653975,
+      "estimated_cost_per_completed_task": 0.11097890625000001,
+      "sample_billable_tokens": {
+        "uncached_input": 96,
+        "cached_input": 343410,
+        "cache_write": 15279,
+        "output": 8834
+      }
+    },
+    {
+      "label": "gemini-3.1-flash-lite-preview (high)",
+      "method": "token_history",
+      "historical_runs": 25,
+      "task_complete_rate": 1.0,
+      "cost_samples": 25,
+      "price_key": "google-gemini-3-1-flash-lite",
+      "proxy_price": false,
+      "mean_cost_per_attempt": 0.049031614,
+      "median_cost_per_attempt": 0.04917765,
+      "estimated_cost_per_completed_task": 0.049031614,
+      "aggregate_billable_tokens": {
+        "uncached_input": 3795139,
+        "cached_input": 4848384,
+        "cache_write": 0,
+        "output": 103864
+      }
+    },
+    {
+      "label": "inkling (low)",
+      "method": "token_history",
+      "historical_runs": 25,
+      "task_complete_rate": 1.0,
+      "cost_samples": 25,
+      "price_key": "baseten-inkling",
+      "proxy_price": false,
+      "mean_cost_per_attempt": 0.073520652,
+      "median_cost_per_attempt": 0.07227423,
+      "estimated_cost_per_completed_task": 0.073520652,
+      "aggregate_billable_tokens": {
+        "uncached_input": 426503,
+        "cached_input": 7213760,
+        "cache_write": 0,
+        "output": 45722
+      }
+    },
+    {
+      "label": "gpt-4.1",
+      "method": "token_history",
+      "historical_runs": 25,
+      "task_complete_rate": 1.0,
+      "cost_samples": 25,
+      "price_key": "openai-gpt-4-1",
+      "proxy_price": false,
+      "mean_cost_per_attempt": 0.21028304,
+      "median_cost_per_attempt": 0.203242,
+      "estimated_cost_per_completed_task": 0.21028304,
+      "aggregate_billable_tokens": {
+        "uncached_input": 788474,
+        "cached_input": 7095936,
+        "cache_write": 0,
+        "output": 16520
+      }
+    },
+    {
+      "label": "gemini-2.5-flash (2048)",
+      "method": "token_history",
+      "historical_runs": 25,
+      "task_complete_rate": 1.0,
+      "cost_samples": 25,
+      "price_key": "google-gemini-2-5-flash",
+      "proxy_price": false,
+      "mean_cost_per_attempt": 0.0588865676,
+      "median_cost_per_attempt": 0.0577555,
+      "estimated_cost_per_completed_task": 0.0588865676,
+      "aggregate_billable_tokens": {
+        "uncached_input": 2068141,
+        "cached_input": 8236563,
+        "cache_write": 0,
+        "output": 241850
+      }
+    },
+    {
+      "label": "nemotron-3-super-120b (tb=512)",
+      "method": "modal_history",
+      "historical_runs": 25,
+      "task_complete_rate": 1.0,
+      "cost_samples": 25,
+      "resource": {
+        "gpu": "b200",
+        "count": 2
+      },
+      "mean_cost_per_attempt": 0.54791496592,
+      "median_cost_per_attempt": 0.51121700224,
+      "estimated_cost_per_completed_task": 0.54791496592
+    },
+    {
+      "label": "gpt-4o",
+      "method": "token_history",
+      "historical_runs": 25,
+      "task_complete_rate": 0.92,
+      "cost_samples": 25,
+      "price_key": "openai-gpt-4o",
+      "proxy_price": false,
+      "mean_cost_per_attempt": 0.4286068,
+      "median_cost_per_attempt": 0.416335,
+      "estimated_cost_per_completed_task": 0.4658769565217391,
+      "aggregate_billable_tokens": {
+        "uncached_input": 443276,
+        "cached_input": 7484032,
+        "cache_write": 0,
+        "output": 25194
+      }
+    },
+    {
+      "label": "gemini-3.1-pro-preview (medium)",
+      "method": "token_history",
+      "historical_runs": 25,
+      "task_complete_rate": 1.0,
+      "cost_samples": 25,
+      "price_key": "google-gemini-3-1-pro",
+      "proxy_price": false,
+      "mean_cost_per_attempt": 0.287263448,
+      "median_cost_per_attempt": 0.28771559999999996,
+      "estimated_cost_per_completed_task": 0.287263448,
+      "aggregate_billable_tokens": {
+        "uncached_input": 2226757,
+        "cached_input": 7553601,
+        "cache_write": 0,
+        "output": 101446
+      }
+    },
+    {
+      "label": "qwen3.5-9b (thinking)",
+      "method": "modal_history",
+      "historical_runs": 25,
+      "task_complete_rate": 0.56,
+      "cost_samples": 25,
+      "resource": {
+        "gpu": "b200",
+        "count": 1
+      },
+      "mean_cost_per_attempt": 0.36336763951039996,
+      "median_cost_per_attempt": 0.36702017239999996,
+      "estimated_cost_per_completed_task": 0.6488707848399998
+    },
+    {
+      "label": "qwen3.5-27b (none)",
+      "method": "modal_history",
+      "historical_runs": 25,
+      "task_complete_rate": 0.08,
+      "cost_samples": 25,
+      "resource": {
+        "gpu": "b200",
+        "count": 1
+      },
+      "mean_cost_per_attempt": 0.22621727186239998,
+      "median_cost_per_attempt": 0.22278022032,
+      "estimated_cost_per_completed_task": 2.8277158982799997
+    },
+    {
+      "label": "nemotron-3-super-120b (none)",
+      "method": "modal_history",
+      "historical_runs": 25,
+      "task_complete_rate": 0.16,
+      "cost_samples": 25,
+      "resource": {
+        "gpu": "b200",
+        "count": 2
+      },
+      "mean_cost_per_attempt": 0.3302783233344,
+      "median_cost_per_attempt": 0.30233533679999997,
+      "estimated_cost_per_completed_task": 2.0642395208399997
+    },
+    {
+      "label": "qwen3.5-4b",
+      "method": "modal_history",
+      "historical_runs": 25,
+      "task_complete_rate": 0.12,
+      "cost_samples": 25,
+      "resource": {
+        "gpu": "b200",
+        "count": 1
+      },
+      "mean_cost_per_attempt": 0.1672143795392,
+      "median_cost_per_attempt": 0.15331558648,
+      "estimated_cost_per_completed_task": 1.3934531628266666
+    },
+    {
+      "label": "glm-4.7-flash",
+      "method": "modal_history",
+      "historical_runs": 25,
+      "task_complete_rate": 0.12,
+      "cost_samples": 25,
+      "resource": {
+        "gpu": "b200",
+        "count": 1
+      },
+      "mean_cost_per_attempt": 0.217784345632,
+      "median_cost_per_attempt": 0.19995780951999997,
+      "estimated_cost_per_completed_task": 1.8148695469333334
+    }
+  ]
+}

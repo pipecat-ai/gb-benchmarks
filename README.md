@@ -22,34 +22,36 @@ This is a reasonably well-defined task that requires interpolation of the user's
 
 Here are scores for all of the models we've tested that have a per-turn P50 time of less than 4 seconds. We show only the best configuration for each model on this table. The highest thinking level is not always the best-performing configuration, interestingly. All configurations and models tested are in [port-to-port/leaderboards/leaderboard-natural.md](port-to-port/leaderboards/leaderboard-natural.md).
 
-| Model                                | Score | Task Complete | Trade /15 | Path /15 | Tools /15 | Report /15 | Turn P50 | Turn P90 | Total Time |
-| ------------------------------------ | ----: | ------------: | --------: | -------: | --------: | ---------: | -------: | -------: | ---------: |
-| gemini-3.5-flash (high)              |    97 |        100.0% |      12.0 |     15.0 |      15.0 |       15.0 |   1862.2 |   5388.5 |     140.97 |
-| glm-5.2 (max)                        |    97 |        100.0% |      11.0 |     14.8 |      14.3 |       14.8 |   1190.8 |  14458.6 |     212.72 |
-| claude-sonnet-5 (xhigh)              |    93 |        100.0% |       9.6 |     15.0 |      14.1 |       15.0 |   2527.3 |  13172.9 |     246.87 |
-| kimi-2.6 Cerebras (thinking)         |    92 |        100.0% |       7.0 |     15.0 |      15.0 |       15.0 |    497.8 |   2352.2 |      67.06 |
-| glm-5 (thinking)                     |    92 |        100.0% |       5.9 |     14.8 |      15.0 |       14.9 |   1420.1 |   4623.0 |     107.98 |
-| claude-sonnet-4-6 (none)             |    92 |        100.0% |       8.2 |     15.0 |      14.5 |       13.6 |   1998.1 |   4948.2 |     125.53 |
-| gpt-5.4 (low)                        |    92 |        100.0% |       7.6 |     15.0 |      15.0 |       14.9 |   2433.8 |  10455.4 |     136.22 |
-| gpt-5.6-terra (xhigh)                |    92 |        100.0% |       7.4 |     15.0 |      14.7 |       15.0 |   2253.3 |   6374.1 |     136.56 |
-| gpt-5.2 (medium)                     |    91 |        100.0% |       6.5 |     14.8 |      14.1 |       14.6 |   1047.9 |  10482.2 |     149.98 |
-| gemma-4-31b (thinking)               |    89 |        100.0% |       4.0 |     15.0 |      15.0 |       15.0 |    850.6 |   1065.5 |      60.43 |
-| claude-haiku-4-5-20251001 (low)      |    89 |        100.0% |       4.3 |     14.1 |      14.4 |       14.8 |   2157.9 |   6863.1 |     125.41 |
-| nemotron-3-ultra-550b (thinking)     |    88 |        100.0% |       4.6 |     13.2 |      14.9 |       14.0 |    989.3 |   2817.5 |      81.03 |
-| gpt-5.1 (low)                        |    88 |        100.0% |       4.2 |     15.0 |      14.8 |       14.4 |   1798.2 |  12660.8 |     162.69 |
-| gpt-5.6-luna (xhigh)                 |    88 |         96.0% |       6.8 |     12.9 |      14.1 |       14.0 |   1490.2 |   5967.5 |     125.40 |
-| gemini-3.1-flash-lite-preview (high) |    87 |        100.0% |       2.4 |     14.8 |      14.6 |       14.3 |    802.8 |   2814.8 |      67.01 |
-| inkling (low)                        |    86 |        100.0% |       2.6 |     15.0 |      13.7 |       14.6 |    594.0 |   1337.1 |      57.16 |
-| gpt-4.1                              |    86 |        100.0% |       2.4 |     14.3 |      14.4 |       13.7 |    805.9 |   1395.4 |      61.33 |
-| gemini-2.5-flash (2048)              |    84 |        100.0% |       2.3 |     15.0 |      12.8 |       14.3 |   2352.2 |   3831.5 |     126.25 |
-| nemotron-3-super-120b (tb=512)       |    82 |        100.0% |       1.4 |     13.0 |      13.1 |       14.1 |   2854.6 |   7666.1 |     109.38 |
-| gpt-4o                               |    82 |         92.0% |       1.1 |     15.0 |      10.2 |       13.9 |    822.7 |   1951.9 |      70.70 |
-| gemini-3.1-pro-preview (medium)      |    81 |        100.0% |       1.7 |     15.0 |      10.9 |       15.0 |   3062.6 |   5958.4 |     155.53 |
-| qwen3.5-9b (thinking)                |    64 |         56.0% |       0.6 |      7.8 |       5.8 |       10.8 |   3237.6 |   9443.8 |     270.02 |
-| qwen3.5-27b (none)                   |    39 |          8.0% |       2.5 |     14.5 |       0.0 |        1.8 |   1932.7 |   4479.8 |     282.62 |
-| nemotron-3-super-120b (none)         |    37 |         16.0% |       1.6 |     14.2 |       0.2 |        2.3 |    826.3 |   2994.8 |     156.01 |
-| qwen3.5-4b                           |    37 |         12.0% |       0.8 |     13.5 |       0.1 |        2.8 |   1178.9 |   3033.4 |     241.03 |
-| glm-4.7-flash                        |    29 |         12.0% |       1.1 |      6.6 |       6.9 |        3.4 |   1875.3 |   3692.8 |     168.69 |
+| Model                                | Score | Task Complete | Trade /15 | Path /15 | Tools /15 | Report /15 | Turn P50 | Turn P90 | Total Time | Est. Cost / Complete |
+| ------------------------------------ | ----: | ------------: | --------: | -------: | --------: | ---------: | -------: | -------: | ---------: | -------------------: |
+| gemini-3.5-flash (high)              |    97 |        100.0% |      12.0 |     15.0 |      15.0 |       15.0 |   1862.2 |   5388.5 |     140.97 |               $0.535 |
+| glm-5.2 (max)                        |    97 |        100.0% |      11.0 |     14.8 |      14.3 |       14.8 |   1190.8 |  14458.6 |     212.72 |               $0.228 |
+| claude-sonnet-5 (xhigh)              |    93 |        100.0% |       9.6 |     15.0 |      14.1 |       15.0 |   2527.3 |  13172.9 |     246.87 |               $0.384 |
+| kimi-2.6 Cerebras (thinking)         |    92 |        100.0% |       7.0 |     15.0 |      15.0 |       15.0 |    497.8 |   2352.2 |      67.06 |               $0.137 |
+| glm-5 (thinking)                     |    92 |        100.0% |       5.9 |     14.8 |      15.0 |       14.9 |   1420.1 |   4623.0 |     107.98 |                $1.05 |
+| claude-sonnet-4-6 (none)             |    92 |        100.0% |       8.2 |     15.0 |      14.5 |       13.6 |   1998.1 |   4948.2 |     125.53 |               $0.281 |
+| gpt-5.4 (low)                        |    92 |        100.0% |       7.6 |     15.0 |      15.0 |       14.9 |   2433.8 |  10455.4 |     136.22 |               $0.256 |
+| gpt-5.6-terra (xhigh)                |    92 |        100.0% |       7.4 |     15.0 |      14.7 |       15.0 |   2253.3 |   6374.1 |     136.56 |               $0.222 |
+| gpt-5.2 (medium)                     |    91 |        100.0% |       6.5 |     14.8 |      14.1 |       14.6 |   1047.9 |  10482.2 |     149.98 |               $0.171 |
+| gemma-4-31b (thinking)               |    89 |        100.0% |       4.0 |     15.0 |      15.0 |       15.0 |    850.6 |   1065.5 |      60.43 |        $0.042–$0.066 |
+| claude-haiku-4-5-20251001 (low)      |    89 |        100.0% |       4.3 |     14.1 |      14.4 |       14.8 |   2157.9 |   6863.1 |     125.41 |               $0.116 |
+| nemotron-3-ultra-550b (thinking)     |    88 |        100.0% |       4.6 |     13.2 |      14.9 |       14.0 |    989.3 |   2817.5 |      81.03 |               $0.299 |
+| gpt-5.1 (low)                        |    88 |        100.0% |       4.2 |     15.0 |      14.8 |       14.4 |   1798.2 |  12660.8 |     162.69 |               $0.173 |
+| gpt-5.6-luna (xhigh)                 |    88 |         96.0% |       6.8 |     12.9 |      14.1 |       14.0 |   1490.2 |   5967.5 |     125.40 |               $0.111 |
+| gemini-3.1-flash-lite-preview (high) |    87 |        100.0% |       2.4 |     14.8 |      14.6 |       14.3 |    802.8 |   2814.8 |      67.01 |               $0.049 |
+| inkling (low)                        |    86 |        100.0% |       2.6 |     15.0 |      13.7 |       14.6 |    594.0 |   1337.1 |      57.16 |               $0.074 |
+| gpt-4.1                              |    86 |        100.0% |       2.4 |     14.3 |      14.4 |       13.7 |    805.9 |   1395.4 |      61.33 |               $0.210 |
+| gemini-2.5-flash (2048)              |    84 |        100.0% |       2.3 |     15.0 |      12.8 |       14.3 |   2352.2 |   3831.5 |     126.25 |               $0.059 |
+| nemotron-3-super-120b (tb=512)       |    82 |        100.0% |       1.4 |     13.0 |      13.1 |       14.1 |   2854.6 |   7666.1 |     109.38 |               $0.548 |
+| gpt-4o                               |    82 |         92.0% |       1.1 |     15.0 |      10.2 |       13.9 |    822.7 |   1951.9 |      70.70 |               $0.466 |
+| gemini-3.1-pro-preview (medium)      |    81 |        100.0% |       1.7 |     15.0 |      10.9 |       15.0 |   3062.6 |   5958.4 |     155.53 |               $0.287 |
+| qwen3.5-9b (thinking)                |    64 |         56.0% |       0.6 |      7.8 |       5.8 |       10.8 |   3237.6 |   9443.8 |     270.02 |               $0.649 |
+| qwen3.5-27b (none)                   |    39 |          8.0% |       2.5 |     14.5 |       0.0 |        1.8 |   1932.7 |   4479.8 |     282.62 |                $2.83 |
+| nemotron-3-super-120b (none)         |    37 |         16.0% |       1.6 |     14.2 |       0.2 |        2.3 |    826.3 |   2994.8 |     156.01 |                $2.06 |
+| qwen3.5-4b                           |    37 |         12.0% |       0.8 |     13.5 |       0.1 |        2.8 |   1178.9 |   3033.4 |     241.03 |                $1.39 |
+| glm-4.7-flash                        |    29 |         12.0% |       1.1 |      6.6 |       6.9 |        3.4 |   1875.3 |   3692.8 |     168.69 |                $1.82 |
+
+Cost estimates use current list prices and the judged completion rate, not the raw run-success flag. Token-priced APIs use all 25 canonical usage traces; GPT-5.6 uses one cache-write-aware representative trace; Modal estimates use GPU-only active-request time across all 25 canonical traces. See the [full cost table and methodology](port-to-port/leaderboards/leaderboard-natural-costs.md). Kimi uses a public same-model price proxy, and Gemma's range covers its configured A100-to-H100 fallback.
 
 Thank you to [Modal](https://modal.com) for providing compute resources for this benchmark. And to [Charles Frye](https://x.com/charles_irl/) for advice about models and inference tuning.
 

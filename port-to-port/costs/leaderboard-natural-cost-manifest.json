@@ -1,0 +1,192 @@
+{
+  "schema_version": "leaderboard_cost_manifest.v1",
+  "pricing": "costs/pricing-2026-07-22.json",
+  "canonical_history": "runs/leaderboard-natural-v2-linked-input/*.json",
+  "sample_batch": "20260722T113400Z",
+  "rows": [
+    {
+      "label": "gemini-3.5-flash (high)",
+      "method": "token_history",
+      "rate": "google-gemini-3-5-flash",
+      "task_complete_rate": 1.0,
+      "source_tsv": "runs/gemini35-flash-thinking-sweep-20260520T004058Z/high/results.tsv"
+    },
+    {
+      "label": "glm-5.2 (max)",
+      "method": "token_history",
+      "rate": "baseten-glm-5-2",
+      "task_complete_rate": 1.0,
+      "selector": {"model": "glm-5.2", "thinking": "xhigh", "max_tokens": 8192}
+    },
+    {
+      "label": "claude-sonnet-5 (xhigh)",
+      "method": "token_history",
+      "rate": "anthropic-sonnet-5-intro",
+      "task_complete_rate": 1.0,
+      "selector": {"model": "claude-sonnet-5", "thinking": "xhigh"}
+    },
+    {
+      "label": "kimi-2.6 Cerebras (thinking)",
+      "method": "token_history_proxy",
+      "rate": "baseten-kimi-k2-6-proxy",
+      "task_complete_rate": 1.0,
+      "source_tsv": "runs/kimi-k26-cerebras-sweep-20260525T224514Z/thinking/results.tsv"
+    },
+    {
+      "label": "glm-5 (thinking)",
+      "method": "modal_history",
+      "task_complete_rate": 1.0,
+      "selector": {"model": "glm-5-fp8", "thinking": "high", "max_tokens": 4096},
+      "resource": {"gpu": "b200", "count": 8}
+    },
+    {
+      "label": "claude-sonnet-4-6 (none)",
+      "method": "token_history",
+      "rate": "anthropic-sonnet-4-6",
+      "task_complete_rate": 1.0,
+      "selector": {"model": "claude-sonnet-4-6", "thinking": "none"}
+    },
+    {
+      "label": "gpt-5.4 (low)",
+      "method": "token_history",
+      "rate": "openai-gpt-5-4",
+      "task_complete_rate": 1.0,
+      "selector": {"model": "gpt-5.4", "thinking": "low", "max_tokens": 4096}
+    },
+    {
+      "label": "gpt-5.6-terra (xhigh)",
+      "method": "token_sample",
+      "rate": "openai-gpt-5-6-terra",
+      "task_complete_rate": 1.0,
+      "selector": {"model": "gpt-5.6-terra", "thinking": "xhigh", "effective_effort": "xhigh", "max_tokens": 50000},
+      "sample": "runs/gpt56-cost-terra-xhigh-20260722T113400Z.json"
+    },
+    {
+      "label": "gpt-5.2 (medium)",
+      "method": "token_history",
+      "rate": "openai-gpt-5-2",
+      "task_complete_rate": 1.0,
+      "selector": {"model": "gpt-5.2", "thinking": "medium"}
+    },
+    {
+      "label": "gemma-4-31b (thinking)",
+      "method": "modal_history_range",
+      "task_complete_rate": 1.0,
+      "selector": {"model": "gemma-4-31b", "thinking": "high", "max_tokens": 4096},
+      "resource": {"gpu": "a100-80gb", "count": 2, "fallback_gpu": "h100"}
+    },
+    {
+      "label": "claude-haiku-4-5-20251001 (low)",
+      "method": "token_history",
+      "rate": "anthropic-haiku-4-5",
+      "task_complete_rate": 1.0,
+      "selector": {"model": "claude-haiku-4-5-20251001", "thinking": "low"}
+    },
+    {
+      "label": "nemotron-3-ultra-550b (thinking)",
+      "method": "token_history",
+      "rate": "baseten-nemotron-3-ultra",
+      "task_complete_rate": 1.0,
+      "selector": {"model": "nemotron-3-ultra-550b", "thinking": "high", "max_tokens": 8192}
+    },
+    {
+      "label": "gpt-5.1 (low)",
+      "method": "token_history",
+      "rate": "openai-gpt-5-1",
+      "task_complete_rate": 1.0,
+      "selector": {"model": "gpt-5.1", "thinking": "low"}
+    },
+    {
+      "label": "gpt-5.6-luna (xhigh)",
+      "method": "token_sample",
+      "rate": "openai-gpt-5-6-luna",
+      "task_complete_rate": 0.96,
+      "selector": {"model": "gpt-5.6-luna", "thinking": "xhigh", "effective_effort": "xhigh", "max_tokens": 50000},
+      "sample": "runs/gpt56-cost-luna-xhigh-20260722T113400Z.json"
+    },
+    {
+      "label": "gemini-3.1-flash-lite-preview (high)",
+      "method": "token_history",
+      "rate": "google-gemini-3-1-flash-lite",
+      "task_complete_rate": 1.0,
+      "selector": {"model": "gemini-3.1-flash-lite-preview", "thinking": "high"}
+    },
+    {
+      "label": "inkling (low)",
+      "method": "token_history",
+      "rate": "baseten-inkling",
+      "task_complete_rate": 1.0,
+      "selector": {"model": "inkling", "thinking": "low", "max_tokens": 16384}
+    },
+    {
+      "label": "gpt-4.1",
+      "method": "token_history",
+      "rate": "openai-gpt-4-1",
+      "task_complete_rate": 1.0,
+      "selector": {"model": "gpt-4.1", "thinking": "medium"}
+    },
+    {
+      "label": "gemini-2.5-flash (2048)",
+      "method": "token_history",
+      "rate": "google-gemini-2-5-flash",
+      "task_complete_rate": 1.0,
+      "selector": {"model": "gemini-2.5-flash", "thinking": "high", "thinking_budget": 2048}
+    },
+    {
+      "label": "nemotron-3-super-120b (tb=512)",
+      "method": "modal_history",
+      "task_complete_rate": 1.0,
+      "selector": {"model": "nemotron-3-super-120b", "thinking": "medium", "max_tokens": 4096},
+      "resource": {"gpu": "b200", "count": 2}
+    },
+    {
+      "label": "gpt-4o",
+      "method": "token_history",
+      "rate": "openai-gpt-4o",
+      "task_complete_rate": 0.92,
+      "selector": {"model": "gpt-4o", "thinking": "none"}
+    },
+    {
+      "label": "gemini-3.1-pro-preview (medium)",
+      "method": "token_history",
+      "rate": "google-gemini-3-1-pro",
+      "task_complete_rate": 1.0,
+      "selector": {"model": "gemini-3.1-pro-preview", "thinking": "medium"}
+    },
+    {
+      "label": "qwen3.5-9b (thinking)",
+      "method": "modal_history",
+      "task_complete_rate": 0.56,
+      "selector": {"model": "qwen3.5-9b", "thinking": "high", "max_tokens": 4096},
+      "resource": {"gpu": "b200", "count": 1}
+    },
+    {
+      "label": "qwen3.5-27b (none)",
+      "method": "modal_history",
+      "task_complete_rate": 0.08,
+      "selector": {"model": "qwen3.5-27b", "thinking": "none", "max_tokens": 4096},
+      "resource": {"gpu": "b200", "count": 1}
+    },
+    {
+      "label": "nemotron-3-super-120b (none)",
+      "method": "modal_history",
+      "task_complete_rate": 0.16,
+      "selector": {"model": "nemotron-3-super-120b", "thinking": "none", "max_tokens": 4096},
+      "resource": {"gpu": "b200", "count": 2}
+    },
+    {
+      "label": "qwen3.5-4b",
+      "method": "modal_history",
+      "task_complete_rate": 0.12,
+      "selector": {"model": "qwen3.5-4b", "thinking": "none", "max_tokens": 4096},
+      "resource": {"gpu": "b200", "count": 1}
+    },
+    {
+      "label": "glm-4.7-flash",
+      "method": "modal_history",
+      "task_complete_rate": 0.12,
+      "selector": {"model": "glm-4.7-flash", "thinking": "none", "max_tokens": 4096},
+      "resource": {"gpu": "b200", "count": 1}
+    }
+  ]
+}

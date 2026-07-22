@@ -125,7 +125,10 @@ def _completed_response(model: str = "gpt-5.6-luna") -> dict:
         "service_tier": "default",
         "usage": {
             "input_tokens": 1,
-            "input_tokens_details": {"cached_tokens": 0},
+            "input_tokens_details": {
+                "cached_tokens": 0,
+                "cache_write_tokens": 1,
+            },
             "output_tokens": 1,
             "output_tokens_details": {"reasoning_tokens": 0},
             "total_tokens": 2,
@@ -647,6 +650,7 @@ class Gpt56HttpBoundaryTests(unittest.TestCase):
             trace = service.get_responses_traces()[0]
             self.assertEqual(trace["request_id"], "req_stream_boundary")
             self.assertEqual(trace["usage"]["cached_tokens"], 2)
+            self.assertIsNone(trace["usage"]["cache_write_tokens"])
             self.assertEqual(trace["sdk_max_retries"], 0)
             self.assertEqual(trace["openai_sdk_version"], "2.21.0")
 
@@ -836,6 +840,34 @@ class Gpt56ResponsesOutcomeTests(unittest.TestCase):
         self.assertEqual(trace["usage"]["total_tokens"], 135)
         self.assertEqual(trace["event_types"], self.fixture["captured_success"]["expected_event_types"])
         self.assertNotIn("input", trace)
+
+    def test_usage_trace_captures_prompt_cache_writes(self) -> None:
+        response = types.SimpleNamespace(
+            usage=types.SimpleNamespace(
+                input_tokens=100,
+                input_tokens_details=types.SimpleNamespace(
+                    cached_tokens=60,
+                    cache_write_tokens=25,
+                ),
+                output_tokens=12,
+                output_tokens_details=types.SimpleNamespace(reasoning_tokens=7),
+                total_tokens=112,
+            )
+        )
+
+        usage = openai_responses_service.OpenAIResponsesLLMService._usage_trace(response)
+
+        self.assertEqual(
+            usage,
+            {
+                "input_tokens": 100,
+                "cached_tokens": 60,
+                "cache_write_tokens": 25,
+                "output_tokens": 12,
+                "reasoning_tokens": 7,
+                "total_tokens": 112,
+            },
+        )
 
     def test_sdk_validated_incomplete_and_failed_events_map_explicitly(self) -> None:
         typed_events = {

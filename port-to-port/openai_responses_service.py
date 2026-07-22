@@ -126,6 +126,7 @@ class OpenAIResponsesLLMService(OpenAILLMService):
         return {
             "input_tokens": cls._get_attr(usage, "input_tokens"),
             "cached_tokens": cls._get_attr(input_details, "cached_tokens"),
+            "cache_write_tokens": cls._get_attr(input_details, "cache_write_tokens"),
             "output_tokens": cls._get_attr(usage, "output_tokens"),
             "reasoning_tokens": cls._get_attr(output_details, "reasoning_tokens"),
             "total_tokens": cls._get_attr(usage, "total_tokens"),
