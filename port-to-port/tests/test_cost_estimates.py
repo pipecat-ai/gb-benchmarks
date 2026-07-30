@@ -22,6 +22,13 @@ def _run(usage, *, trace_usage=None, decision_ms=1000):
 
 
 class TokenCostTests(unittest.TestCase):
+    def test_cost_provider_comes_from_price_key(self):
+        self.assertEqual(costs.provider_for_price_key("google-gemini-3-6-flash"), "AI Studio")
+        self.assertEqual(costs.provider_for_price_key("baseten-kimi-k2-6-proxy"), "BaseTen")
+        self.assertEqual(costs.provider_for_price_key("bedrock-gemma-4-31b"), "AWS Bedrock")
+        with self.assertRaises(ValueError):
+            costs.provider_for_price_key("unknown-model")
+
     def test_openai_separates_cached_input_without_double_counting_reasoning(self):
         run = _run(
             {

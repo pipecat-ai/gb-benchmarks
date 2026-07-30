@@ -1,13 +1,14 @@
 {
-  "as_of": "2026-07-22",
+  "as_of": "2026-07-28",
   "currency": "USD",
-  "basis": "Standard synchronous API list prices and Modal pay-as-you-go resource prices, before credits, discounts, taxes, and data-residency uplifts.",
+  "basis": "Standard synchronous API provider list prices, before credits, discounts, taxes, and data-residency uplifts.",
   "sources": {
     "anthropic": "https://platform.claude.com/docs/en/about-claude/pricing",
+    "aws_bedrock": "https://aws.amazon.com/bedrock/pricing/",
     "baseten": "https://www.baseten.co/pricing/",
+    "empiriolabs": "https://empiriolabs.ai/models/qwen3-5-4b",
     "google": "https://ai.google.dev/gemini-api/docs/pricing",
-    "modal": "https://modal.com/pricing",
-    "openrouter": "https://openrouter.ai/poolside/laguna-s-2.1",
+    "openrouter": "https://openrouter.ai/api/v1/models",
     "openai": "https://developers.openai.com/api/docs/pricing",
     "openai_gpt_5_2": "https://developers.openai.com/api/docs/models/gpt-5.2",
     "openai_gpt_5_1": "https://developers.openai.com/api/docs/models/gpt-5.1",
@@ -39,7 +40,7 @@
     },
     "baseten-glm-5-2": {
       "input": 1.4,
-      "cached_input": 0.26,
+      "cached_input": 0.14,
       "output": 4.4,
       "usage_semantics": "openai"
     },
@@ -62,6 +63,12 @@
       "cached_input": 0.12,
       "output": 2.4,
       "usage_semantics": "openai"
+    },
+    "bedrock-gemma-4-31b": {
+      "input": 0.14,
+      "output": 0.4,
+      "usage_semantics": "openai",
+      "note": "Amazon Bedrock US Standard on-demand price. No separate cached-input rate is published for this model."
     },
     "google-gemini-3-5-flash": {
       "input": 1.5,
@@ -151,11 +158,48 @@
       "cached_input": 0.01,
       "output": 0.2,
       "usage_semantics": "openai"
+    },
+    "openrouter-nemotron-3-super-120b": {
+      "input": 0.08,
+      "output": 0.45,
+      "usage_semantics": "openai"
+    },
+    "openrouter-qwen3-6-27b": {
+      "input": 0.3,
+      "cached_input": 0.15,
+      "output": 2.0,
+      "usage_semantics": "openai",
+      "proxy": true,
+      "note": "OpenRouter same-model price proxy for the BaseTen vLLM 0.26 BF16 benchmark cohort. Historical run traces do not expose API cache-read token buckets, so the estimate conservatively prices all observed input at the standard input rate."
+    },
+    "openrouter-qwen3-6-35b-a3b": {
+      "input": 0.14,
+      "output": 1.0,
+      "usage_semantics": "openai",
+      "proxy": true,
+      "note": "OpenRouter same-model price proxy for the official FP8 checkpoint benchmarked on BaseTen; OpenRouter does not promise that its served precision matches the scored checkpoint."
+    },
+    "openrouter-qwen3-5-9b": {
+      "input": 0.1,
+      "output": 0.15,
+      "usage_semantics": "openai"
+    },
+    "openrouter-qwen3-5-27b": {
+      "input": 0.195,
+      "output": 1.56,
+      "usage_semantics": "openai"
+    },
+    "empiriolabs-qwen3-5-4b": {
+      "input": 0.04,
+      "cached_input": 0.02,
+      "output": 0.07,
+      "usage_semantics": "openai"
+    },
+    "openrouter-glm-4-7-flash": {
+      "input": 0.06,
+      "cached_input": 0.01,
+      "output": 0.4,
+      "usage_semantics": "openai"
     }
-  },
-  "modal_resource_rates_per_second": {
-    "a100-80gb": 0.000694,
-    "b200": 0.001736,
-    "h100": 0.001097
   }
 }

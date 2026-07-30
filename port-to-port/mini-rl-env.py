@@ -330,6 +330,34 @@ def _is_openrouter_laguna_model(
     }
 
 
+def _is_openrouter_qwen36_model(
+    openai_base_url: Optional[str], model: str
+) -> bool:
+    if not openai_base_url:
+        return False
+    parsed = urllib.parse.urlparse(openai_base_url)
+    normalized_model = model.strip().lower()
+    return (parsed.hostname or "").lower() in {
+        "openrouter.ai",
+        "www.openrouter.ai",
+    } and normalized_model.startswith("qwen/qwen3.6-")
+
+
+def _is_baseten_qwen36_model(
+    openai_base_url: Optional[str], model: str
+) -> bool:
+    if not openai_base_url:
+        return False
+    parsed = urllib.parse.urlparse(openai_base_url)
+    normalized_model = model.strip().lower()
+    return (parsed.hostname or "").lower().endswith(
+        ".baseten.co"
+    ) and normalized_model in {
+        "qwen/qwen3.6-27b",
+        "qwen/qwen3.6-35b-a3b-fp8",
+    }
+
+
 def _is_baseten_inkling_model(model_lower: str) -> bool:
     normalized = (model_lower or "").strip().lower()
     return normalized in {"inkling", "thinkingmachines/inkling"}
@@ -1123,6 +1151,32 @@ def _validate_generation_controls(args: argparse.Namespace, parser: argparse.Arg
                 )
             return
 
+        if _is_openrouter_qwen36_model(args.openai_base_url, model_lower):
+            if args.thinking not in {"none", "high"}:
+                parser.error(
+                    "Qwen 3.6 on OpenRouter supports benchmark --thinking "
+                    "none|high (thinking disabled or default-enabled)."
+                )
+            if thinking_budget is not None:
+                parser.error(
+                    "Qwen 3.6 on OpenRouter exposes a binary reasoning toggle, "
+                    "not an exact --thinking-budget control."
+                )
+            return
+
+        if _is_baseten_qwen36_model(args.openai_base_url, model_lower):
+            if args.thinking not in {"none", "high"}:
+                parser.error(
+                    "Qwen 3.6 on a dedicated Baseten vLLM endpoint supports "
+                    "benchmark --thinking none|high."
+                )
+            if thinking_budget is not None:
+                parser.error(
+                    "Qwen 3.6 on a dedicated Baseten vLLM endpoint exposes a "
+                    "binary reasoning toggle, not an exact --thinking-budget control."
+                )
+            return
+
         if openai_no_budget_thinking_toggle:
             if not args.openai_base_url:
                 parser.error(
@@ -1356,6 +1410,35 @@ def _apply_benchmark_thinking_mode(
             }
             extra["extra_body"] = extra_body
             return f"openrouter:poolside-laguna-s-2.1 reasoning.enabled={enabled}"
+
+        if _is_openrouter_qwen36_model(openai_base_url, model_lower):
+            enabled = normalized_thinking != "none"
+            existing_extra_body = extra.get("extra_body")
+            extra_body = dict(existing_extra_body) if isinstance(existing_extra_body, dict) else {}
+            extra_body.pop("vllm_xargs", None)
+            extra_body.pop("chat_template_kwargs", None)
+            extra_body.pop("reasoning_effort", None)
+            extra_body["reasoning"] = {
+                "enabled": enabled,
+                "exclude": False,
+            }
+            extra["extra_body"] = extra_body
+            return f"openrouter:qwen3.6 reasoning.enabled={enabled}"
+
+        if _is_baseten_qwen36_model(openai_base_url, model_lower):
+            enabled = normalized_thinking != "none"
+            existing_extra_body = extra.get("extra_body")
+            extra_body = dict(existing_extra_body) if isinstance(existing_extra_body, dict) else {}
+            extra_body.pop("vllm_xargs", None)
+            extra_body.pop("reasoning", None)
+            extra_body.pop("reasoning_effort", None)
+            existing_ctk = extra_body.get("chat_template_kwargs")
+            chat_template_kwargs = dict(existing_ctk) if isinstance(existing_ctk, dict) else {}
+            chat_template_kwargs["enable_thinking"] = enabled
+            chat_template_kwargs["preserve_thinking"] = enabled
+            extra_body["chat_template_kwargs"] = chat_template_kwargs
+            extra["extra_body"] = extra_body
+            return f"openai-compatible:baseten-qwen3.6 enable_thinking={enabled}"
 
         if openai_base_url and _is_baseten_endpoint(openai_base_url):
             if _is_baseten_inkling_model(model_lower):

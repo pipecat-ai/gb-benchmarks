@@ -167,5 +167,107 @@ class OpenRouterLagunaTests(unittest.TestCase):
         asyncio.run(run())
 
 
+class OpenRouterQwen36Tests(unittest.TestCase):
+    BASE_URL = "https://openrouter.ai/api/v1"
+    MODELS = ("qwen/qwen3.6-27b", "qwen/qwen3.6-35b-a3b")
+
+    def _args(self, model: str, thinking: str, thinking_budget=None):
+        return argparse.Namespace(
+            provider="openai",
+            model=model,
+            openai_base_url=self.BASE_URL,
+            thinking=thinking,
+            thinking_budget=thinking_budget,
+            max_tokens=4096,
+            openai_no_budget_thinking_toggle=False,
+            llm_request_timeout_secs=None,
+            llm_stream_idle_timeout_secs=None,
+            reasoning_effort=None,
+            round_id=None,
+            openai_params=None,
+        )
+
+    def test_routes_through_reasoning_aware_service(self) -> None:
+        for model in self.MODELS:
+            with self.subTest(model=model):
+                service = llm_factory.create_llm_service(
+                    llm_factory.LLMServiceConfig(
+                        provider=llm_factory.LLMProvider.OPENAI,
+                        model=model,
+                        api_key="offline-test-key",
+                        openai_base_url=self.BASE_URL,
+                        max_tokens=4096,
+                    )
+                )
+                self.assertIsInstance(service, OpenRouterReasoningLLMService)
+
+    def test_route_predicate_is_endpoint_and_family_exact(self) -> None:
+        for model in self.MODELS:
+            self.assertTrue(
+                mini_rl_env._is_openrouter_qwen36_model(self.BASE_URL, model)
+            )
+        self.assertFalse(
+            mini_rl_env._is_openrouter_qwen36_model(
+                "https://example.com/v1", self.MODELS[0]
+            )
+        )
+        self.assertFalse(
+            mini_rl_env._is_openrouter_qwen36_model(
+                self.BASE_URL, "qwen/qwen3.5-27b"
+            )
+        )
+
+    def test_thinking_policy_uses_binary_reasoning_control(self) -> None:
+        for model in self.MODELS:
+            for thinking, enabled in (("none", False), ("high", True)):
+                with self.subTest(model=model, thinking=thinking):
+                    service = types.SimpleNamespace(
+                        _settings={
+                            "extra": {
+                                "extra_body": {
+                                    "vllm_xargs": {"thinking_budget": 2048},
+                                    "chat_template_kwargs": {"enable_thinking": False},
+                                    "top_k": 20,
+                                }
+                            }
+                        }
+                    )
+                    policy = mini_rl_env._apply_benchmark_thinking_mode(
+                        llm_service=service,
+                        provider=mini_rl_env.LLMProvider.OPENAI,
+                        model=model,
+                        thinking=thinking,
+                        thinking_budget=None,
+                        openai_base_url=self.BASE_URL,
+                    )
+                    self.assertEqual(
+                        service._settings["extra"]["extra_body"],
+                        {
+                            "top_k": 20,
+                            "reasoning": {"enabled": enabled, "exclude": False},
+                        },
+                    )
+                    self.assertEqual(
+                        policy,
+                        f"openrouter:qwen3.6 reasoning.enabled={enabled}",
+                    )
+
+    def test_validation_accepts_only_none_and_high(self) -> None:
+        parser = CapturingArgumentParser()
+        for model in self.MODELS:
+            for thinking in ("none", "high"):
+                mini_rl_env._validate_generation_controls(
+                    self._args(model, thinking), parser
+                )
+            with self.assertRaisesRegex(ValueError, r"none\|high"):
+                mini_rl_env._validate_generation_controls(
+                    self._args(model, "medium"), parser
+                )
+            with self.assertRaisesRegex(ValueError, "binary reasoning toggle"):
+                mini_rl_env._validate_generation_controls(
+                    self._args(model, "high", 512), parser
+                )
+
+
 if __name__ == "__main__":
     unittest.main()

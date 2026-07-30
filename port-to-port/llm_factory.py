@@ -77,6 +77,27 @@ def _is_openrouter_laguna_model(model: str, openai_base_url: Optional[str]) -> b
     }
 
 
+def _is_openrouter_qwen36_model(model: str, openai_base_url: Optional[str]) -> bool:
+    if not openai_base_url:
+        return False
+    host = (urllib.parse.urlparse(openai_base_url).hostname or "").lower()
+    normalized_model = model.strip().lower()
+    return host in {"openrouter.ai", "www.openrouter.ai"} and normalized_model.startswith(
+        "qwen/qwen3.6-"
+    )
+
+
+def _is_baseten_qwen36_model(model: str, openai_base_url: Optional[str]) -> bool:
+    if not openai_base_url:
+        return False
+    host = (urllib.parse.urlparse(openai_base_url).hostname or "").lower()
+    normalized_model = model.strip().lower()
+    return host.endswith(".baseten.co") and normalized_model in {
+        "qwen/qwen3.6-27b",
+        "qwen/qwen3.6-35b-a3b-fp8",
+    }
+
+
 GPT56_RESPONSES_MODELS = frozenset(
     {
         "gpt-5.6-luna",
@@ -293,9 +314,15 @@ def _create_openai_service(
     is_gpt56_responses = _is_gpt56_responses_model(model, openai_base_url)
     if uses_responses:
         from openai_responses_service import OpenAIResponsesLLMService as OpenAIServiceClass
-    elif _is_openrouter_laguna_model(model, openai_base_url):
+    elif _is_openrouter_laguna_model(
+        model, openai_base_url
+    ) or _is_openrouter_qwen36_model(model, openai_base_url):
         from openrouter_reasoning_service import (
             OpenRouterReasoningLLMService as OpenAIServiceClass,
+        )
+    elif _is_baseten_qwen36_model(model, openai_base_url):
+        from baseten_qwen_reasoning_service import (
+            BasetenQwenReasoningLLMService as OpenAIServiceClass,
         )
     else:
         from pipecat.services.openai.llm import OpenAILLMService as OpenAIServiceClass

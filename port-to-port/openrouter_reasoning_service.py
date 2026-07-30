@@ -6,9 +6,9 @@ ignores those deltas, so a later tool-result request loses the reasoning that
 led to the tool call. OpenRouter and Poolside both recommend returning that
 reasoning with the assistant tool-call message.
 
-This module keeps the compatibility change local to the Laguna/OpenRouter
-route. It also emits Pipecat thought frames so benchmark artifacts retain the
-reasoning trace separately from user-visible answer text.
+This module keeps the compatibility change local to reasoning-enabled
+OpenRouter routes. It also emits Pipecat thought frames so benchmark artifacts
+retain the reasoning trace separately from user-visible answer text.
 """
 
 from __future__ import annotations

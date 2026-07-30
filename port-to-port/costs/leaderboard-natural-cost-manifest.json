@@ -1,7 +1,7 @@
 {
   "schema_version": "leaderboard_cost_manifest.v1",
-  "pricing": "costs/pricing-2026-07-22.json",
-  "canonical_history": "runs/leaderboard-natural-v2-linked-input/*.json",
+  "pricing": "costs/pricing-2026-07-28.json",
+  "canonical_history": "runs/leaderboard-natural-v2-linked-qwen36-27b-35b-20260728/*.json",
   "sample_batch": "20260722T113400Z",
   "rows": [
     {
@@ -69,11 +69,35 @@
       "selector": {"model": "gpt-5.2", "thinking": "medium"}
     },
     {
-      "label": "gemma-4-31b (thinking)",
-      "method": "modal_history_range",
+      "label": "qwen3.6-27b (high)",
+      "method": "token_history_proxy",
+      "rate": "openrouter-qwen3-6-27b",
       "task_complete_rate": 1.0,
-      "selector": {"model": "gemma-4-31b", "thinking": "high", "max_tokens": 4096},
-      "resource": {"gpu": "a100-80gb", "count": 2, "fallback_gpu": "h100"}
+      "selector": {
+        "model": "Qwen/Qwen3.6-27B",
+        "thinking": "high",
+        "max_tokens": 4096,
+        "openai_base_url": "https://model-w67n482q.api.baseten.co/deployment/wxpnlg5/sync/v1"
+      }
+    },
+    {
+      "label": "qwen3.6-35b-a3b (high, FP8)",
+      "method": "token_history_proxy",
+      "rate": "openrouter-qwen3-6-35b-a3b",
+      "task_complete_rate": 1.0,
+      "selector": {
+        "model": "Qwen/Qwen3.6-35B-A3B-FP8",
+        "thinking": "high",
+        "max_tokens": 4096,
+        "openai_base_url": "https://model-qzkm8mpq.api.baseten.co/deployment/qe20zvr/sync/v1"
+      }
+    },
+    {
+      "label": "gemma-4-31b (thinking)",
+      "method": "token_history",
+      "rate": "bedrock-gemma-4-31b",
+      "task_complete_rate": 1.0,
+      "selector": {"model": "gemma-4-31b", "thinking": "high", "max_tokens": 4096}
     },
     {
       "label": "claude-haiku-4-5-20251001 (low)",
@@ -148,10 +172,10 @@
     },
     {
       "label": "nemotron-3-super-120b (tb=512)",
-      "method": "modal_history",
+      "method": "token_history",
+      "rate": "openrouter-nemotron-3-super-120b",
       "task_complete_rate": 1.0,
-      "selector": {"model": "nemotron-3-super-120b", "thinking": "medium", "max_tokens": 4096},
-      "resource": {"gpu": "b200", "count": 2}
+      "selector": {"model": "nemotron-3-super-120b", "thinking": "medium", "max_tokens": 4096}
     },
     {
       "label": "gpt-4o",
@@ -169,38 +193,38 @@
     },
     {
       "label": "qwen3.5-9b (thinking)",
-      "method": "modal_history",
+      "method": "token_history",
+      "rate": "openrouter-qwen3-5-9b",
       "task_complete_rate": 0.56,
-      "selector": {"model": "qwen3.5-9b", "thinking": "high", "max_tokens": 4096},
-      "resource": {"gpu": "b200", "count": 1}
+      "selector": {"model": "qwen3.5-9b", "thinking": "high", "max_tokens": 4096}
     },
     {
       "label": "qwen3.5-27b (none)",
-      "method": "modal_history",
+      "method": "token_history",
+      "rate": "openrouter-qwen3-5-27b",
       "task_complete_rate": 0.08,
-      "selector": {"model": "qwen3.5-27b", "thinking": "none", "max_tokens": 4096},
-      "resource": {"gpu": "b200", "count": 1}
+      "selector": {"model": "qwen3.5-27b", "thinking": "none", "max_tokens": 4096}
     },
     {
       "label": "nemotron-3-super-120b (none)",
-      "method": "modal_history",
+      "method": "token_history",
+      "rate": "openrouter-nemotron-3-super-120b",
       "task_complete_rate": 0.16,
-      "selector": {"model": "nemotron-3-super-120b", "thinking": "none", "max_tokens": 4096},
-      "resource": {"gpu": "b200", "count": 2}
+      "selector": {"model": "nemotron-3-super-120b", "thinking": "none", "max_tokens": 4096}
     },
     {
       "label": "qwen3.5-4b",
-      "method": "modal_history",
+      "method": "token_history",
+      "rate": "empiriolabs-qwen3-5-4b",
       "task_complete_rate": 0.12,
-      "selector": {"model": "qwen3.5-4b", "thinking": "none", "max_tokens": 4096},
-      "resource": {"gpu": "b200", "count": 1}
+      "selector": {"model": "qwen3.5-4b", "thinking": "none", "max_tokens": 4096}
     },
     {
       "label": "glm-4.7-flash",
-      "method": "modal_history",
+      "method": "token_history",
+      "rate": "openrouter-glm-4-7-flash",
       "task_complete_rate": 0.12,
-      "selector": {"model": "glm-4.7-flash", "thinking": "none", "max_tokens": 4096},
-      "resource": {"gpu": "b200", "count": 1}
+      "selector": {"model": "glm-4.7-flash", "thinking": "none", "max_tokens": 4096}
     }
   ]
 }

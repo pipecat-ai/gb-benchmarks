@@ -4,8 +4,8 @@
 - Prompt hash: `68d2c77be6548b77cd2e65ca0489edb2080c4a652feeb11f5ef5317f91e4b1f0`
 - Score rubric version: `port_to_port_primary_v1`
 - Aggregation: Primary=median, Task Complete=rate, Trade/Path/Tools/Report=mean
-- Source runs: `runs/leaderboard-natural-v2-linked-input/*.json`
-- Enriched scores: `runs/leaderboard-natural-v2-linked-refresh-20260722-newmodels.jsonl`
+- Source runs: `runs/leaderboard-natural-v2-linked-qwen36-27b-35b-20260728/*.json`
+- Enriched scores: `runs/leaderboard-natural-v2-linked-refresh-qwen36-27b-35b-20260728.jsonl`
 - Sort: Primary /100 desc, Task Complete % desc, Total Time P50 (s) asc
 
 | Model | N | Primary /100 | Task Complete % | Trade /15 Avg | Path /15 Avg | Tools /15 Avg | Report /15 Avg | Turn P50 (ms) | Turn P90 (ms) | Total Time P50 (s) |
@@ -29,6 +29,7 @@
 | gpt-5.1 (th=medium) | 25 | 92 | 100.0% | 8.0 | 15.0 | 15.0 | 14.2 | 13615.7 | 49692.4 | 647.86 |
 | gpt-5.2 (th=medium) | 25 | 91 | 100.0% | 6.5 | 14.8 | 14.1 | 14.6 | 1047.9 | 10482.2 | 149.98 |
 | claude-sonnet-4-6 (th=low) | 25 | 90 | 100.0% | 5.8 | 15.0 | 13.6 | 14.6 | 1957.0 | 6899.5 | 139.09 |
+| Qwen/Qwen3.6-27B (th=high, mt=4096, base=model-w67n482q.api.baseten.co/deployment/wxpnlg5/sync) | 25 | 90 | 100.0% | 6.6 | 14.5 | 14.5 | 14.9 | 1611.2 | 7699.3 | 144.80 |
 | gemma-4-31b (th=high, mt=4096, base=daily--gemma4-31b-vllm.modal.run) | 25 | 89 | 100.0% | 4.0 | 15.0 | 15.0 | 15.0 | 850.6 | 1065.5 | 60.43 |
 | gpt-5.6-terra (eff=low, mt=50000) | 25 | 89 | 100.0% | 4.2 | 14.4 | 14.9 | 14.9 | 1244.2 | 2824.5 | 84.24 |
 | claude-sonnet-5 (th=low) | 25 | 89 | 100.0% | 4.3 | 14.8 | 15.0 | 15.0 | 2068.8 | 5695.2 | 119.40 |
@@ -36,6 +37,7 @@
 | claude-sonnet-5 (th=none) | 25 | 89 | 100.0% | 6.1 | 14.0 | 14.6 | 15.0 | 2543.8 | 10036.0 | 189.48 |
 | qwen3.5-27b (th=high, mt=4096, base=daily--qwen35-sglang-serve-27b.modal.run) | 25 | 89 | 100.0% | 5.4 | 14.3 | 14.8 | 15.0 | 4281.0 | 11008.7 | 200.22 |
 | nemotron-3-ultra-550b (th=high, mt=8192, base=inference.baseten.co) | 25 | 88 | 100.0% | 4.6 | 13.2 | 14.9 | 14.0 | 989.3 | 2817.5 | 81.03 |
+| Qwen/Qwen3.6-35B-A3B-FP8 (th=high, mt=4096, base=model-qzkm8mpq.api.baseten.co/deployment/qe20zvr/sync) | 25 | 88 | 100.0% | 5.3 | 13.6 | 13.4 | 15.0 | 1091.1 | 4003.3 | 101.04 |
 | gpt-5.1 (th=low) | 25 | 88 | 100.0% | 4.2 | 15.0 | 14.8 | 14.4 | 1798.2 | 12660.8 | 162.69 |
 | gpt-5.6-luna (eff=xhigh, mt=50000) | 25 | 88 | 96.0% | 6.8 | 12.9 | 14.1 | 14.0 | 1490.2 | 5967.5 | 125.40 |
 | poolside/laguna-s-2.1 (th=none, mt=4096, base=openrouter.ai/api) | 25 | 88 | 84.0% | 4.8 | 12.0 | 14.4 | 12.0 | 834.0 | 2592.3 | 93.44 |
@@ -68,6 +70,8 @@
 | nemotron-3-super-120b (th=low, tb=128, mt=4096, base=daily--nemotron-super-b200-sglang-serve.modal.run) | 25 | 81 | 92.0% | 2.2 | 12.3 | 11.1 | 13.7 | 2940.4 | 3566.0 | 169.80 |
 | gpt-5.4-mini (th=medium) | 25 | 81 | 80.0% | 4.1 | 9.8 | 13.9 | 12.5 | 2874.2 | 11905.3 | 222.19 |
 | gpt-5.4-mini (th=low) | 25 | 80 | 64.0% | 2.6 | 9.7 | 14.6 | 13.6 | 1351.9 | 2880.5 | 79.00 |
+| Qwen/Qwen3.6-35B-A3B-FP8 (th=none, mt=4096, base=model-qzkm8mpq.api.baseten.co/deployment/qe20zvr/sync) | 25 | 79 | 88.0% | 3.5 | 13.6 | 5.2 | 13.0 | 889.5 | 1533.6 | 104.05 |
+| Qwen/Qwen3.6-27B (th=none, mt=4096, base=model-w67n482q.api.baseten.co/deployment/wxpnlg5/sync) | 25 | 72 | 56.0% | 3.8 | 15.0 | 0.0 | 8.4 | 998.2 | 2520.2 | 215.26 |
 | gpt-5.4-mini (th=high, mt=4096) | 25 | 71 | 56.0% | 5.6 | 11.9 | 4.5 | 8.2 | 7661.1 | 26354.6 | 465.29 |
 | qwen3.5-9b (th=high, mt=4096, base=daily--qwen35-sglang-serve-9b.modal.run) | 25 | 64 | 56.0% | 0.6 | 7.8 | 5.8 | 10.8 | 3237.6 | 9443.8 | 270.02 |
 | nemotron-3-nano-30b (th=high, tb=2048, mt=4096, base=daily--nemotron-nano-b200-sglang-serve.modal.run) | 25 | 45 | 8.0% | 0.1 | 12.5 | 8.6 | 10.0 | 15943.9 | 17104.7 | 381.63 |

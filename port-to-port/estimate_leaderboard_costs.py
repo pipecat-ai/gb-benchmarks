@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """Estimate README benchmark cost per completed task from trace usage.
 
-Token-priced rows use the mean observed cost across their canonical 25-run
-cohort. GPT-5.6 and self-hosted Modal rows use a recent representative sample
-because their historical traces lack cache-write or infrastructure billing
-detail. The expected cost of one completed task is cost/attempt divided by the
+API-priced rows use the mean observed token usage across their canonical 25-run
+cohort, regardless of where the benchmark itself ran. GPT-5.6 uses a recent
+representative sample because its historical traces lack cache-write detail.
+The expected cost of one completed task is cost/attempt divided by the
 official-judge Task Complete rate shown on the README.
 """
 
@@ -21,6 +21,15 @@ from typing import Any, Iterable
 
 
 PORT_DIR = Path(__file__).resolve().parent
+PRICE_PROVIDER_PREFIXES = {
+    "anthropic-": "Anthropic",
+    "baseten-": "BaseTen",
+    "bedrock-": "AWS Bedrock",
+    "empiriolabs-": "EmpirioLabs",
+    "google-": "AI Studio",
+    "openai-": "OpenAI",
+    "openrouter-": "OpenRouter",
+}
 
 
 def _load_json(path: Path) -> dict[str, Any]:
@@ -183,6 +192,15 @@ def _money(value: float) -> str:
     return f"${value:.4f}"
 
 
+def provider_for_price_key(price_key: str) -> str:
+    """Return the API provider supplying the rate used for a cost estimate."""
+
+    for prefix, provider in PRICE_PROVIDER_PREFIXES.items():
+        if price_key.startswith(prefix):
+            return provider
+    raise ValueError(f"no provider mapping for price key {price_key!r}")
+
+
 def estimate(manifest_path: Path) -> dict[str, Any]:
     manifest = _load_json(manifest_path)
     pricing = _load_json(_resolve(manifest["pricing"]))
@@ -220,6 +238,7 @@ def estimate(manifest_path: Path) -> dict[str, Any]:
                 {
                     "cost_samples": len(attempt_costs),
                     "price_key": row["rate"],
+                    "provider": provider_for_price_key(row["rate"]),
                     "proxy_price": bool(rate.get("proxy")),
                     "mean_cost_per_attempt": attempt_cost,
                     "median_cost_per_attempt": statistics.median(attempt_costs),
@@ -245,6 +264,7 @@ def estimate(manifest_path: Path) -> dict[str, Any]:
             result.update(
                 {
                     "cost_samples": len(attempt_costs),
+                    "provider": "Modal",
                     "resource": row["resource"],
                     "mean_cost_per_attempt": attempt_cost,
                     "median_cost_per_attempt": statistics.median(attempt_costs),
@@ -273,6 +293,7 @@ def estimate(manifest_path: Path) -> dict[str, Any]:
                 result.update(
                     {
                         "price_key": row["rate"],
+                        "provider": provider_for_price_key(row["rate"]),
                         "mean_cost_per_attempt": attempt_cost,
                         "estimated_cost_per_completed_task": attempt_cost / completion_rate,
                         "sample_billable_tokens": buckets,
@@ -285,6 +306,7 @@ def estimate(manifest_path: Path) -> dict[str, Any]:
                 result.update(
                     {
                         "resource": row["resource"],
+                        "provider": "Modal",
                         "mean_cost_per_attempt": attempt_cost,
                         "estimated_cost_per_completed_task": attempt_cost / completion_rate,
                     }
@@ -315,13 +337,11 @@ def render_markdown(report: dict[str, Any]) -> str:
         f"Pricing snapshot: {report['pricing_as_of']} ({report['currency']}).",
         "",
         "Estimated cost per completed task is mean representative cost per attempt divided by the "
-        "official-judge Task Complete rate. Token-priced APIs use all 25 canonical traces. GPT-5.6 "
-        "uses one sanity-checked sample. Modal rows price the 25 canonical active-request traces; "
-        "Modal estimates are GPU-only active-request cost and exclude between-request idle capacity, "
-        "CPU, memory, credits, and discounts.",
+        "official-judge Task Complete rate. API-provider estimates use all 25 canonical traces, "
+        "regardless of where the benchmark ran. GPT-5.6 uses one sanity-checked sample.",
         "",
-        "| Model | Method | Cost samples | Task complete | Cost / attempt | Est. cost / complete | Sample check |",
-        "|---|---|---:|---:|---:|---:|---|",
+        "| Model | Method | Cost samples | Task complete | Cost / attempt | Est. cost / complete | Sample check | Provider |",
+        "|---|---|---:|---:|---:|---:|---|---|",
     ]
     method_names = {
         "token_history": "25-run token usage",
@@ -344,7 +364,8 @@ def render_markdown(report: dict[str, Any]) -> str:
             sample_check = "n/a"
         lines.append(
             f"| {item['label']} | {method_names[item['method']]} | {item['cost_samples']} | "
-            f"{item['task_complete_rate'] * 100:.1f}% | {attempt} | {complete} | {sample_check} |"
+            f"{item['task_complete_rate'] * 100:.1f}% | {attempt} | {complete} | "
+            f"{sample_check} | {item['provider']} |"
         )
     lines.extend(
         [
@@ -352,7 +373,9 @@ def render_markdown(report: dict[str, Any]) -> str:
             "Notes:",
             "",
             "- Kimi K2.6 uses Baseten's public Kimi K2.6 token price as a market proxy; the measured Cerebras dedicated-endpoint contract is not public.",
-            "- Gemma 4 is shown as a range: the configured two-A100 primary allocation through the two-H100 fallback.",
+            "- Gemma 4 uses Amazon Bedrock US Standard on-demand pricing; Bedrock does not publish a separate cached-input rate for this model.",
+            "- Qwen 3.6 benchmark scores and latency come from BaseTen single-H100 vLLM deployments. OpenRouter supplies same-model price proxies; the 27B estimate conservatively prices all input at the standard rate because historical traces do not expose API cache-read token buckets, and OpenRouter does not promise that its 35B serving precision matches the scored official FP8 checkpoint.",
+            "- Other self-hosted benchmark runs are priced against a public same-model API endpoint. OpenRouter supplies Nemotron Super, Qwen 3.5 9B/27B, and GLM 4.7 Flash prices; EmpirioLabs supplies Qwen 3.5 4B.",
             "- Google reasoning tokens are billed as output. OpenAI-compatible reasoning tokens are already included in completion tokens. Anthropic base input, 5-minute cache-write, cache-read, and output buckets are priced separately.",
             "- These are list-price workload estimates, not invoice reconciliation.",
             "",
