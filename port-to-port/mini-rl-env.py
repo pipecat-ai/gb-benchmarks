@@ -358,6 +358,18 @@ def _is_baseten_qwen36_model(
     }
 
 
+def _is_baseten_gemma4_model(
+    openai_base_url: Optional[str], model: str
+) -> bool:
+    if not openai_base_url:
+        return False
+    parsed = urllib.parse.urlparse(openai_base_url)
+    normalized_model = model.strip().lower()
+    return (parsed.hostname or "").lower().endswith(
+        ".baseten.co"
+    ) and normalized_model == "google/gemma-4-26b-a4b-it"
+
+
 def _is_baseten_inkling_model(model_lower: str) -> bool:
     normalized = (model_lower or "").strip().lower()
     return normalized in {"inkling", "thinkingmachines/inkling"}
@@ -1177,6 +1189,19 @@ def _validate_generation_controls(args: argparse.Namespace, parser: argparse.Arg
                 )
             return
 
+        if _is_baseten_gemma4_model(args.openai_base_url, model_lower):
+            if args.thinking not in {"none", "high"}:
+                parser.error(
+                    "Gemma 4 on a dedicated Baseten vLLM endpoint supports "
+                    "benchmark --thinking none|high."
+                )
+            if thinking_budget is not None:
+                parser.error(
+                    "Gemma 4 on a dedicated Baseten vLLM endpoint exposes a "
+                    "binary reasoning toggle, not an exact --thinking-budget control."
+                )
+            return
+
         if openai_no_budget_thinking_toggle:
             if not args.openai_base_url:
                 parser.error(
@@ -1439,6 +1464,27 @@ def _apply_benchmark_thinking_mode(
             extra_body["chat_template_kwargs"] = chat_template_kwargs
             extra["extra_body"] = extra_body
             return f"openai-compatible:baseten-qwen3.6 enable_thinking={enabled}"
+
+        if _is_baseten_gemma4_model(openai_base_url, model_lower):
+            enabled = normalized_thinking != "none"
+            settings["temperature"] = 1.0
+            settings["top_p"] = 0.95
+            existing_extra_body = extra.get("extra_body")
+            extra_body = dict(existing_extra_body) if isinstance(existing_extra_body, dict) else {}
+            extra_body.pop("vllm_xargs", None)
+            extra_body.pop("reasoning", None)
+            extra_body.pop("reasoning_effort", None)
+            existing_ctk = extra_body.get("chat_template_kwargs")
+            chat_template_kwargs = dict(existing_ctk) if isinstance(existing_ctk, dict) else {}
+            chat_template_kwargs["enable_thinking"] = enabled
+            chat_template_kwargs["preserve_thinking"] = enabled
+            extra_body["chat_template_kwargs"] = chat_template_kwargs
+            extra_body["top_k"] = 64
+            extra["extra_body"] = extra_body
+            return (
+                "openai-compatible:baseten-gemma4 "
+                f"enable_thinking={enabled} T=1.0 top_p=0.95 top_k=64"
+            )
 
         if openai_base_url and _is_baseten_endpoint(openai_base_url):
             if _is_baseten_inkling_model(model_lower):

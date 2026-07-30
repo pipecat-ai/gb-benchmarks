@@ -98,6 +98,16 @@ def _is_baseten_qwen36_model(model: str, openai_base_url: Optional[str]) -> bool
     }
 
 
+def _is_baseten_gemma4_model(model: str, openai_base_url: Optional[str]) -> bool:
+    if not openai_base_url:
+        return False
+    host = (urllib.parse.urlparse(openai_base_url).hostname or "").lower()
+    normalized_model = model.strip().lower()
+    return host.endswith(".baseten.co") and normalized_model == (
+        "google/gemma-4-26b-a4b-it"
+    )
+
+
 GPT56_RESPONSES_MODELS = frozenset(
     {
         "gpt-5.6-luna",
@@ -323,6 +333,13 @@ def _create_openai_service(
     elif _is_baseten_qwen36_model(model, openai_base_url):
         from baseten_qwen_reasoning_service import (
             BasetenQwenReasoningLLMService as OpenAIServiceClass,
+        )
+    elif _is_baseten_gemma4_model(model, openai_base_url):
+        # vLLM's Gemma 4 reasoning parser streams thought text separately as
+        # `reasoning`/`reasoning_content`. Preserve that field on assistant
+        # tool-call turns, as required by Gemma's multi-turn tool template.
+        from openrouter_reasoning_service import (
+            OpenRouterReasoningLLMService as OpenAIServiceClass,
         )
     else:
         from pipecat.services.openai.llm import OpenAILLMService as OpenAIServiceClass

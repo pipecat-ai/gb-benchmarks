@@ -1,0 +1,84 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/basetenlabs/truss/main/truss/config.schema.json
+
+model_name: gemma4-26b-a4b-bf16-h100-vllm-nightly-20260729-apc-mtp
+
+model_metadata:
+  example_model_input:
+    model: google/gemma-4-26B-A4B-it
+    messages:
+      - role: user
+        content: "Call an available tool if the request requires it."
+    stream: true
+    stream_options:
+      include_usage: true
+    max_tokens: 128
+    temperature: 1.0
+    top_p: 0.95
+    extra_body:
+      top_k: 64
+      chat_template_kwargs:
+        enable_thinking: false
+        preserve_thinking: false
+  tags:
+    - openai-compatible
+    - gemma4
+    - moe
+    - benchmark
+    - prefix-caching
+    - mtp
+
+# The 2026-07-29 nightly is the newest official vLLM image available when
+# this recipe was created. It includes upstream commit 272abd5f4869, which
+# fixes dim-mismatched Gemma 4 target/assistant embedding sharing and landed
+# after v0.26.0. Pin the multi-architecture digest, not the mutable tag.
+base_image:
+  image: vllm/vllm-openai@sha256:24f2f8975d011ea7f7066a547886a08a1fd3c4bf0880463487fae4f01ce723c6
+
+weights:
+  - source: "hf://google/gemma-4-26B-A4B-it@4d7ae4984b7db7de8f8457170b3f1a419ee76d52"
+    mount_location: /models/gemma4-26b-a4b
+  - source: "hf://google/gemma-4-26B-A4B-it-assistant@6e5aaaf4c42b98394530b8fda2e95cadd65c151c"
+    mount_location: /models/gemma4-26b-a4b-assistant
+
+resources:
+  accelerator: H100
+  use_gpu: true
+
+runtime:
+  predict_concurrency: 1
+  streaming_read_timeout: 120
+  health_checks:
+    startup_threshold_seconds: 1800
+    restart_threshold_seconds: 300
+    stop_traffic_threshold_seconds: 120
+
+environment_variables:
+  VLLM_LOGGING_LEVEL: INFO
+
+docker_server:
+  start_command: >-
+    vllm serve /models/gemma4-26b-a4b
+    --served-model-name google/gemma-4-26B-A4B-it
+    --host 0.0.0.0
+    --port 8000
+    --dtype bfloat16
+    --tensor-parallel-size 1
+    --max-model-len 32768
+    --max-num-seqs 1
+    --max-num-batched-tokens 8192
+    --gpu-memory-utilization 0.90
+    --generation-config vllm
+    --enable-chunked-prefill
+    --enable-prefix-caching
+    --enable-prompt-tokens-details
+    --limit-mm-per-prompt '{"image":0,"video":0,"audio":0}'
+    --enable-auto-tool-choice
+    --tool-call-parser gemma4
+    --reasoning-parser gemma4
+    --chat-template /models/gemma4-26b-a4b/chat_template.jinja
+    --async-scheduling
+    --speculative-config '{"method":"mtp","model":"/models/gemma4-26b-a4b-assistant","num_speculative_tokens":1}'
+  readiness_endpoint: /health
+  liveness_endpoint: /health
+  predict_endpoint: /v1/chat/completions
+  server_port: 8000
