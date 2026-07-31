@@ -73,9 +73,12 @@ class BasetenSweepConfigTests(unittest.TestCase):
             "CONFIG_PLAN slug=inkling-low model=thinkingmachines/inkling thinking=low max_tokens=16384",
             "CONFIG_PLAN slug=inkling-high model=thinkingmachines/inkling thinking=high max_tokens=16384",
             "CONFIG_PLAN slug=inkling-max model=thinkingmachines/inkling thinking=xhigh max_tokens=16384",
+            "CONFIG_PLAN slug=inkling-small-low model=thinkingmachines/inkling-small thinking=low max_tokens=16384",
+            "CONFIG_PLAN slug=inkling-small-high model=thinkingmachines/inkling-small thinking=high max_tokens=16384",
+            "CONFIG_PLAN slug=inkling-small-max model=thinkingmachines/inkling-small thinking=xhigh max_tokens=16384",
         ]
         self.assertEqual(lines, expected)
-        self.assertEqual(len(lines), 8)
+        self.assertEqual(len(lines), 11)
         self.assertFalse(any("inkling-none" in line for line in lines))
 
     def test_print_configs_honors_exact_inkling_filter(self):
@@ -86,6 +89,19 @@ class BasetenSweepConfigTests(unittest.TestCase):
                 "CONFIG_PLAN slug=inkling-low model=thinkingmachines/inkling thinking=low max_tokens=16384",
                 "CONFIG_PLAN slug=inkling-high model=thinkingmachines/inkling thinking=high max_tokens=16384",
                 "CONFIG_PLAN slug=inkling-max model=thinkingmachines/inkling thinking=xhigh max_tokens=16384",
+            ],
+        )
+
+    def test_print_configs_honors_exact_inkling_small_filter(self):
+        lines = self._print_configs(
+            "inkling-small-low,inkling-small-high,inkling-small-max"
+        )
+        self.assertEqual(
+            lines,
+            [
+                "CONFIG_PLAN slug=inkling-small-low model=thinkingmachines/inkling-small thinking=low max_tokens=16384",
+                "CONFIG_PLAN slug=inkling-small-high model=thinkingmachines/inkling-small thinking=high max_tokens=16384",
+                "CONFIG_PLAN slug=inkling-small-max model=thinkingmachines/inkling-small thinking=xhigh max_tokens=16384",
             ],
         )
 

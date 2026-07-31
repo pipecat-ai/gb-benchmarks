@@ -18,7 +18,9 @@ While traveling there and back, make as much money as possible by trading optima
 
 This is a reasonably well-defined task that requires interpolation of the user's intent, some multi-step planning, excellent tool calling discipline, and good state tracking. SOTA models in reasoning mode are reasonably good at performing this task (though not perfect). Claude Sonnet 4.6 is the only model that does well on this task with reasoning disabled.
 
-Here are scores for a curated set of current models we've tested that have a per-turn P50 time of less than 4 seconds. We show only the best configuration for each model on this table. The highest thinking level is not always the best-performing configuration, interestingly. All configurations and models tested, including older models, are in [port-to-port/leaderboards/leaderboard-natural.md](port-to-port/leaderboards/leaderboard-natural.md).
+Here are scores for a curated set of current models we've tested that score at least 80 and have a per-turn P50 time of less than 4 seconds. We show only the best configuration for each model on this table. The highest thinking level is not always the best-performing configuration, interestingly. All configurations and models tested, including older and lower-scoring models, are in [port-to-port/leaderboards/leaderboard-natural.md](port-to-port/leaderboards/leaderboard-natural.md).
+
+Inkling Small narrowly misses the curated score floor: its best configuration (`high`) scored 79 with 76% task completion and a 0.41-second turn P50. See the [Inkling Small benchmark notes](port-to-port/docs/inkling-small-benchmark-notes-20260731.md) for the full effort sweep.
 
 ### Score–cost frontier
 

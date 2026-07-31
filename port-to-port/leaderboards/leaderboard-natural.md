@@ -4,8 +4,8 @@
 - Prompt hash: `68d2c77be6548b77cd2e65ca0489edb2080c4a652feeb11f5ef5317f91e4b1f0`
 - Score rubric version: `port_to_port_primary_v1`
 - Aggregation: Primary=median, Task Complete=rate, Trade/Path/Tools/Report=mean
-- Source runs: `runs/leaderboard-natural-v2-linked-qwen36-27b-35b-20260728/*.json`
-- Enriched scores: `runs/leaderboard-natural-v2-linked-refresh-qwen36-27b-35b-20260728.jsonl`
+- Source runs: `runs/leaderboard-natural-v2-linked-qwen36-27b-35b-inkling-small-20260731/*.json`
+- Enriched scores: `runs/leaderboard-natural-v2-linked-refresh-qwen36-27b-35b-inkling-small-20260731.jsonl`
 - Sort: Primary /100 desc, Task Complete % desc, Total Time P50 (s) asc
 
 | Model | N | Primary /100 | Task Complete % | Trade /15 Avg | Path /15 Avg | Tools /15 Avg | Report /15 Avg | Turn P50 (ms) | Turn P90 (ms) | Total Time P50 (s) |
@@ -71,10 +71,13 @@
 | gpt-5.4-mini (th=medium) | 25 | 81 | 80.0% | 4.1 | 9.8 | 13.9 | 12.5 | 2874.2 | 11905.3 | 222.19 |
 | gpt-5.4-mini (th=low) | 25 | 80 | 64.0% | 2.6 | 9.7 | 14.6 | 13.6 | 1351.9 | 2880.5 | 79.00 |
 | Qwen/Qwen3.6-35B-A3B-FP8 (th=none, mt=4096, base=model-qzkm8mpq.api.baseten.co/deployment/qe20zvr/sync) | 25 | 79 | 88.0% | 3.5 | 13.6 | 5.2 | 13.0 | 889.5 | 1533.6 | 104.05 |
+| inkling-small (th=high, mt=16384, base=inference.baseten.co) | 25 | 79 | 76.0% | 2.8 | 13.7 | 7.7 | 10.8 | 411.2 | 475.8 | 66.12 |
 | Qwen/Qwen3.6-27B (th=none, mt=4096, base=model-w67n482q.api.baseten.co/deployment/wxpnlg5/sync) | 25 | 72 | 56.0% | 3.8 | 15.0 | 0.0 | 8.4 | 998.2 | 2520.2 | 215.26 |
 | gpt-5.4-mini (th=high, mt=4096) | 25 | 71 | 56.0% | 5.6 | 11.9 | 4.5 | 8.2 | 7661.1 | 26354.6 | 465.29 |
 | qwen3.5-9b (th=high, mt=4096, base=daily--qwen35-sglang-serve-9b.modal.run) | 25 | 64 | 56.0% | 0.6 | 7.8 | 5.8 | 10.8 | 3237.6 | 9443.8 | 270.02 |
 | nemotron-3-nano-30b (th=high, tb=2048, mt=4096, base=daily--nemotron-nano-b200-sglang-serve.modal.run) | 25 | 45 | 8.0% | 0.1 | 12.5 | 8.6 | 10.0 | 15943.9 | 17104.7 | 381.63 |
+| inkling-small (th=xhigh, mt=16384, base=inference.baseten.co) | 25 | 44 | 20.0% | 2.3 | 13.7 | 5.6 | 2.8 | 416.3 | 485.6 | 73.22 |
+| inkling-small (th=low, mt=16384, base=inference.baseten.co) | 25 | 43 | 0.0% | 0.0 | 14.4 | 14.5 | 12.6 | 378.0 | 621.6 | 8.02 |
 | gpt-5.4-mini (th=none, mt=4096) | 25 | 42 | 8.0% | 0.2 | 11.2 | 14.2 | 10.1 | 911.5 | 1990.9 | 21.41 |
 | qwen3.5-27b (th=none, mt=4096, base=daily--qwen35-sglang-serve-27b.modal.run) | 25 | 39 | 8.0% | 2.5 | 14.5 | 0.0 | 1.8 | 1932.7 | 4479.8 | 282.62 |
 | nemotron-3-super-120b (th=none, tb=0, mt=4096, base=daily--nemotron-super-b200-sglang-serve.modal.run) | 25 | 37 | 16.0% | 1.6 | 14.2 | 0.2 | 2.3 | 1497.1 | 2994.8 | 260.14 |

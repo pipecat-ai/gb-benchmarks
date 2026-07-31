@@ -372,7 +372,12 @@ def _is_baseten_gemma4_model(
 
 def _is_baseten_inkling_model(model_lower: str) -> bool:
     normalized = (model_lower or "").strip().lower()
-    return normalized in {"inkling", "thinkingmachines/inkling"}
+    return normalized in {
+        "inkling",
+        "thinkingmachines/inkling",
+        "inkling-small",
+        "thinkingmachines/inkling-small",
+    }
 
 
 def _is_baseten_retry_eligible_model(model: str) -> bool:
@@ -444,7 +449,7 @@ def _baseten_inkling_reasoning_effort(thinking: str) -> str:
         return effort_by_level[normalized]
     except KeyError as exc:
         raise ValueError(
-            "Inkling on Baseten supports benchmark thinking "
+            "Inkling models on Baseten support benchmark thinking "
             "none/minimal/low/medium/high/xhigh "
             "(xhigh maps to reasoning_effort=max)."
         ) from exc

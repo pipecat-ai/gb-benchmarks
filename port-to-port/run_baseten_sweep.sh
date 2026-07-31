@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
 # Natural-variant port-to-port sweep for Baseten-hosted models.
 #
-# Configs (8):
+# Configs (11):
 #   zai-org/GLM-5.2                          thinking: none, high, xhigh
 #   nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B thinking: none, high
 #   thinkingmachines/inkling                  thinking: low, high, xhigh
-# Inkling runs use max_tokens=16384; GLM/Nemotron use the 8192 default.
+#   thinkingmachines/inkling-small            thinking: low, high, xhigh
+# Inkling-family runs use max_tokens=16384; GLM/Nemotron use the 8192 default.
 # (Nemotron Ultra reasoning is binary on Baseten, so only none + high are run.)
 #
 # Each config runs ROUNDS episodes in one strictly sequential process: one
@@ -22,7 +23,7 @@ ROUNDS="${ROUNDS:-25}"
 # escalate if step-5 validation still shows truncation.
 MAX_TOKENS="${MAX_TOKENS:-8192}"
 MAX_TURNS="${MAX_TURNS:-50}"
-FC_TIMEOUT="${FC_TIMEOUT:-30}"
+FC_TIMEOUT="${FC_TIMEOUT:-20}"
 PER_RUN_TIMEOUT="${PER_RUN_TIMEOUT:-600}"
 BASE_URL="https://inference.baseten.co/v1"
 ENV_FILE="/home/khkramer/src/gb-benchmarks/.env"
@@ -39,6 +40,9 @@ CONFIGS=(
   "inkling-low|thinkingmachines/inkling|low|16384"
   "inkling-high|thinkingmachines/inkling|high|16384"
   "inkling-max|thinkingmachines/inkling|xhigh|16384"
+  "inkling-small-low|thinkingmachines/inkling-small|low|16384"
+  "inkling-small-high|thinkingmachines/inkling-small|high|16384"
+  "inkling-small-max|thinkingmachines/inkling-small|xhigh|16384"
 )
 
 config_is_selected() {

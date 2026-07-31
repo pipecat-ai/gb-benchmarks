@@ -49,11 +49,21 @@ class InklingHarnessTests(unittest.TestCase):
     BASETEN_URL = "https://inference.baseten.co/v1"
 
     def test_inkling_model_predicate_is_exact_and_normalized(self) -> None:
-        for model in ("inkling", " thinkingmachines/INKLING "):
+        for model in (
+            "inkling",
+            " thinkingmachines/INKLING ",
+            "inkling-small",
+            " thinkingmachines/INKLING-SMALL ",
+        ):
             with self.subTest(model=model):
                 self.assertTrue(mini_rl_env._is_baseten_inkling_model(model))
 
-        for model in ("thinkingmachines/inkling-preview", "my-inkling", "glm-5.2"):
+        for model in (
+            "thinkingmachines/inkling-preview",
+            "thinkingmachines/inkling-small-preview",
+            "my-inkling",
+            "glm-5.2",
+        ):
             with self.subTest(model=model):
                 self.assertFalse(mini_rl_env._is_baseten_inkling_model(model))
 
@@ -108,9 +118,26 @@ class InklingHarnessTests(unittest.TestCase):
     def test_inkling_effort_mapper_rejects_unknown_level(self) -> None:
         with self.assertRaisesRegex(
             ValueError,
-            "Inkling on Baseten supports benchmark thinking",
+            "Inkling models on Baseten support benchmark thinking",
         ):
             mini_rl_env._baseten_inkling_reasoning_effort("unknown")
+
+    def test_inkling_small_uses_same_native_effort_policy(self) -> None:
+        service = types.SimpleNamespace(_settings={"temperature": 0.2})
+        policy = mini_rl_env._apply_benchmark_thinking_mode(
+            llm_service=service,
+            provider=mini_rl_env.LLMProvider.OPENAI,
+            model="thinkingmachines/inkling-small",
+            thinking="xhigh",
+            thinking_budget=None,
+            openai_base_url=self.BASETEN_URL,
+        )
+        self.assertEqual(service._settings["temperature"], 1.0)
+        self.assertEqual(service._settings["extra"]["reasoning_effort"], "max")
+        self.assertEqual(
+            policy,
+            "openai-compatible:baseten-inkling reasoning_effort=max T=1.0",
+        )
 
     def test_inkling_temperature_override_is_endpoint_and_model_gated(self) -> None:
         inkling = types.SimpleNamespace(_settings={"temperature": 0.2})
