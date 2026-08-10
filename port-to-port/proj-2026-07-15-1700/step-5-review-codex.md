@@ -33,4 +33,3 @@ None.
   | xhigh | 86 | 100.0% | 2.8 | 15.0 | 13.2 | 14.7 | 606.1 ms | 3155.9 ms | 129.79 s |
 - **README best-config:** All three configurations tie at Primary 86 / 100% complete. `low` is correctly selected: it has the fastest Total Time P50, the tightest Turn P90, and Turn P50 `594.0 ms < 4000 ms`, so it qualifies for the README table.
 - **Filtered output:** `leaderboard-natural-filtered.md` is currently byte-identical to `leaderboard-natural.md`; applying the same approved scratch bytes to both is correct.
-

@@ -128,4 +128,3 @@ Corrections:
 4. **Add a negative test for text-only no-tool responses with missing usage.**
 
    The plan includes text-only no-tool coverage. Include the variant where usage is absent but `raw_response_text` is non-empty, to ensure the retry path does not swallow a genuine visible no-tool answer.
-
