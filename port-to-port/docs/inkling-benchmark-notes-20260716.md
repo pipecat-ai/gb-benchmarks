@@ -2,6 +2,8 @@
 
 _Added 2026-07-16 (proj-2026-07-15-1700). Integrated, benchmarked, and added to the natural leaderboard._
 
+Combined comparison: [Inkling family benchmark report](inkling-family-benchmark-report-20260731.html).
+
 ## What it is
 Thinking Machines **Inkling** — 975B-param MoE (~41B active), 1M context, native
 reasoning. Served **serverless on Baseten** (pay-per-token), OpenAI Chat

@@ -3,6 +3,8 @@
 _Added 2026-07-31. Integrated, benchmarked, and added to the full natural
 leaderboard._
 
+Combined comparison: [Inkling family benchmark report](inkling-family-benchmark-report-20260731.html).
+
 ## Model and endpoint
 
 [Thinking Machines describes Inkling Small](https://thinkingmachines.ai/news/introducing-inkling/)
