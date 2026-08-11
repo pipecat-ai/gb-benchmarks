@@ -1,0 +1,156 @@
+{
+  "schema_version": "gpt56_authorization_ledger.v1",
+  "as_of_utc": "2026-07-17T13:55:41.755715+00:00",
+  "accounting_basis": "Conservative authorization accounting; reservations are retained when complete provider usage is unavailable. This is not a statement of billed spend.",
+  "entries": [
+    {
+      "entry_id": "v1-history-failure",
+      "accounted_tokens": 1070480,
+      "estimated_usd": 2.753,
+      "wall_secs": 1.537,
+      "physical_requests": 2,
+      "known_returned_tokens": 64,
+      "evidence": [
+        {
+          "path": "proj-2026-07-16-1632/step4-assistant-history-core-smoke.json",
+          "sha256": "273fcb1b3612013c5bb31e8409cddf9dea52b17de5f5736bfcca68a5a26350f6"
+        },
+        {
+          "path": "proj-2026-07-16-1632/step4-assistant-history-core-smoke.log",
+          "sha256": "e526333ac683785f34ec75fdbbe385240f9f73d90dda9476b8c56ce4e1534054"
+        }
+      ]
+    },
+    {
+      "entry_id": "v3-history-gate",
+      "accounted_tokens": 4257344,
+      "estimated_usd": 19.081048,
+      "wall_secs": 6.969,
+      "physical_requests": 6,
+      "known_returned_tokens": 1155,
+      "evidence": [
+        {
+          "path": "proj-2026-07-16-1632/step4-assistant-history-core-smoke-v3.json",
+          "sha256": "9267233b8ef80661512f0ef5ac63ee3f36f11e4c21a96ef5055bd122da3a3b75"
+        },
+        {
+          "path": "proj-2026-07-16-1632/step4-assistant-history-core-smoke-v3.log",
+          "sha256": "5976af2fec7bb1db077351f8db6c21293dcfe28c8467c10a3e01c00a89ef207a"
+        }
+      ]
+    },
+    {
+      "entry_id": "v3-core-runner",
+      "accounted_tokens": 55297669,
+      "estimated_usd": 153.816506,
+      "wall_secs": 7281.0,
+      "physical_requests": 44,
+      "known_returned_tokens": 297669,
+      "evidence": [
+        {
+          "path": "proj-2026-07-16-1632/step4-core-smoke-runner-state.json",
+          "sha256": "0b6591b8b20a9fbbb44aac17e4e25514629bf3161dd0efe281e56fb68be93441"
+        },
+        {
+          "path": "proj-2026-07-16-1632/core-smoke-manifest.json",
+          "sha256": "9476befc1abccfa42b4eebbbd12775cefc7002722a43789f9c1e1bc98eed4e3f"
+        },
+        {
+          "path": "proj-2026-07-16-1632/step4-core-smoke-worker-v3.log",
+          "sha256": "7109493efecfe0161728b4b2877a04203dee0ebc144dbb704c47b33933949999"
+        }
+      ]
+    },
+    {
+      "entry_id": "v4-luna-xhigh",
+      "accounted_tokens": 481147,
+      "estimated_usd": 0.11445875,
+      "wall_secs": 110.0,
+      "physical_requests": 36,
+      "known_returned_tokens": 481147,
+      "evidence": [
+        {
+          "path": "proj-2026-07-16-1632/step4-luna-xhigh-v4-runner-state.json",
+          "sha256": "aa4241287f3fabe41c8be9042bde216588e9150c7a5c60e92f015c9245e7d0c1"
+        },
+        {
+          "path": "proj-2026-07-16-1632/luna-xhigh-v4-manifest.json",
+          "sha256": "b9951dbc56aad7d260eecd90c6d7881d3e285d2506a79d932262139907be4685"
+        },
+        {
+          "path": "proj-2026-07-16-1632/step4-luna-xhigh-worker-v4.log",
+          "sha256": "a9b4fa4c4fae833859bf8db7560e00333add72c8913935d4aaa5ca1c0ee4aafd"
+        },
+        {
+          "path": "runs/gpt56-luna-xhigh-smoke-luna-xhigh-v4-a001.json",
+          "sha256": "264fef371c6672867f82124fbffb7f01623e678e9768a72541180dacbb8d17b7"
+        },
+        {
+          "path": "runs/gpt56-luna-xhigh-smoke-luna-xhigh-v4-a001.log",
+          "sha256": "28ee9f834e5c9ae85cfad3dbfb3bcf5fea9184d8ad2d97a7b08981fe9d743404"
+        }
+      ]
+    },
+    {
+      "entry_id": "v5-core-remainder",
+      "accounted_tokens": 1768763,
+      "estimated_usd": 0.755117475,
+      "wall_secs": 473.0,
+      "physical_requests": 135,
+      "known_returned_tokens": 1768763,
+      "evidence": [
+        {
+          "path": "proj-2026-07-16-1632/step4-core-remainder-v5-runner-state.json",
+          "sha256": "f5d72461a184834fe8e5f679c13a7c3fb81e68513cc724bbb30a82d120da61ff"
+        },
+        {
+          "path": "proj-2026-07-16-1632/core-remainder-v5-manifest.json",
+          "sha256": "4ea086b259f3eff95134cbba270585fc42246da4d04d4dfa5431b408e7b14f42"
+        },
+        {
+          "path": "proj-2026-07-16-1632/step4-core-remainder-worker-v5.log",
+          "sha256": "ef77c3fda82b9805cdfdfd047609a68f659cce902c4b74af8356d076180f5c24"
+        },
+        {
+          "path": "runs/gpt56-luna-max-smoke-core-remainder-v5-a001.json",
+          "sha256": "96f21383cc2352cf5257eb2b545047bedb2659e7aca266bc50a216f43bed33f4"
+        },
+        {
+          "path": "runs/gpt56-luna-max-smoke-core-remainder-v5-a001.log",
+          "sha256": "2d15a09d064af8f6bb2a03229a2c62515c638a94805c2794d385f1da457b47c4"
+        },
+        {
+          "path": "runs/gpt56-terra-low-smoke-core-remainder-v5-a002.json",
+          "sha256": "45e5245d09d008563d7ac17abcaadfacb9243e2e2fc0c3aff0b7bdb477aeeb95"
+        },
+        {
+          "path": "runs/gpt56-terra-low-smoke-core-remainder-v5-a002.log",
+          "sha256": "1bb3b9d958b44c847d266fac9d4b32338285e7e73c0c8ca05d069c03c0b85660"
+        },
+        {
+          "path": "runs/gpt56-terra-xhigh-smoke-core-remainder-v5-a003.json",
+          "sha256": "f128c25b2612304e008200a84e94a267b503366b4303563b9beccf32553628a3"
+        },
+        {
+          "path": "runs/gpt56-terra-xhigh-smoke-core-remainder-v5-a003.log",
+          "sha256": "6412432ab6b93c6aa8f7352c34bde9a8c0ec977da457d2c7bc6cec20bd58953e"
+        },
+        {
+          "path": "runs/gpt56-terra-max-smoke-core-remainder-v5-a004.json",
+          "sha256": "0d7b9f94a436b75ba89a03259a7d75c2683a30e929126bd3e0f495c28a483c1e"
+        },
+        {
+          "path": "runs/gpt56-terra-max-smoke-core-remainder-v5-a004.log",
+          "sha256": "9f9c05b5914f874f487b34b504eae7372c9f95a2ab2f81fd928b23efd2b134f5"
+        }
+      ]
+    }
+  ],
+  "cumulative": {
+    "accounted_tokens": 62875403,
+    "estimated_usd": 176.520130225,
+    "wall_secs": 7872.506,
+    "physical_requests": 223,
+    "known_returned_tokens": 2548798
+  }
+}

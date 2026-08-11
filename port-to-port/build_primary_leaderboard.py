@@ -55,6 +55,11 @@ def _effective_budget_for_display(row: dict[str, Any]) -> int | None:
     if isinstance(thinking_budget, float) and thinking_budget.is_integer():
         return int(thinking_budget)
 
+    # Baseten endpoints control reasoning via reasoning.effort levels, not an exact
+    # token budget, so do not synthesize a tb= display value for them.
+    if _is_baseten_endpoint(row.get("openai_base_url")):
+        return None
+
     thinking = str(row.get("thinking") or "").strip().lower()
     if thinking in {"", "none", "minimal"}:
         generic_budget = 0
@@ -135,6 +140,14 @@ def _is_nemotron_vllm_017_default_only_endpoint(base_url: Any) -> bool:
         return False
     host = urllib.parse.urlparse(normalized).netloc.lower()
     return "nemotron-vllm-017" in host and host.endswith(".modal.run")
+
+
+def _is_baseten_endpoint(base_url: Any) -> bool:
+    normalized = _normalize_openai_base_url(base_url)
+    if normalized is None:
+        return False
+    host = urllib.parse.urlparse(normalized).netloc.lower()
+    return host == "inference.baseten.co" or host.endswith(".baseten.co")
 
 
 def _display_base_url(base_url: Any) -> str | None:
@@ -285,9 +298,13 @@ def _build_model_label(row: dict[str, Any]) -> str:
         base_label = f"{base_label} [{row['model']}]"
 
     details: list[str] = []
-    thinking_label = _thinking_label_for_display(row)
-    if thinking_label is not None:
-        details.append(f"th={thinking_label}")
+    effective_effort = row.get("effective_effort")
+    if effective_effort in {None, ""}:
+        thinking_label = _thinking_label_for_display(row)
+        if thinking_label is not None:
+            details.append(f"th={thinking_label}")
+    else:
+        details.append(f"eff={effective_effort}")
 
     effective_budget = _effective_budget_for_display(row)
     if effective_budget is not None:
@@ -319,7 +336,7 @@ def _build_rows(
     *,
     model_name_aliases: dict[str, str],
 ) -> tuple[list[dict[str, Any]], set[str]]:
-    by_group: dict[tuple[str, Any, Any, Any, Any], dict[str, Any]] = {}
+    by_group: dict[tuple[Any, ...], dict[str, Any]] = {}
     rubric_versions: set[str] = set()
 
     for file_path in sorted(run_files):
@@ -340,11 +357,27 @@ def _build_rows(
         thinking = summary.get("thinking", config.get("thinking", summary.get("thinking_budget")))
         thinking_budget = summary.get("thinking_budget", config.get("thinking_budget"))
         max_tokens = summary.get("max_tokens", config.get("max_tokens"))
+        metadata = payload.get("metadata") or {}
+        effective_effort = config.get(
+            "effective_effort",
+            summary.get("effective_effort", metadata.get("effective_effort")),
+        )
         openai_base_url = _normalize_openai_base_url(
             config.get("openai_base_url") or summary.get("openai_base_url")
         )
         display_model = model_name_aliases.get(model, model)
-        group_key = (model, thinking, thinking_budget, max_tokens, openai_base_url)
+        legacy_group_key = (model, thinking, thinking_budget, max_tokens, openai_base_url)
+        group_key = (
+            legacy_group_key
+            if effective_effort in {None, ""}
+            else (
+                model,
+                ("effective_effort", effective_effort),
+                thinking_budget,
+                max_tokens,
+                openai_base_url,
+            )
+        )
 
         rec = by_group.setdefault(
             group_key,
@@ -354,6 +387,7 @@ def _build_rows(
                 "thinking": thinking,
                 "thinking_budget": thinking_budget,
                 "max_tokens": max_tokens,
+                "effective_effort": effective_effort,
                 "openai_base_url": openai_base_url,
                 "n": 0,
                 "primary_scores": [],
@@ -398,6 +432,7 @@ def _build_rows(
             "thinking": rec["thinking"],
             "thinking_budget": rec["thinking_budget"],
             "max_tokens": rec["max_tokens"],
+            "effective_effort": rec["effective_effort"],
             "openai_base_url": rec["openai_base_url"],
             "n": n,
             "primary_score_100_median": _percentile(rec["primary_scores"], 0.50) or 0.0,

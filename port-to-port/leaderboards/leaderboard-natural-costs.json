@@ -1,0 +1,644 @@
+{
+  "schema_version": "leaderboard_cost_estimates.v1",
+  "pricing_as_of": "2026-07-28",
+  "currency": "USD",
+  "definition": "mean representative cost per attempt divided by official-judge Task Complete rate",
+  "pricing_basis": "Standard synchronous API provider list prices, before credits, discounts, taxes, and data-residency uplifts.",
+  "sources": {
+    "anthropic": "https://platform.claude.com/docs/en/about-claude/pricing",
+    "aws_bedrock": "https://aws.amazon.com/bedrock/pricing/",
+    "baseten": "https://www.baseten.co/pricing/",
+    "empiriolabs": "https://empiriolabs.ai/models/qwen3-5-4b",
+    "google": "https://ai.google.dev/gemini-api/docs/pricing",
+    "openrouter": "https://openrouter.ai/api/v1/models",
+    "openai": "https://developers.openai.com/api/docs/pricing",
+    "openai_gpt_5_2": "https://developers.openai.com/api/docs/models/gpt-5.2",
+    "openai_gpt_5_1": "https://developers.openai.com/api/docs/models/gpt-5.1",
+    "openai_gpt_4_1": "https://developers.openai.com/api/docs/models/gpt-4.1",
+    "openai_gpt_4o": "https://developers.openai.com/api/docs/models/gpt-4o"
+  },
+  "results": [
+    {
+      "label": "gemini-3.6-flash (high)",
+      "method": "token_history",
+      "historical_runs": 25,
+      "task_complete_rate": 1.0,
+      "cost_samples": 25,
+      "price_key": "google-gemini-3-6-flash",
+      "provider": "AI Studio",
+      "proxy_price": false,
+      "mean_cost_per_attempt": 0.448742394,
+      "median_cost_per_attempt": 0.45295290000000005,
+      "estimated_cost_per_completed_task": 0.448742394,
+      "aggregate_billable_tokens": {
+        "uncached_input": 5575377,
+        "cached_input": 8940929,
+        "cache_write": 0,
+        "output": 201914
+      }
+    },
+    {
+      "label": "gemini-3.5-flash (high)",
+      "method": "token_history",
+      "historical_runs": 25,
+      "task_complete_rate": 1.0,
+      "cost_samples": 25,
+      "price_key": "google-gemini-3-5-flash",
+      "provider": "AI Studio",
+      "proxy_price": false,
+      "mean_cost_per_attempt": 0.535310172,
+      "median_cost_per_attempt": 0.5382399,
+      "estimated_cost_per_completed_task": 0.535310172,
+      "aggregate_billable_tokens": {
+        "uncached_input": 6785622,
+        "cached_input": 8821242,
+        "cache_write": 0,
+        "output": 209015
+      }
+    },
+    {
+      "label": "glm-5.2 (max)",
+      "method": "token_history",
+      "historical_runs": 25,
+      "task_complete_rate": 1.0,
+      "cost_samples": 25,
+      "price_key": "baseten-glm-5-2",
+      "provider": "BaseTen",
+      "proxy_price": false,
+      "mean_cost_per_attempt": 0.17417853760000002,
+      "median_cost_per_attempt": 0.17422744,
+      "estimated_cost_per_completed_task": 0.17417853760000002,
+      "aggregate_billable_tokens": {
+        "uncached_input": 523874,
+        "cached_input": 11101376,
+        "cache_write": 0,
+        "output": 469738
+      }
+    },
+    {
+      "label": "claude-sonnet-5 (xhigh)",
+      "method": "token_history",
+      "historical_runs": 25,
+      "task_complete_rate": 1.0,
+      "cost_samples": 25,
+      "price_key": "anthropic-sonnet-5-intro",
+      "provider": "Anthropic",
+      "proxy_price": false,
+      "mean_cost_per_attempt": 0.38372226400000004,
+      "median_cost_per_attempt": 0.3844525,
+      "estimated_cost_per_completed_task": 0.38372226400000004,
+      "aggregate_billable_tokens": {
+        "uncached_input": 3508,
+        "cached_input": 20939553,
+        "cache_write": 865780,
+        "output": 323368
+      }
+    },
+    {
+      "label": "kimi-2.6 Cerebras (thinking)",
+      "method": "token_history_proxy",
+      "historical_runs": 25,
+      "task_complete_rate": 1.0,
+      "cost_samples": 25,
+      "price_key": "baseten-kimi-k2-6-proxy",
+      "provider": "BaseTen",
+      "proxy_price": true,
+      "mean_cost_per_attempt": 0.1368886508,
+      "median_cost_per_attempt": 0.12681045999999999,
+      "estimated_cost_per_completed_task": 0.1368886508,
+      "aggregate_billable_tokens": {
+        "uncached_input": 286885,
+        "cached_input": 8985472,
+        "cache_write": 0,
+        "output": 428000
+      }
+    },
+    {
+      "label": "claude-sonnet-4-6 (none)",
+      "method": "token_history",
+      "historical_runs": 25,
+      "task_complete_rate": 1.0,
+      "cost_samples": 25,
+      "price_key": "anthropic-sonnet-4-6",
+      "provider": "Anthropic",
+      "proxy_price": false,
+      "mean_cost_per_attempt": 0.280906134,
+      "median_cost_per_attempt": 0.27791685,
+      "estimated_cost_per_completed_task": 0.280906134,
+      "aggregate_billable_tokens": {
+        "uncached_input": 4780,
+        "cached_input": 11738982,
+        "cache_write": 525161,
+        "output": 101151
+      }
+    },
+    {
+      "label": "gpt-5.4 (low)",
+      "method": "token_history",
+      "historical_runs": 25,
+      "task_complete_rate": 1.0,
+      "cost_samples": 25,
+      "price_key": "openai-gpt-5-4",
+      "provider": "OpenAI",
+      "proxy_price": false,
+      "mean_cost_per_attempt": 0.2564473,
+      "median_cost_per_attempt": 0.249545,
+      "estimated_cost_per_completed_task": 0.2564473,
+      "aggregate_billable_tokens": {
+        "uncached_input": 929019,
+        "cached_input": 7179520,
+        "cache_write": 0,
+        "output": 152917
+      }
+    },
+    {
+      "label": "gpt-5.6-terra (xhigh)",
+      "method": "token_sample",
+      "historical_runs": 25,
+      "task_complete_rate": 1.0,
+      "cost_samples": 1,
+      "sample": "runs/gpt56-cost-terra-xhigh-20260722T113400Z.json",
+      "sample_sha256": "c398257aaa5b20bf8533998dad9a58e01739667bb3bfb758480ce43eecfb60ca",
+      "sanity_check": {
+        "representative": true,
+        "acceptance_band": [
+          0.6666666666666666,
+          1.5
+        ],
+        "sample": {
+          "turns": 34,
+          "accounted_tokens": 355153,
+          "active_seconds": 118.69545,
+          "elapsed_seconds": 155.61589,
+          "terminal_reason": "finished_tool",
+          "raw_success": true
+        },
+        "historical_medians": {
+          "turns": 34.0,
+          "accounted_tokens": 356440.0,
+          "active_seconds": 98.32784,
+          "elapsed_seconds": 136.56228
+        },
+        "sample_to_median_ratios": {
+          "turns": 1.0,
+          "accounted_tokens": 0.9963892941308495,
+          "active_seconds": 1.2071398090306875
+        }
+      },
+      "price_key": "openai-gpt-5-6-terra",
+      "provider": "OpenAI",
+      "mean_cost_per_attempt": 0.22170975,
+      "estimated_cost_per_completed_task": 0.22170975,
+      "sample_billable_tokens": {
+        "uncached_input": 102,
+        "cached_input": 334254,
+        "cache_write": 14658,
+        "output": 6139
+      }
+    },
+    {
+      "label": "gpt-5.2 (medium)",
+      "method": "token_history",
+      "historical_runs": 25,
+      "task_complete_rate": 1.0,
+      "cost_samples": 25,
+      "price_key": "openai-gpt-5-2",
+      "provider": "OpenAI",
+      "proxy_price": false,
+      "mean_cost_per_attempt": 0.170620366,
+      "median_cost_per_attempt": 0.1675198,
+      "estimated_cost_per_completed_task": 0.170620366,
+      "aggregate_billable_tokens": {
+        "uncached_input": 454181,
+        "cached_input": 8119168,
+        "cache_write": 0,
+        "output": 146417
+      }
+    },
+    {
+      "label": "qwen3.6-27b (high)",
+      "method": "token_history_proxy",
+      "historical_runs": 25,
+      "task_complete_rate": 1.0,
+      "cost_samples": 25,
+      "price_key": "openrouter-qwen3-6-27b",
+      "provider": "OpenRouter",
+      "proxy_price": true,
+      "mean_cost_per_attempt": 0.194001672,
+      "median_cost_per_attempt": 0.1915956,
+      "estimated_cost_per_completed_task": 0.194001672,
+      "aggregate_billable_tokens": {
+        "uncached_input": 14695226,
+        "cached_input": 0,
+        "cache_write": 0,
+        "output": 220737
+      }
+    },
+    {
+      "label": "qwen3.6-35b-a3b (high, FP8)",
+      "method": "token_history_proxy",
+      "historical_runs": 25,
+      "task_complete_rate": 1.0,
+      "cost_samples": 25,
+      "price_key": "openrouter-qwen3-6-35b-a3b",
+      "provider": "OpenRouter",
+      "proxy_price": true,
+      "mean_cost_per_attempt": 0.096988824,
+      "median_cost_per_attempt": 0.08966946,
+      "estimated_cost_per_completed_task": 0.096988824,
+      "aggregate_billable_tokens": {
+        "uncached_input": 15177040,
+        "cached_input": 0,
+        "cache_write": 0,
+        "output": 299935
+      }
+    },
+    {
+      "label": "gemma-4-31b (thinking)",
+      "method": "token_history",
+      "historical_runs": 25,
+      "task_complete_rate": 1.0,
+      "cost_samples": 25,
+      "price_key": "bedrock-gemma-4-31b",
+      "provider": "AWS Bedrock",
+      "proxy_price": false,
+      "mean_cost_per_attempt": 0.051223460000000005,
+      "median_cost_per_attempt": 0.051223780000000003,
+      "estimated_cost_per_completed_task": 0.051223460000000005,
+      "aggregate_billable_tokens": {
+        "uncached_input": 9102175,
+        "cached_input": 0,
+        "cache_write": 0,
+        "output": 15705
+      }
+    },
+    {
+      "label": "claude-haiku-4-5-20251001 (low)",
+      "method": "token_history",
+      "historical_runs": 25,
+      "task_complete_rate": 1.0,
+      "cost_samples": 25,
+      "price_key": "anthropic-haiku-4-5",
+      "provider": "Anthropic",
+      "proxy_price": false,
+      "mean_cost_per_attempt": 0.115896604,
+      "median_cost_per_attempt": 0.10773285,
+      "estimated_cost_per_completed_task": 0.115896604,
+      "aggregate_billable_tokens": {
+        "uncached_input": 15780,
+        "cached_input": 10796876,
+        "cache_write": 508542,
+        "output": 233254
+      }
+    },
+    {
+      "label": "nemotron-3-ultra-550b (thinking)",
+      "method": "token_history",
+      "historical_runs": 25,
+      "task_complete_rate": 1.0,
+      "cost_samples": 25,
+      "price_key": "baseten-nemotron-3-ultra",
+      "provider": "BaseTen",
+      "proxy_price": false,
+      "mean_cost_per_attempt": 0.299188056,
+      "median_cost_per_attempt": 0.2937606,
+      "estimated_cost_per_completed_task": 0.299188056,
+      "aggregate_billable_tokens": {
+        "uncached_input": 11710529,
+        "cached_input": 0,
+        "cache_write": 0,
+        "output": 188910
+      }
+    },
+    {
+      "label": "gpt-5.1 (low)",
+      "method": "token_history",
+      "historical_runs": 25,
+      "task_complete_rate": 1.0,
+      "cost_samples": 25,
+      "price_key": "openai-gpt-5-1",
+      "provider": "OpenAI",
+      "proxy_price": false,
+      "mean_cost_per_attempt": 0.1729235,
+      "median_cost_per_attempt": 0.1681115,
+      "estimated_cost_per_completed_task": 0.1729235,
+      "aggregate_billable_tokens": {
+        "uncached_input": 1002494,
+        "cached_input": 6725120,
+        "cache_write": 0,
+        "output": 222933
+      }
+    },
+    {
+      "label": "gpt-5.6-luna (xhigh)",
+      "method": "token_sample",
+      "historical_runs": 25,
+      "task_complete_rate": 0.96,
+      "cost_samples": 1,
+      "sample": "runs/gpt56-cost-luna-xhigh-20260722T113400Z.json",
+      "sample_sha256": "5b55f57c8e4bbeeb164481e23efdc23417670eb6734e742ed65dfc3432cde54e",
+      "sanity_check": {
+        "representative": true,
+        "acceptance_band": [
+          0.6666666666666666,
+          1.5
+        ],
+        "sample": {
+          "turns": 32,
+          "accounted_tokens": 367619,
+          "active_seconds": 109.91109,
+          "elapsed_seconds": 144.75325,
+          "terminal_reason": "finished_tool",
+          "raw_success": true
+        },
+        "historical_medians": {
+          "turns": 35.0,
+          "accounted_tokens": 404728.0,
+          "active_seconds": 85.78432000000001,
+          "elapsed_seconds": 125.40381
+        },
+        "sample_to_median_ratios": {
+          "turns": 0.9142857142857143,
+          "accounted_tokens": 0.9083112608962068,
+          "active_seconds": 1.2812491840000595
+        }
+      },
+      "price_key": "openai-gpt-5-6-luna",
+      "provider": "OpenAI",
+      "mean_cost_per_attempt": 0.10653975,
+      "estimated_cost_per_completed_task": 0.11097890625000001,
+      "sample_billable_tokens": {
+        "uncached_input": 96,
+        "cached_input": 343410,
+        "cache_write": 15279,
+        "output": 8834
+      }
+    },
+    {
+      "label": "poolside/laguna-s-2.1 (none)",
+      "method": "token_history",
+      "historical_runs": 25,
+      "task_complete_rate": 0.84,
+      "cost_samples": 25,
+      "price_key": "openrouter-poolside-laguna-s-2-1",
+      "provider": "OpenRouter",
+      "proxy_price": false,
+      "mean_cost_per_attempt": 0.0109493248,
+      "median_cost_per_attempt": 0.010539980000000001,
+      "estimated_cost_per_completed_task": 0.013034910476190476,
+      "aggregate_billable_tokens": {
+        "uncached_input": 1046380,
+        "cached_input": 13865792,
+        "cache_write": 0,
+        "output": 152186
+      }
+    },
+    {
+      "label": "gemini-3.1-flash-lite-preview (high)",
+      "method": "token_history",
+      "historical_runs": 25,
+      "task_complete_rate": 1.0,
+      "cost_samples": 25,
+      "price_key": "google-gemini-3-1-flash-lite",
+      "provider": "AI Studio",
+      "proxy_price": false,
+      "mean_cost_per_attempt": 0.049031614,
+      "median_cost_per_attempt": 0.04917765,
+      "estimated_cost_per_completed_task": 0.049031614,
+      "aggregate_billable_tokens": {
+        "uncached_input": 3795139,
+        "cached_input": 4848384,
+        "cache_write": 0,
+        "output": 103864
+      }
+    },
+    {
+      "label": "inkling (low)",
+      "method": "token_history",
+      "historical_runs": 25,
+      "task_complete_rate": 1.0,
+      "cost_samples": 25,
+      "price_key": "baseten-inkling",
+      "provider": "BaseTen",
+      "proxy_price": false,
+      "mean_cost_per_attempt": 0.073520652,
+      "median_cost_per_attempt": 0.07227423,
+      "estimated_cost_per_completed_task": 0.073520652,
+      "aggregate_billable_tokens": {
+        "uncached_input": 426503,
+        "cached_input": 7213760,
+        "cache_write": 0,
+        "output": 45722
+      }
+    },
+    {
+      "label": "gpt-4.1",
+      "method": "token_history",
+      "historical_runs": 25,
+      "task_complete_rate": 1.0,
+      "cost_samples": 25,
+      "price_key": "openai-gpt-4-1",
+      "provider": "OpenAI",
+      "proxy_price": false,
+      "mean_cost_per_attempt": 0.21028304,
+      "median_cost_per_attempt": 0.203242,
+      "estimated_cost_per_completed_task": 0.21028304,
+      "aggregate_billable_tokens": {
+        "uncached_input": 788474,
+        "cached_input": 7095936,
+        "cache_write": 0,
+        "output": 16520
+      }
+    },
+    {
+      "label": "gemini-2.5-flash (2048)",
+      "method": "token_history",
+      "historical_runs": 25,
+      "task_complete_rate": 1.0,
+      "cost_samples": 25,
+      "price_key": "google-gemini-2-5-flash",
+      "provider": "AI Studio",
+      "proxy_price": false,
+      "mean_cost_per_attempt": 0.0588865676,
+      "median_cost_per_attempt": 0.0577555,
+      "estimated_cost_per_completed_task": 0.0588865676,
+      "aggregate_billable_tokens": {
+        "uncached_input": 2068141,
+        "cached_input": 8236563,
+        "cache_write": 0,
+        "output": 241850
+      }
+    },
+    {
+      "label": "gemini-3.5-flash-lite (minimal)",
+      "method": "token_history",
+      "historical_runs": 25,
+      "task_complete_rate": 1.0,
+      "cost_samples": 25,
+      "price_key": "google-gemini-3-5-flash-lite",
+      "provider": "AI Studio",
+      "proxy_price": false,
+      "mean_cost_per_attempt": 0.1043245916,
+      "median_cost_per_attempt": 0.1022679,
+      "estimated_cost_per_completed_task": 0.1043245916,
+      "aggregate_billable_tokens": {
+        "uncached_input": 8550348,
+        "cached_input": 122513,
+        "cache_write": 0,
+        "output": 15734
+      }
+    },
+    {
+      "label": "nemotron-3-super-120b (tb=512)",
+      "method": "token_history",
+      "historical_runs": 25,
+      "task_complete_rate": 1.0,
+      "cost_samples": 25,
+      "price_key": "openrouter-nemotron-3-super-120b",
+      "provider": "OpenRouter",
+      "proxy_price": false,
+      "mean_cost_per_attempt": 0.0438677736,
+      "median_cost_per_attempt": 0.041696519999999994,
+      "estimated_cost_per_completed_task": 0.0438677736,
+      "aggregate_billable_tokens": {
+        "uncached_input": 12164313,
+        "cached_input": 0,
+        "cache_write": 0,
+        "output": 274554
+      }
+    },
+    {
+      "label": "gpt-4o",
+      "method": "token_history",
+      "historical_runs": 25,
+      "task_complete_rate": 0.92,
+      "cost_samples": 25,
+      "price_key": "openai-gpt-4o",
+      "provider": "OpenAI",
+      "proxy_price": false,
+      "mean_cost_per_attempt": 0.4286068,
+      "median_cost_per_attempt": 0.416335,
+      "estimated_cost_per_completed_task": 0.4658769565217391,
+      "aggregate_billable_tokens": {
+        "uncached_input": 443276,
+        "cached_input": 7484032,
+        "cache_write": 0,
+        "output": 25194
+      }
+    },
+    {
+      "label": "gemini-3.1-pro-preview (medium)",
+      "method": "token_history",
+      "historical_runs": 25,
+      "task_complete_rate": 1.0,
+      "cost_samples": 25,
+      "price_key": "google-gemini-3-1-pro",
+      "provider": "AI Studio",
+      "proxy_price": false,
+      "mean_cost_per_attempt": 0.287263448,
+      "median_cost_per_attempt": 0.28771559999999996,
+      "estimated_cost_per_completed_task": 0.287263448,
+      "aggregate_billable_tokens": {
+        "uncached_input": 2226757,
+        "cached_input": 7553601,
+        "cache_write": 0,
+        "output": 101446
+      }
+    },
+    {
+      "label": "qwen3.5-9b (thinking)",
+      "method": "token_history",
+      "historical_runs": 25,
+      "task_complete_rate": 0.56,
+      "cost_samples": 25,
+      "price_key": "openrouter-qwen3-5-9b",
+      "provider": "OpenRouter",
+      "proxy_price": false,
+      "mean_cost_per_attempt": 0.057619492,
+      "median_cost_per_attempt": 0.0551448,
+      "estimated_cost_per_completed_task": 0.10289195,
+      "aggregate_billable_tokens": {
+        "uncached_input": 13797154,
+        "cached_input": 0,
+        "cache_write": 0,
+        "output": 405146
+      }
+    },
+    {
+      "label": "qwen3.5-27b (none)",
+      "method": "token_history",
+      "historical_runs": 25,
+      "task_complete_rate": 0.08,
+      "cost_samples": 25,
+      "price_key": "openrouter-qwen3-5-27b",
+      "provider": "OpenRouter",
+      "proxy_price": false,
+      "mean_cost_per_attempt": 0.14968937100000002,
+      "median_cost_per_attempt": 0.154401585,
+      "estimated_cost_per_completed_task": 1.8711171375000002,
+      "aggregate_billable_tokens": {
+        "uncached_input": 18387745,
+        "cached_input": 0,
+        "cache_write": 0,
+        "output": 100400
+      }
+    },
+    {
+      "label": "nemotron-3-super-120b (none)",
+      "method": "token_history",
+      "historical_runs": 25,
+      "task_complete_rate": 0.16,
+      "cost_samples": 25,
+      "price_key": "openrouter-nemotron-3-super-120b",
+      "provider": "OpenRouter",
+      "proxy_price": false,
+      "mean_cost_per_attempt": 0.0626025716,
+      "median_cost_per_attempt": 0.06382963,
+      "estimated_cost_per_completed_task": 0.3912660725,
+      "aggregate_billable_tokens": {
+        "uncached_input": 19041208,
+        "cached_input": 0,
+        "cache_write": 0,
+        "output": 92817
+      }
+    },
+    {
+      "label": "qwen3.5-4b",
+      "method": "token_history",
+      "historical_runs": 25,
+      "task_complete_rate": 0.12,
+      "cost_samples": 25,
+      "price_key": "empiriolabs-qwen3-5-4b",
+      "provider": "EmpirioLabs",
+      "proxy_price": false,
+      "mean_cost_per_attempt": 0.0301135108,
+      "median_cost_per_attempt": 0.030715419999999997,
+      "estimated_cost_per_completed_task": 0.2509459233333333,
+      "aggregate_billable_tokens": {
+        "uncached_input": 18572026,
+        "cached_input": 0,
+        "cache_write": 0,
+        "output": 142239
+      }
+    },
+    {
+      "label": "glm-4.7-flash",
+      "method": "token_history",
+      "historical_runs": 25,
+      "task_complete_rate": 0.12,
+      "cost_samples": 25,
+      "price_key": "openrouter-glm-4-7-flash",
+      "provider": "OpenRouter",
+      "proxy_price": false,
+      "mean_cost_per_attempt": 0.0356960816,
+      "median_cost_per_attempt": 0.03907116,
+      "estimated_cost_per_completed_task": 0.2974673466666667,
+      "aggregate_billable_tokens": {
+        "uncached_input": 14665314,
+        "cached_input": 0,
+        "cache_write": 0,
+        "output": 31208
+      }
+    }
+  ]
+}

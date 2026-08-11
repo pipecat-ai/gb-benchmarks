@@ -1,0 +1,224 @@
+[2026-07-01T18:28:08.436Z] Starting Codex Task.
+[2026-07-01T18:28:10.770Z] Starting Codex task thread.
+[2026-07-01T18:28:12.168Z] Thread ready (019f1ef0-4730-71f1-825a-befe414fb25d).
+[2026-07-01T18:28:12.198Z] Turn started (019f1ef0-4b13-79a2-bbf2-70f7404d6606).
+[2026-07-01T18:28:20.305Z] Assistant message captured: I’ll inspect the existing rate-limit wrapper, tracker finalization, and current tests first, ...
+
+[2026-07-01T18:28:20.305Z] Assistant message
+I’ll inspect the existing rate-limit wrapper, tracker finalization, and current tests first, then patch only the two allowed files. After that I’ll run the requested offline test set and `py_compile`.
+[2026-07-01T18:28:20.348Z] Running command: /bin/bash -lc 'git status --short'
+[2026-07-01T18:28:20.360Z] Command completed: /bin/bash -lc 'git status --short' (exit 0)
+[2026-07-01T18:28:20.404Z] Running command: /bin/bash -lc 'rg -n "rate_limit|RateLimit|empty_response|no_tool_call|_BenchmarkResponseTrac...
+[2026-07-01T18:28:20.417Z] Command completed: /bin/bash -lc 'rg -n "rate_limit|RateLimit|empty_response|no_tool_call|_BenchmarkResponseTrac... (exit 0)
+[2026-07-01T18:28:20.482Z] Running command: /bin/bash -lc "sed -n '1,260p' tests/test_rate_limit.py"
+[2026-07-01T18:28:20.487Z] Running command: /bin/bash -lc "sed -n '760,1060p' mini-rl-env.py"
+[2026-07-01T18:28:20.588Z] Command completed: /bin/bash -lc "sed -n '1,260p' tests/test_rate_limit.py" (exit 0)
+[2026-07-01T18:28:20.695Z] Command completed: /bin/bash -lc "sed -n '760,1060p' mini-rl-env.py" (exit 0)
+[2026-07-01T18:28:31.850Z] Assistant message captured: I found the existing wrapper and tracker hooks. The current sustained-429 test only checks th...
+
+[2026-07-01T18:28:31.850Z] Assistant message
+I found the existing wrapper and tracker hooks. The current sustained-429 test only checks that the wrapper raises, so I’m going to wire an explicit runtime marker into the wrapper and make the tracker consume that marker before the empty-response path.
+[2026-07-01T18:28:31.936Z] Running command: /bin/bash -lc "sed -n '430,620p' mini-rl-env.py"
+[2026-07-01T18:28:31.936Z] Command completed: /bin/bash -lc "sed -n '430,620p' mini-rl-env.py" (exit 0)
+[2026-07-01T18:28:32.001Z] Running command: /bin/bash -lc "sed -n '1040,1130p' tests/test_regressions.py && sed -n '180,335p' tests/test_...
+[2026-07-01T18:28:32.012Z] Command completed: /bin/bash -lc "sed -n '1040,1130p' tests/test_regressions.py && sed -n '180,335p' tests/test_... (exit 0)
+[2026-07-01T18:28:32.018Z] Running command: /bin/bash -lc "sed -n '1540,1945p' mini-rl-env.py"
+[2026-07-01T18:28:32.029Z] Running command: /bin/bash -lc "sed -n '2600,2685p' mini-rl-env.py"
+[2026-07-01T18:28:32.029Z] Running command: /bin/bash -lc "sed -n '1945,2025p' mini-rl-env.py"
+[2026-07-01T18:28:32.125Z] Command completed: /bin/bash -lc "sed -n '1540,1945p' mini-rl-env.py" (exit 0)
+[2026-07-01T18:28:32.228Z] Command completed: /bin/bash -lc "sed -n '2600,2685p' mini-rl-env.py" (exit 0)
+[2026-07-01T18:28:32.329Z] Command completed: /bin/bash -lc "sed -n '1945,2025p' mini-rl-env.py" (exit 0)
+[2026-07-01T18:28:40.029Z] Running command: /bin/bash -lc "sed -n '1,180p' tests/test_empty_retry.py"
+[2026-07-01T18:28:40.040Z] Command completed: /bin/bash -lc "sed -n '1,180p' tests/test_empty_retry.py" (exit 0)
+[2026-07-01T18:28:40.082Z] Running command: /bin/bash -lc "git diff -- mini-rl-env.py | sed -n '1,260p'"
+[2026-07-01T18:28:40.093Z] Command completed: /bin/bash -lc "git diff -- mini-rl-env.py | sed -n '1,260p'" (exit 0)
+[2026-07-01T18:28:40.103Z] Running command: /bin/bash -lc "sed -n '335,535p' tests/test_empty_retry.py"
+[2026-07-01T18:28:40.114Z] Running command: /bin/bash -lc "sed -n '2260,2505p' mini-rl-env.py"
+[2026-07-01T18:28:40.126Z] Running command: /bin/bash -lc "sed -n '2730,2830p' mini-rl-env.py"
+[2026-07-01T18:28:40.210Z] Command completed: /bin/bash -lc "sed -n '335,535p' tests/test_empty_retry.py" (exit 0)
+[2026-07-01T18:28:40.316Z] Command completed: /bin/bash -lc "sed -n '2260,2505p' mini-rl-env.py" (exit 0)
+[2026-07-01T18:28:40.419Z] Command completed: /bin/bash -lc "sed -n '2730,2830p' mini-rl-env.py" (exit 0)
+[2026-07-01T18:28:48.683Z] Assistant message captured: There are pre-existing dirty edits in `mini-rl-env.py` and `llm_factory.py`; I’m leaving thos...
+
+[2026-07-01T18:28:48.684Z] Assistant message
+There are pre-existing dirty edits in `mini-rl-env.py` and `llm_factory.py`; I’m leaving those alone. My patch will be limited to the rate-limit helpers, runtime marker initialization, tracker finalization branch, and the rate-limit test file.
+[2026-07-01T18:28:48.782Z] Running command: /bin/bash -lc "git diff -- mini-rl-env.py | sed -n '260,560p'"
+[2026-07-01T18:28:48.782Z] Command completed: /bin/bash -lc "git diff -- mini-rl-env.py | sed -n '260,560p'" (exit 0)
+[2026-07-01T18:28:48.842Z] Running command: /bin/bash -lc 'rg -n "rate_limit_exhausted|rate_limit_retry|rate_limit_count|empty_response_c...
+[2026-07-01T18:28:48.851Z] Command completed: /bin/bash -lc 'rg -n "rate_limit_exhausted|rate_limit_retry|rate_limit_count|empty_response_c... (exit 0)
+[2026-07-01T18:28:48.860Z] Running command: /bin/bash -lc 'rg -n "def _ensure_inference_capture_state|def _inference_input_entry|def queu...
+[2026-07-01T18:28:48.870Z] Running command: /bin/bash -lc "sed -n '2080,2265p' mini-rl-env.py"
+[2026-07-01T18:28:48.964Z] Command completed: /bin/bash -lc 'rg -n "def _ensure_inference_capture_state|def _inference_input_entry|def queu... (exit 0)
+[2026-07-01T18:28:49.066Z] Command completed: /bin/bash -lc "sed -n '2080,2265p' mini-rl-env.py" (exit 0)
+[2026-07-01T18:29:16.339Z] Running command: /bin/bash -lc "sed -n '1,60p' mini-rl-env.py"
+[2026-07-01T18:29:16.339Z] Command completed: /bin/bash -lc "sed -n '1,60p' mini-rl-env.py" (exit 0)
+[2026-07-01T18:29:16.391Z] Running command: /bin/bash -lc 'rg -n "def _is_baseten_endpoint|def _is_baseten_retry_eligible_model|BASETEN" ...
+[2026-07-01T18:29:16.392Z] Command completed: /bin/bash -lc 'rg -n "def _is_baseten_endpoint|def _is_baseten_retry_eligible_model|BASETEN" ... (exit 0)
+[2026-07-01T18:29:16.443Z] Running command: /bin/bash -lc 'rg -n "class LLMProvider|LLMProvider" mini-rl-env.py | head -20'
+[2026-07-01T18:29:16.443Z] Command completed: /bin/bash -lc 'rg -n "class LLMProvider|LLMProvider" mini-rl-env.py | head -20' (exit 0)
+[2026-07-01T18:29:22.040Z] Assistant message captured: The finalizer already has a clean choke point after response end and before no-tool classific...
+
+[2026-07-01T18:29:22.040Z] Assistant message
+The finalizer already has a clean choke point after response end and before no-tool classification. I’m adding the new branch there so normal empty retry behavior and successful 429 recovery stay as-is.
+[2026-07-01T18:29:22.125Z] Running command: /bin/bash -lc "sed -n '50,75p' mini-rl-env.py"
+[2026-07-01T18:29:22.125Z] Command completed: /bin/bash -lc "sed -n '50,75p' mini-rl-env.py" (exit 0)
+[2026-07-01T18:29:22.150Z] Running command: /bin/bash -lc 'rg -n "class OpenAI|LLMProvider" llm_factory.py'
+[2026-07-01T18:29:22.151Z] Command completed: /bin/bash -lc 'rg -n "class OpenAI|LLMProvider" llm_factory.py' (exit 0)
+[2026-07-01T18:29:22.224Z] Running command: /bin/bash -lc "sed -n '260,320p' mini-rl-env.py"
+[2026-07-01T18:29:22.224Z] Command completed: /bin/bash -lc "sed -n '260,320p' mini-rl-env.py" (exit 0)
+[2026-07-01T18:29:27.277Z] Running command: /bin/bash -lc "sed -n '1,32p' llm_factory.py"
+[2026-07-01T18:29:27.277Z] Command completed: /bin/bash -lc "sed -n '1,32p' llm_factory.py" (exit 0)
+[2026-07-01T18:29:27.373Z] Running command: /bin/bash -lc 'rg -n "def process_frame" $(python - <<'"'PY' import inspect from pipecat.proc...
+[2026-07-01T18:29:27.599Z] Command completed: /bin/bash -lc 'rg -n "def process_frame" $(python - <<'"'PY' import inspect from pipecat.proc... (exit 0)
+[2026-07-01T18:30:19.153Z] Assistant message captured: For the real-pipeline exhaustion test, I’ll use the same frame-level tracker path as the empt...
+
+[2026-07-01T18:30:19.153Z] Assistant message
+For the real-pipeline exhaustion test, I’ll use the same frame-level tracker path as the empty-retry tests: trigger the wrapper exhaustion, then feed an empty start/end response through `_BenchmarkResponseTracker.process_frame` and assert the harness logs and stop reason.
+[2026-07-01T18:30:19.236Z] Running command: /bin/bash -lc "rg -n \"def __init__|_pending_async|has_pending_async_completions\" mini-rl-en...
+[2026-07-01T18:30:19.236Z] Command completed: /bin/bash -lc "rg -n \"def __init__|_pending_async|has_pending_async_completions\" mini-rl-en... (exit 0)
+[2026-07-01T18:30:19.300Z] Running command: /bin/bash -lc "sed -n '1400,1545p' mini-rl-env.py"
+[2026-07-01T18:30:19.300Z] Command completed: /bin/bash -lc "sed -n '1400,1545p' mini-rl-env.py" (exit 0)
+[2026-07-01T18:30:21.893Z] Assistant message captured: I’m also tightening the provider gate in the test helper to match runtime behavior: rate-limi...
+
+[2026-07-01T18:30:21.893Z] Assistant message
+I’m also tightening the provider gate in the test helper to match runtime behavior: rate-limit telemetry should only appear for OpenAI provider plus Baseten URL, not merely because the URL is Baseten-shaped.
+[2026-07-01T18:30:45.538Z] Applying 1 file change(s).
+[2026-07-01T18:30:45.549Z] File changes completed.
+[2026-07-01T18:31:12.640Z] Assistant message captured: I’m editing the test file now: adding offline frame-tracker setup, a non-429 passthrough test...
+
+[2026-07-01T18:31:12.640Z] Assistant message
+I’m editing the test file now: adding offline frame-tracker setup, a non-429 passthrough test, an Anthropic provider gating test, and direct Retry-After parsing coverage.
+[2026-07-01T18:32:04.957Z] Applying 1 file change(s).
+[2026-07-01T18:32:04.958Z] File changes completed.
+[2026-07-01T18:32:09.937Z] Assistant message captured: The implementation and tests are patched. I’m going to run the targeted rate-limit test first...
+
+[2026-07-01T18:32:09.937Z] Assistant message
+The implementation and tests are patched. I’m going to run the targeted rate-limit test first to catch any harness-test setup mistakes before running the broader offline set.
+[2026-07-01T18:32:11.221Z] Running command: /bin/bash -lc '.venv/bin/python -m unittest tests/test_rate_limit.py'
+[2026-07-01T18:32:12.601Z] Command failed: /bin/bash -lc '.venv/bin/python -m unittest tests/test_rate_limit.py' (exit 1)
+[2026-07-01T18:32:14.888Z] Assistant message captured: The first test run found one missing fake-runtime attribute (`last_error_event`) in the new t...
+
+[2026-07-01T18:32:14.888Z] Assistant message
+The first test run found one missing fake-runtime attribute (`last_error_event`) in the new tracker test, not an implementation failure. I’m adding that to the helper and rerunning.
+[2026-07-01T18:32:16.316Z] Applying 1 file change(s).
+[2026-07-01T18:32:16.326Z] File changes completed.
+[2026-07-01T18:32:18.940Z] Assistant message captured: Rerunning `tests/test_rate_limit.py` now that the fake runtime matches the tracker’s expected...
+
+[2026-07-01T18:32:18.940Z] Assistant message
+Rerunning `tests/test_rate_limit.py` now that the fake runtime matches the tracker’s expected fields.
+[2026-07-01T18:32:20.214Z] Running command: /bin/bash -lc '.venv/bin/python -m unittest tests/test_rate_limit.py'
+[2026-07-01T18:32:21.610Z] Command failed: /bin/bash -lc '.venv/bin/python -m unittest tests/test_rate_limit.py' (exit 1)
+[2026-07-01T18:32:23.695Z] Assistant message captured: The next missing fake-runtime field is `max_turns`; the real runtime has it, so I’m adding th...
+
+[2026-07-01T18:32:23.695Z] Assistant message
+The next missing fake-runtime field is `max_turns`; the real runtime has it, so I’m adding that to the test helper.
+[2026-07-01T18:32:26.171Z] Applying 1 file change(s).
+[2026-07-01T18:32:26.184Z] File changes completed.
+[2026-07-01T18:32:30.357Z] Assistant message captured: Rerunning the rate-limit tests after completing the fake runtime fields.
+
+[2026-07-01T18:32:30.357Z] Assistant message
+Rerunning the rate-limit tests after completing the fake runtime fields.
+[2026-07-01T18:32:30.749Z] Running command: /bin/bash -lc '.venv/bin/python -m unittest tests/test_rate_limit.py'
+[2026-07-01T18:32:32.126Z] Command completed: /bin/bash -lc '.venv/bin/python -m unittest tests/test_rate_limit.py' (exit 0)
+[2026-07-01T18:32:38.399Z] Assistant message captured: `tests/test_rate_limit.py` passes. I’m running the rest of the requested offline checks now: ...
+
+[2026-07-01T18:32:38.399Z] Assistant message
+`tests/test_rate_limit.py` passes. I’m running the rest of the requested offline checks now: empty retry, regressions, and `py_compile`.
+[2026-07-01T18:32:38.545Z] Running command: /bin/bash -lc '.venv/bin/python -m py_compile mini-rl-env.py'
+[2026-07-01T18:32:38.556Z] Command completed: /bin/bash -lc '.venv/bin/python -m py_compile mini-rl-env.py' (exit 0)
+[2026-07-01T18:32:38.558Z] Running command: /bin/bash -lc '.venv/bin/python -m unittest tests/test_empty_retry.py'
+[2026-07-01T18:32:39.966Z] Command completed: /bin/bash -lc '.venv/bin/python -m unittest tests/test_empty_retry.py' (exit 0)
+[2026-07-01T18:32:42.890Z] Assistant message captured: `test_empty_retry.py` and `py_compile` passed. I’m starting the larger regression test file n...
+
+[2026-07-01T18:32:42.890Z] Assistant message
+`test_empty_retry.py` and `py_compile` passed. I’m starting the larger regression test file next; this may take a little longer.
+[2026-07-01T18:32:44.223Z] Running command: /bin/bash -lc '.venv/bin/python -m unittest tests/test_regressions.py'
+[2026-07-01T18:33:03.148Z] Command completed: /bin/bash -lc '.venv/bin/python -m unittest tests/test_regressions.py' (exit 0)
+[2026-07-01T18:33:12.842Z] Assistant message captured: All requested tests passed. I’m doing a final diff review now to make sure the edits stayed c...
+
+[2026-07-01T18:33:12.842Z] Assistant message
+All requested tests passed. I’m doing a final diff review now to make sure the edits stayed confined to the requested rate-limit paths and test file.
+[2026-07-01T18:33:12.874Z] Running command: /bin/bash -lc 'git status --short'
+[2026-07-01T18:33:12.884Z] Command completed: /bin/bash -lc 'git status --short' (exit 0)
+[2026-07-01T18:33:12.930Z] Running command: /bin/bash -lc "git diff -- mini-rl-env.py tests/test_rate_limit.py | sed -n '1,360p'"
+[2026-07-01T18:33:12.940Z] Command completed: /bin/bash -lc "git diff -- mini-rl-env.py tests/test_rate_limit.py | sed -n '1,360p'" (exit 0)
+[2026-07-01T18:33:12.964Z] Running command: /bin/bash -lc "nl -ba tests/test_rate_limit.py | sed -n '1,430p'"
+[2026-07-01T18:33:12.964Z] Command completed: /bin/bash -lc "nl -ba tests/test_rate_limit.py | sed -n '1,430p'" (exit 0)
+[2026-07-01T18:33:13.015Z] Running command: /bin/bash -lc "nl -ba mini-rl-env.py | sed -n '538,610p;1714,1732p;1848,1992p;1970,1990p;1988...
+[2026-07-01T18:33:13.120Z] Command completed: /bin/bash -lc "nl -ba mini-rl-env.py | sed -n '538,610p;1714,1732p;1848,1992p;1970,1990p;1988... (exit 0)
+[2026-07-01T18:33:23.590Z] Running command: /bin/bash -lc "nl -ba mini-rl-env.py | sed -n '548,630p'"
+[2026-07-01T18:33:23.590Z] Command completed: /bin/bash -lc "nl -ba mini-rl-env.py | sed -n '548,630p'" (exit 0)
+[2026-07-01T18:33:23.661Z] Running command: /bin/bash -lc 'git diff --stat -- mini-rl-env.py tests/test_rate_limit.py'
+[2026-07-01T18:33:23.671Z] Command completed: /bin/bash -lc 'git diff --stat -- mini-rl-env.py tests/test_rate_limit.py' (exit 0)
+[2026-07-01T18:33:23.681Z] Running command: /bin/bash -lc "nl -ba tests/test_rate_limit.py | sed -n '223,470p'"
+[2026-07-01T18:33:23.681Z] Running command: /bin/bash -lc "nl -ba mini-rl-env.py | sed -n '1745,1762p;1848,1990p;2021,2037p'"
+[2026-07-01T18:33:23.787Z] Command completed: /bin/bash -lc "nl -ba mini-rl-env.py | sed -n '1745,1762p;1848,1990p;2021,2037p'" (exit 0)
+[2026-07-01T18:33:23.887Z] Command completed: /bin/bash -lc "nl -ba tests/test_rate_limit.py | sed -n '223,470p'" (exit 0)
+[2026-07-01T18:33:34.072Z] Assistant message captured: The diff review shows the expected rate-limit edits in `mini-rl-env.py`; the worktree still h...
+
+[2026-07-01T18:33:34.072Z] Assistant message
+The diff review shows the expected rate-limit edits in `mini-rl-env.py`; the worktree still has unrelated pre-existing dirty files, which I did not modify. I’m doing one small formatting cleanup in the test file for long assertions, then I’ll rerun the quick test file.
+[2026-07-01T18:33:37.993Z] Applying 1 file change(s).
+[2026-07-01T18:33:38.003Z] File changes completed.
+[2026-07-01T18:33:40.021Z] Assistant message captured: Rerunning `tests/test_rate_limit.py` after the formatting-only cleanup.
+
+[2026-07-01T18:33:40.021Z] Assistant message
+Rerunning `tests/test_rate_limit.py` after the formatting-only cleanup.
+[2026-07-01T18:33:41.368Z] Running command: /bin/bash -lc '.venv/bin/python -m unittest tests/test_rate_limit.py'
+[2026-07-01T18:33:42.759Z] Command completed: /bin/bash -lc '.venv/bin/python -m unittest tests/test_rate_limit.py' (exit 0)
+[2026-07-01T18:33:50.173Z] Assistant message captured: The formatting cleanup didn’t touch implementation code, and the rate-limit test still passes...
+
+[2026-07-01T18:33:50.173Z] Assistant message
+The formatting cleanup didn’t touch implementation code, and the rate-limit test still passes. I’m rerunning `py_compile` once more for the final verification record.
+[2026-07-01T18:33:51.468Z] Running command: /bin/bash -lc '.venv/bin/python -m py_compile mini-rl-env.py'
+[2026-07-01T18:33:51.479Z] Command completed: /bin/bash -lc '.venv/bin/python -m py_compile mini-rl-env.py' (exit 0)
+[2026-07-01T18:33:57.910Z] Assistant message captured: Final checks are green. I’m collecting the final line references and status summary now.
+
+[2026-07-01T18:33:57.910Z] Assistant message
+Final checks are green. I’m collecting the final line references and status summary now.
+[2026-07-01T18:33:58.028Z] Running command: /bin/bash -lc 'git status --short -- mini-rl-env.py tests/test_rate_limit.py llm_factory.py'
+[2026-07-01T18:33:58.039Z] Command completed: /bin/bash -lc 'git status --short -- mini-rl-env.py tests/test_rate_limit.py llm_factory.py' (exit 0)
+[2026-07-01T18:33:58.087Z] Running command: /bin/bash -lc "nl -ba mini-rl-env.py | sed -n '548,630p;1748,1760p;1858,1986p;2029,2035p'"
+[2026-07-01T18:33:58.096Z] Command completed: /bin/bash -lc "nl -ba mini-rl-env.py | sed -n '548,630p;1748,1760p;1858,1986p;2029,2035p'" (exit 0)
+[2026-07-01T18:33:58.116Z] Running command: /bin/bash -lc "nl -ba tests/test_rate_limit.py | sed -n '268,475p'"
+[2026-07-01T18:33:58.221Z] Command completed: /bin/bash -lc "nl -ba tests/test_rate_limit.py | sed -n '268,475p'" (exit 0)
+[2026-07-01T18:34:19.871Z] Assistant message captured: Implemented and verified. No commit made. 1. Sustained 429 exhaustion now sets a direct harne...
+
+[2026-07-01T18:34:19.871Z] Assistant message
+Implemented and verified. No commit made.
+
+1. Sustained 429 exhaustion now sets a direct harness marker before re-raise: [mini-rl-env.py](/home/khkramer/src/gb-benchmarks/port-to-port/mini-rl-env.py:550) sets `rate_limit_exhausted_pending` plus a structured event, and the wrapper calls it before re-raising at [mini-rl-env.py](/home/khkramer/src/gb-benchmarks/port-to-port/mini-rl-env.py:620).
+
+2. The tracker now excludes that marker from the transport-empty signature at [mini-rl-env.py](/home/khkramer/src/gb-benchmarks/port-to-port/mini-rl-env.py:1750), skips the empty-response retry branch when marked at [mini-rl-env.py](/home/khkramer/src/gb-benchmarks/port-to-port/mini-rl-env.py:1869), and classifies the turn as `rate_limit_exhausted` without incrementing `no_tool_call_count` or bad actions at [mini-rl-env.py](/home/khkramer/src/gb-benchmarks/port-to-port/mini-rl-env.py:1903).
+
+3. The turn log records `rate_limit_exhausted`, `rate_limit_event`, and `error_event`, clears the marker, then calls `request_stop("rate_limit_exhausted")` at [mini-rl-env.py](/home/khkramer/src/gb-benchmarks/port-to-port/mini-rl-env.py:1937) and [mini-rl-env.py](/home/khkramer/src/gb-benchmarks/port-to-port/mini-rl-env.py:1983).
+
+4. Updated tests in [tests/test_rate_limit.py](/home/khkramer/src/gb-benchmarks/port-to-port/tests/test_rate_limit.py:268): real tracker-frame sustained 429 outcome; non-429 `APIStatusError` no-retry; non-OpenAI provider gating/no telemetry; Retry-After numeric and HTTP-date bounded backoff. The successful 429-then-success path remains covered at [tests/test_rate_limit.py](/home/khkramer/src/gb-benchmarks/port-to-port/tests/test_rate_limit.py:223).
+
+Verification:
+- `.venv/bin/python -m unittest tests/test_rate_limit.py` OK, 6 tests
+- `.venv/bin/python -m unittest tests/test_empty_retry.py` OK, 9 tests
+- `.venv/bin/python -m unittest tests/test_regressions.py` OK, 82 tests
+- `.venv/bin/python -m py_compile mini-rl-env.py` OK
+
+Concern: the worktree already had unrelated dirty files, including `llm_factory.py` and unrelated hunks in `mini-rl-env.py`; I left those alone. `tests/test_rate_limit.py` is still untracked in this checkout.
+[2026-07-01T18:34:19.892Z] Turn completed.
+
+[2026-07-01T18:34:19.931Z] Final output
+Implemented and verified. No commit made.
+
+1. Sustained 429 exhaustion now sets a direct harness marker before re-raise: [mini-rl-env.py](/home/khkramer/src/gb-benchmarks/port-to-port/mini-rl-env.py:550) sets `rate_limit_exhausted_pending` plus a structured event, and the wrapper calls it before re-raising at [mini-rl-env.py](/home/khkramer/src/gb-benchmarks/port-to-port/mini-rl-env.py:620).
+
+2. The tracker now excludes that marker from the transport-empty signature at [mini-rl-env.py](/home/khkramer/src/gb-benchmarks/port-to-port/mini-rl-env.py:1750), skips the empty-response retry branch when marked at [mini-rl-env.py](/home/khkramer/src/gb-benchmarks/port-to-port/mini-rl-env.py:1869), and classifies the turn as `rate_limit_exhausted` without incrementing `no_tool_call_count` or bad actions at [mini-rl-env.py](/home/khkramer/src/gb-benchmarks/port-to-port/mini-rl-env.py:1903).
+
+3. The turn log records `rate_limit_exhausted`, `rate_limit_event`, and `error_event`, clears the marker, then calls `request_stop("rate_limit_exhausted")` at [mini-rl-env.py](/home/khkramer/src/gb-benchmarks/port-to-port/mini-rl-env.py:1937) and [mini-rl-env.py](/home/khkramer/src/gb-benchmarks/port-to-port/mini-rl-env.py:1983).
+
+4. Updated tests in [tests/test_rate_limit.py](/home/khkramer/src/gb-benchmarks/port-to-port/tests/test_rate_limit.py:268): real tracker-frame sustained 429 outcome; non-429 `APIStatusError` no-retry; non-OpenAI provider gating/no telemetry; Retry-After numeric and HTTP-date bounded backoff. The successful 429-then-success path remains covered at [tests/test_rate_limit.py](/home/khkramer/src/gb-benchmarks/port-to-port/tests/test_rate_limit.py:223).
+
+Verification:
+- `.venv/bin/python -m unittest tests/test_rate_limit.py` OK, 6 tests
+- `.venv/bin/python -m unittest tests/test_empty_retry.py` OK, 9 tests
+- `.venv/bin/python -m unittest tests/test_regressions.py` OK, 82 tests
+- `.venv/bin/python -m py_compile mini-rl-env.py` OK
+
+Concern: the worktree already had unrelated dirty files, including `llm_factory.py` and unrelated hunks in `mini-rl-env.py`; I left those alone. `tests/test_rate_limit.py` is still untracked in this checkout.

@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import asyncio
+import importlib.metadata
 import json
-from typing import Any
+from typing import Any, Callable
 
 from loguru import logger
 from openai import NOT_GIVEN
@@ -16,8 +18,58 @@ from pipecat.services.openai.llm import OpenAILLMService
 from pipecat.utils.tracing.service_decorators import traced_llm
 
 
+class ResponsesRequestTimeout(TimeoutError):
+    """One Responses inference exceeded its total wall deadline."""
+
+
+class ResponsesStreamIdleTimeout(TimeoutError):
+    """A Responses stream produced no event before its idle deadline."""
+
+
+class ResponsesProtocolError(RuntimeError):
+    """A Responses stream ended without a terminal event."""
+
+
 class OpenAIResponsesLLMService(OpenAILLMService):
     """OpenAI-compatible LLM service backed by the Responses API."""
+
+    def __init__(
+        self,
+        *,
+        request_timeout_secs: float | None = None,
+        stream_idle_timeout_secs: float | None = None,
+        benchmark_observability_enabled: bool = False,
+        **kwargs: Any,
+    ) -> None:
+        self._request_timeout_secs = (
+            float(request_timeout_secs) if request_timeout_secs is not None else None
+        )
+        self._stream_idle_timeout_secs = (
+            float(stream_idle_timeout_secs) if stream_idle_timeout_secs is not None else None
+        )
+        self._benchmark_observability_enabled = bool(benchmark_observability_enabled)
+        self._responses_traces: list[dict[str, Any]] = []
+        self._benchmark_outcome_callback: Callable[[dict[str, Any]], None] | None = None
+        super().__init__(**kwargs)
+        if self._benchmark_observability_enabled:
+            # Keep every billable attempt visible to the outer runner. SDK
+            # retries can perform provider work that is absent from the final
+            # response usage, which would make a hard cumulative budget
+            # unauditable. Infrastructure replacement therefore happens only
+            # at the episode runner, where it gets its own JSON/log/ledger row.
+            self._client.max_retries = 0
+            self._benchmark_sdk_max_retries = 0
+        else:
+            self._benchmark_sdk_max_retries = None
+
+    def set_benchmark_outcome_callback(
+        self, callback: Callable[[dict[str, Any]], None] | None
+    ) -> None:
+        self._benchmark_outcome_callback = callback
+
+    def get_responses_traces(self) -> list[dict[str, Any]]:
+        # Round-trip through JSON so callers cannot mutate service-owned state.
+        return json.loads(json.dumps(getattr(self, "_responses_traces", [])))
 
     def _setting(self, key: str, default: Any = NOT_GIVEN) -> Any:
         settings = getattr(self, "_settings", {})
@@ -47,6 +99,180 @@ class OpenAIResponsesLLMService(OpenAILLMService):
     @staticmethod
     def _is_not_given(value: Any) -> bool:
         return value is NOT_GIVEN
+
+    @staticmethod
+    def _header_request_id(headers: Any) -> str | None:
+        getter = getattr(headers, "get", None)
+        if not callable(getter):
+            return None
+        value = getter("x-request-id")
+        return str(value) if value else None
+
+    def _stream_request_id(self, stream: Any) -> str | None:
+        for response_attr in ("response", "_response"):
+            response = getattr(stream, response_attr, None)
+            request_id = self._header_request_id(getattr(response, "headers", None))
+            if request_id:
+                return request_id
+        return None
+
+    @classmethod
+    def _usage_trace(cls, response: Any) -> dict[str, int | None] | None:
+        usage = cls._get_attr(response, "usage")
+        if usage is None:
+            return None
+        input_details = cls._get_attr(usage, "input_tokens_details")
+        output_details = cls._get_attr(usage, "output_tokens_details")
+        return {
+            "input_tokens": cls._get_attr(usage, "input_tokens"),
+            "cached_tokens": cls._get_attr(input_details, "cached_tokens"),
+            "cache_write_tokens": cls._get_attr(input_details, "cache_write_tokens"),
+            "output_tokens": cls._get_attr(usage, "output_tokens"),
+            "reasoning_tokens": cls._get_attr(output_details, "reasoning_tokens"),
+            "total_tokens": cls._get_attr(usage, "total_tokens"),
+        }
+
+    @classmethod
+    def _error_trace(cls, error: Any) -> dict[str, Any] | None:
+        if error is None:
+            return None
+        result: dict[str, Any] = {}
+        for key in ("code", "message", "type", "param"):
+            value = cls._get_attr(error, key)
+            if value is not None:
+                result[key] = str(value)[:500]
+        return result or None
+
+    def _request_trace(self, params: dict[str, Any]) -> dict[str, Any]:
+        reasoning = params.get("reasoning")
+        return {
+            "api_surface": "responses",
+            "requested_model": params.get("model"),
+            "requested_effective_effort": (
+                reasoning.get("effort") if isinstance(reasoning, dict) else None
+            ),
+            "requested_max_output_tokens": params.get("max_output_tokens"),
+            "tools_present": bool(params.get("tools")),
+            "store": params.get("store"),
+            "service_tier_present": "service_tier" in params,
+            "request_timeout_secs": getattr(self, "_request_timeout_secs", None),
+            "stream_idle_timeout_secs": getattr(self, "_stream_idle_timeout_secs", None),
+            "sdk_max_retries": getattr(self, "_benchmark_sdk_max_retries", None),
+            "openai_sdk_version": importlib.metadata.version("openai"),
+        }
+
+    def _terminal_trace(
+        self,
+        *,
+        params: dict[str, Any],
+        response: Any,
+        event_types: list[str],
+        request_id: str | None,
+    ) -> dict[str, Any]:
+        incomplete = self._get_attr(response, "incomplete_details")
+        return {
+            **self._request_trace(params),
+            "request_id": request_id or self._get_attr(response, "_request_id"),
+            "response_id": self._get_attr(response, "id"),
+            "resolved_model": self._get_attr(response, "model"),
+            "response_status": self._get_attr(response, "status"),
+            "returned_service_tier": self._get_attr(response, "service_tier"),
+            "incomplete_reason": self._get_attr(incomplete, "reason"),
+            "error": self._error_trace(self._get_attr(response, "error")),
+            "usage": self._usage_trace(response),
+            "event_types": list(event_types),
+        }
+
+    def _exception_trace(
+        self,
+        *,
+        params: dict[str, Any],
+        exc: BaseException,
+        event_types: list[str],
+        request_id: str | None,
+    ) -> dict[str, Any]:
+        body = getattr(exc, "body", None)
+        if isinstance(body, dict) and isinstance(body.get("error"), dict):
+            body = body["error"]
+        error = self._error_trace(body) or {}
+        error.setdefault("type", type(exc).__name__)
+        error.setdefault("message", str(exc)[:500])
+        status_code = getattr(exc, "status_code", None)
+        if status_code is not None:
+            error["status_code"] = status_code
+        return {
+            **self._request_trace(params),
+            "request_id": request_id or getattr(exc, "request_id", None),
+            "response_id": None,
+            "resolved_model": None,
+            "response_status": "error",
+            "returned_service_tier": None,
+            "incomplete_reason": None,
+            "error": error,
+            "usage": None,
+            "event_types": list(event_types),
+        }
+
+    def _record_trace(self, trace: dict[str, Any]) -> None:
+        traces = getattr(self, "_responses_traces", None)
+        if not isinstance(traces, list):
+            traces = []
+            self._responses_traces = traces
+        trace = dict(trace)
+        trace["trace_index"] = len(traces) + 1
+        traces.append(trace)
+        callback = getattr(self, "_benchmark_outcome_callback", None)
+        if callable(callback):
+            callback(dict(trace))
+
+    async def _iter_response_events(
+        self,
+        params: dict[str, Any],
+        state: dict[str, Any],
+    ):
+        request_timeout = getattr(self, "_request_timeout_secs", None)
+        idle_timeout = getattr(self, "_stream_idle_timeout_secs", None)
+        strict_terminal = bool(
+            getattr(self, "_benchmark_observability_enabled", False)
+        )
+        if request_timeout is None and idle_timeout is None:
+            async with self._client.responses.stream(**params) as stream:
+                state["request_id"] = self._stream_request_id(stream)
+                async for event in stream:
+                    yield event
+            return
+
+        request_timeout = float(request_timeout) if request_timeout is not None else None
+        idle_timeout = float(idle_timeout) if idle_timeout is not None else None
+        try:
+            async with asyncio.timeout(request_timeout):
+                async with self._client.responses.stream(**params) as stream:
+                    state["request_id"] = self._stream_request_id(stream)
+                    iterator = stream.__aiter__()
+                    while True:
+                        try:
+                            event = await asyncio.wait_for(anext(iterator), timeout=idle_timeout)
+                        except StopAsyncIteration:
+                            break
+                        except asyncio.TimeoutError as exc:
+                            raise ResponsesStreamIdleTimeout(
+                                f"Responses stream idle for more than {idle_timeout}s"
+                            ) from exc
+                        yield event
+                        if strict_terminal and getattr(event, "type", None) in {
+                            "response.completed",
+                            "response.incomplete",
+                            "response.failed",
+                            "response.error",
+                            "error",
+                        }:
+                            break
+        except ResponsesStreamIdleTimeout:
+            raise
+        except asyncio.TimeoutError as exc:
+            raise ResponsesRequestTimeout(
+                f"Responses request exceeded total timeout {request_timeout}s"
+            ) from exc
 
     @staticmethod
     def _to_json_text(value: Any) -> str:
@@ -111,8 +337,10 @@ class OpenAIResponsesLLMService(OpenAILLMService):
             content_text = str(content)
 
         if role in {"system", "developer", "user", "assistant"} and content_text:
-            # Responses API history replay expects easy input messages to use
-            # input_text, even when the original role was assistant.
+            # This easy-input representation is used for new user/developer
+            # messages and as a fallback for assistant history that did not
+            # originate from this service. Remembered assistant outputs are
+            # replaced with their exact provider output items below.
             items.append(
                 {
                     "type": "message",
@@ -124,10 +352,18 @@ class OpenAIResponsesLLMService(OpenAILLMService):
         return items
 
     def _messages_to_responses_input(self, messages: list[Any]) -> list[dict[str, Any]]:
-        items: list[dict[str, Any]] = []
-        for message in messages:
-            items.extend(self._message_to_responses_items(message))
-        return items
+        """Convert Pipecat history using the proven aiewf-eval wire contract.
+
+        Responses continuations are reconstructed from standard assistant
+        function calls plus function-call outputs. Provider-owned reasoning
+        payloads are intentionally neither requested nor retained.
+        """
+
+        return [
+            item
+            for message in messages
+            for item in self._message_to_responses_items(message)
+        ]
 
     def _tools_to_responses_tools(self, tools: Any) -> Any:
         if self._is_not_given(tools):
@@ -150,8 +386,10 @@ class OpenAIResponsesLLMService(OpenAILLMService):
                 "type": "function",
                 "name": name,
                 "parameters": self._get_attr(fn, "parameters"),
-                "strict": self._get_attr(fn, "strict"),
             }
+            strict = self._get_attr(fn, "strict")
+            if strict is not None and not self._is_not_given(strict):
+                resp_tool["strict"] = strict
             description = self._get_attr(fn, "description")
             if description:
                 resp_tool["description"] = description
@@ -181,7 +419,6 @@ class OpenAIResponsesLLMService(OpenAILLMService):
 
         request: dict[str, Any] = {
             "model": getattr(self, "model_name", None) or self._setting("model"),
-            "input": self._messages_to_responses_input(messages),
             "tools": self._tools_to_responses_tools(tools),
             "tool_choice": self._tool_choice_to_responses_tool_choice(tool_choice),
             "temperature": self._setting("temperature"),
@@ -206,6 +443,8 @@ class OpenAIResponsesLLMService(OpenAILLMService):
             extra["reasoning"] = {"effort": extra.pop("reasoning_effort")}
 
         request.update(extra)
+
+        request["input"] = self._messages_to_responses_input(messages)
 
         cleaned: dict[str, Any] = {}
         for key, value in request.items():
@@ -235,7 +474,17 @@ class OpenAIResponsesLLMService(OpenAILLMService):
         params["stream"] = False
         if max_tokens is not None:
             params["max_output_tokens"] = max_tokens
-        response = await self._client.responses.create(**params)
+        request_timeout = getattr(self, "_request_timeout_secs", None)
+        if request_timeout is None:
+            response = await self._client.responses.create(**params)
+            return self._extract_response_text(response)
+        try:
+            response = await asyncio.wait_for(
+                self._client.responses.create(**params),
+                timeout=float(request_timeout),
+            )
+        except asyncio.TimeoutError as exc:
+            raise ResponsesRequestTimeout("Non-streaming Responses request timed out") from exc
         return self._extract_response_text(response)
 
     @traced_llm
@@ -245,6 +494,24 @@ class OpenAIResponsesLLMService(OpenAILLMService):
         function_call_map: dict[str, dict[str, str]] = {}
         queued_function_calls: list[FunctionCallFromLLM] = []
         processed_call_ids: set[str] = set()
+
+        async def apply_terminal_metadata(response: Any) -> None:
+            model_name = self._get_attr(response, "model")
+            if model_name and self.get_full_model_name() != model_name:
+                self.set_full_model_name(model_name)
+            usage = self._get_attr(response, "usage")
+            if usage is None:
+                return
+            input_details = self._get_attr(usage, "input_tokens_details")
+            output_details = self._get_attr(usage, "output_tokens_details")
+            tokens = LLMTokenUsage(
+                prompt_tokens=self._get_attr(usage, "input_tokens"),
+                completion_tokens=self._get_attr(usage, "output_tokens"),
+                total_tokens=self._get_attr(usage, "total_tokens"),
+                cache_read_input_tokens=self._get_attr(input_details, "cached_tokens"),
+                reasoning_tokens=self._get_attr(output_details, "reasoning_tokens"),
+            )
+            await self.start_llm_usage_metrics(tokens)
 
         async def queue_function_call(
             *,
@@ -280,9 +547,18 @@ class OpenAIResponsesLLMService(OpenAILLMService):
             )
 
         params = self._responses_request_params(context)
-        async with self._client.responses.stream(**params) as stream:
-            async for event in stream:
+        stream_state: dict[str, Any] = {"request_id": None}
+        event_types: list[str] = []
+        terminal_seen = False
+        completed_terminal = False
+        strict_outcomes = bool(
+            getattr(self, "_benchmark_observability_enabled", False)
+        )
+        try:
+            async for event in self._iter_response_events(params, stream_state):
                 event_type = getattr(event, "type", None)
+                if event_type and event_type not in event_types:
+                    event_types.append(event_type)
 
                 if event_type == "response.output_text.delta":
                     delta = getattr(event, "delta", "")
@@ -351,34 +627,86 @@ class OpenAIResponsesLLMService(OpenAILLMService):
                 if event_type == "response.completed":
                     response = getattr(event, "response", None)
                     if response is not None:
-                        model_name = getattr(response, "model", None)
-                        if model_name and self.get_full_model_name() != model_name:
-                            self.set_full_model_name(model_name)
-                        usage = getattr(response, "usage", None)
-                        if usage is not None:
-                            input_details = getattr(usage, "input_tokens_details", None)
-                            output_details = getattr(usage, "output_tokens_details", None)
-                            tokens = LLMTokenUsage(
-                                prompt_tokens=getattr(usage, "input_tokens", None),
-                                completion_tokens=getattr(usage, "output_tokens", None),
-                                total_tokens=getattr(usage, "total_tokens", None),
-                                cache_read_input_tokens=(
-                                    getattr(input_details, "cached_tokens", None) if input_details else None
-                                ),
-                                reasoning_tokens=(
-                                    getattr(output_details, "reasoning_tokens", None)
-                                    if output_details
-                                    else None
-                                ),
+                        terminal_seen = True
+                        completed_terminal = True
+                        await apply_terminal_metadata(response)
+                        if strict_outcomes:
+                            self._record_trace(
+                                self._terminal_trace(
+                                    params=params,
+                                    response=response,
+                                    event_types=event_types,
+                                    request_id=stream_state.get("request_id"),
+                                )
                             )
-                            await self.start_llm_usage_metrics(tokens)
-                    if queued_function_calls:
+                    if not strict_outcomes and queued_function_calls:
                         await self.run_function_calls(list(queued_function_calls))
                         queued_function_calls.clear()
                     continue
 
-                if event_type in {"response.failed", "response.error"}:
-                    await self.push_error(error_msg=f"Responses API error event: {event}")
+                if event_type in {"response.incomplete", "response.failed"}:
+                    if not strict_outcomes:
+                        if event_type == "response.failed":
+                            await self.push_error(
+                                error_msg=f"Responses API error event: {event}"
+                            )
+                        continue
+                    response = getattr(event, "response", None)
+                    if response is not None:
+                        terminal_seen = True
+                        await apply_terminal_metadata(response)
+                        self._record_trace(
+                            self._terminal_trace(
+                                params=params,
+                                response=response,
+                                event_types=event_types,
+                                request_id=stream_state.get("request_id"),
+                            )
+                        )
+                    continue
+
+                if event_type in {"response.error", "error"}:
+                    if not strict_outcomes:
+                        await self.push_error(error_msg=f"Responses API error event: {event}")
+                        continue
+                    terminal_seen = True
+                    trace = {
+                        **self._request_trace(params),
+                        "request_id": stream_state.get("request_id"),
+                        "response_id": None,
+                        "resolved_model": None,
+                        "response_status": "failed",
+                        "returned_service_tier": None,
+                        "incomplete_reason": None,
+                        "error": self._error_trace(event),
+                        "usage": None,
+                        "event_types": list(event_types),
+                    }
+                    self._record_trace(trace)
+                    continue
+
+            if strict_outcomes and not terminal_seen:
+                raise ResponsesProtocolError("Responses stream ended without a terminal event")
+            # The request/idle deadlines protect provider I/O only.  Dispatch
+            # tool calls after the stream context has closed so those calls
+            # remain governed by the existing function-call timeout instead.
+            if strict_outcomes and completed_terminal and queued_function_calls:
+                await self.run_function_calls(list(queued_function_calls))
+                queued_function_calls.clear()
+        except Exception as exc:
+            if strict_outcomes and not terminal_seen:
+                self._record_trace(
+                    self._exception_trace(
+                        params=params,
+                        exc=exc,
+                        event_types=event_types,
+                        request_id=stream_state.get("request_id"),
+                    )
+                )
+            if not ttfb_stopped:
+                await self.stop_ttfb_metrics()
+                ttfb_stopped = True
+            raise
 
         if not ttfb_stopped:
             await self.stop_ttfb_metrics()

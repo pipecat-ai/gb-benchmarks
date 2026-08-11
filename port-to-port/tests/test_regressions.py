@@ -44,6 +44,11 @@ tool_catalog = _load_module("tool_catalog_test", "tool_catalog.py")
 synthetic_world = _load_module("synthetic_world_test", "synthetic_world.py")
 
 
+class CapturingArgumentParser(argparse.ArgumentParser):
+    def error(self, message):  # type: ignore[override]
+        raise ValueError(message)
+
+
 class EvaluateRunsRegressionTests(unittest.TestCase):
     def test_summary_fallback_accepts_sector_only_mega_reference(self) -> None:
         payload = {
@@ -816,6 +821,18 @@ class EvaluateRunsRegressionTests(unittest.TestCase):
 
         self.assertTrue(evaluate_runs._is_coherent_finished_report(message))
 
+    def test_coherent_report_accepts_net_on_hand_credit_change(self) -> None:
+        message = (
+            "Used MEGA SSS and recharged 33 warp for 66 credits. Traded at 4 distinct ports. "
+            "Net on-hand credits increased from 16,564 to 18,568: +2,004 overall."
+        )
+
+        self.assertTrue(evaluate_runs._is_coherent_finished_report(message))
+        self.assertIs(
+            evaluate_runs._is_coherent_finished_report,
+            mini_rl_env._is_coherent_finished_report,
+        )
+
     def test_report_element_verdicts_require_recharge_context_for_recharge_cost(self) -> None:
         verdicts = evaluate_runs._compute_report_element_verdicts(
             finished_message=(
@@ -872,6 +889,40 @@ class EvaluateRunsRegressionTests(unittest.TestCase):
         self.assertIn("Total profit from trades: 0 credits", prompt)
         self.assertIn("Net change: -66 credits (warp recharge cost only)", prompt)
         self.assertIn("'for 66 credits'", prompt)
+
+    def test_report_judge_retry_allows_room_for_verdict_after_analysis(self) -> None:
+        judge = evaluate_runs.AnthropicReportJudge(
+            evaluate_runs.ReportJudgeConfig(
+                model="dummy",
+                api_key="dummy",
+                timeout_secs=1.0,
+            )
+        )
+
+        with mock.patch.object(
+            judge,
+            "_request_text",
+            side_effect=[
+                ("I need to check the requirements first.", None),
+                ("After checking each requirement, FAIL", None),
+            ],
+        ) as request_mock:
+            verdict, reason = judge.judge(
+                finished_message="Used MEGA SSS but reported the wrong profit.",
+                expected_finish_sector=3080,
+                report_truth={
+                    "mega_port_sector": 1611,
+                    "recharge_units": 33,
+                    "recharge_cost": 66,
+                    "trade_port_count": 1,
+                    "total_profit_credits": 24,
+                },
+            )
+
+        self.assertFalse(verdict)
+        self.assertEqual(reason, "FAIL(retry)")
+        self.assertEqual(request_mock.call_count, 2)
+        self.assertEqual(request_mock.call_args_list[1].kwargs["max_tokens"], 1024)
 
 
 class MiniRLEnvRegressionTests(unittest.TestCase):
@@ -934,6 +985,14 @@ class MiniRLEnvRegressionTests(unittest.TestCase):
     def test_coherent_report_accepts_semantic_recharge_wording(self) -> None:
         message = (
             "Used MEGA SSS, topped off 33 warp for 66 credits, visited 3 ports, overall gain 120 credits."
+        )
+
+        self.assertTrue(mini_rl_env._is_coherent_finished_report(message))
+
+    def test_run_coherent_report_accepts_net_on_hand_credit_change(self) -> None:
+        message = (
+            "Used MEGA SSS and recharged 33 warp for 66 credits. Traded at 4 distinct ports. "
+            "Net on-hand credits increased from 16,564 to 18,568: +2,004 overall."
         )
 
         self.assertTrue(mini_rl_env._is_coherent_finished_report(message))
@@ -1451,6 +1510,43 @@ class MiniRLEnvRegressionTests(unittest.TestCase):
         self.assertEqual(extra["extra_body"]["vllm_xargs"]["thinking_budget"], 1536)
         self.assertEqual(policy, "openai-compatible:vllm thinking_budget=1536")
 
+    def test_apply_benchmark_thinking_mode_uses_native_muse_strength(self) -> None:
+        llm_service = types.SimpleNamespace(
+            _settings={
+                "temperature": 0.6,
+                "top_p": 0.95,
+                "extra": {
+                    "extra_body": {
+                        "vllm_xargs": {"thinking_budget": 2048},
+                    }
+                },
+            }
+        )
+
+        policy = mini_rl_env._apply_benchmark_thinking_mode(
+            llm_service=llm_service,
+            provider=mini_rl_env.LLMProvider.OPENAI,
+            model="muse-glimmer-30b",
+            thinking="high",
+            thinking_budget=None,
+            openai_base_url="http://127.0.0.1:8080/v1",
+        )
+
+        self.assertEqual(llm_service._settings["temperature"], 1.0)
+        self.assertEqual(llm_service._settings["top_p"], 0.95)
+        extra_body = llm_service._settings["extra"]["extra_body"]
+        self.assertNotIn("vllm_xargs", extra_body)
+        self.assertEqual(
+            extra_body["chat_template_kwargs"], {"reasoning_strength": "high"}
+        )
+        self.assertEqual(extra_body["top_k"], 64)
+        self.assertEqual(extra_body["min_p"], 0.0)
+        self.assertEqual(
+            policy,
+            "openai-compatible:muse-glimmer reasoning_strength=high "
+            "T=1.0 top_p=0.95 top_k=64 min_p=0.0 no_budget",
+        )
+
     def test_apply_benchmark_thinking_mode_disables_adaptive_claude_when_none(self) -> None:
         llm_service = types.SimpleNamespace(_settings={})
 
@@ -1615,6 +1711,67 @@ class MiniRLEnvRegressionTests(unittest.TestCase):
             llm_service._settings["extra"]["extra_body"]["chat_template_kwargs"]["enable_thinking"],
             True,
         )
+
+    def test_apply_benchmark_thinking_mode_maps_baseten_glm52_efforts(self) -> None:
+        for thinking, expected_effort in (
+            ("none", "none"),
+            ("high", "high"),
+            ("xhigh", "max"),
+        ):
+            with self.subTest(thinking=thinking):
+                llm_service = types.SimpleNamespace(
+                    _settings={
+                        "extra": {
+                            "extra_body": {
+                                "chat_template_kwargs": {"enable_thinking": True},
+                                "vllm_xargs": {"thinking_budget": 2048},
+                            }
+                        }
+                    }
+                )
+
+                policy = mini_rl_env._apply_benchmark_thinking_mode(
+                    llm_service=llm_service,
+                    provider=mini_rl_env.LLMProvider.OPENAI,
+                    model="zai-org/GLM-5.2",
+                    thinking=thinking,
+                    thinking_budget=None,
+                    openai_base_url="https://inference.baseten.co/v1",
+                )
+
+                self.assertEqual(
+                    policy,
+                    f"openai-compatible:baseten reasoning.effort={expected_effort}",
+                )
+                extra_body = llm_service._settings["extra"]["extra_body"]
+                self.assertEqual(extra_body["reasoning"], {"effort": expected_effort})
+                self.assertNotIn("chat_template_kwargs", extra_body)
+                self.assertNotIn("vllm_xargs", extra_body)
+
+    def test_apply_benchmark_thinking_mode_keeps_baseten_nemotron_none_high_mapping(
+        self,
+    ) -> None:
+        for thinking, expected_effort in (("none", "none"), ("high", "high")):
+            with self.subTest(thinking=thinking):
+                llm_service = types.SimpleNamespace(_settings={})
+
+                policy = mini_rl_env._apply_benchmark_thinking_mode(
+                    llm_service=llm_service,
+                    provider=mini_rl_env.LLMProvider.OPENAI,
+                    model="nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B",
+                    thinking=thinking,
+                    thinking_budget=None,
+                    openai_base_url="https://inference.baseten.co/v1",
+                )
+
+                self.assertEqual(
+                    policy,
+                    f"openai-compatible:baseten reasoning.effort={expected_effort}",
+                )
+                self.assertEqual(
+                    llm_service._settings["extra"]["extra_body"]["reasoning"],
+                    {"effort": expected_effort},
+                )
 
     def test_apply_benchmark_thinking_mode_sets_nemotron_enable_thinking_toggle_without_budget(self) -> None:
         llm_service = types.SimpleNamespace(
@@ -1824,6 +1981,44 @@ class MiniRLEnvRegressionTests(unittest.TestCase):
 
         with self.assertRaises(SystemExit):
             mini_rl_env._validate_generation_controls(args, parser)
+
+    def test_validate_generation_controls_rejects_baseten_glm52_low_medium_minimal(
+        self,
+    ) -> None:
+        parser = CapturingArgumentParser()
+        for thinking in ("minimal", "low", "medium"):
+            with self.subTest(thinking=thinking):
+                args = types.SimpleNamespace(
+                    provider="openai",
+                    model="zai-org/GLM-5.2",
+                    openai_base_url="https://inference.baseten.co/v1",
+                    thinking=thinking,
+                    thinking_budget=None,
+                    max_tokens=8192,
+                )
+
+                with self.assertRaisesRegex(
+                    ValueError,
+                    "GLM-5.2 on Baseten supports only --thinking none, high, or xhigh",
+                ):
+                    mini_rl_env._validate_generation_controls(args, parser)
+
+    def test_validate_generation_controls_allows_baseten_glm52_none_high_xhigh(
+        self,
+    ) -> None:
+        parser = argparse.ArgumentParser()
+        for thinking in ("none", "high", "xhigh"):
+            with self.subTest(thinking=thinking):
+                args = types.SimpleNamespace(
+                    provider="openai",
+                    model="zai-org/GLM-5.2",
+                    openai_base_url="https://inference.baseten.co/v1",
+                    thinking=thinking,
+                    thinking_budget=None,
+                    max_tokens=8192,
+                )
+
+                mini_rl_env._validate_generation_controls(args, parser)
 
     def test_later_batched_call_waits_for_async_completion(self) -> None:
         async def _run() -> None:
@@ -2833,7 +3028,7 @@ class LlmFactoryRegressionTests(unittest.TestCase):
         self.assertEqual(params.kwargs["temperature"], 0.2)
 
 class OpenAIResponsesServiceRegressionTests(unittest.TestCase):
-    def test_assistant_history_uses_input_text_when_replayed(self) -> None:
+    def test_unremembered_assistant_history_uses_easy_input_fallback(self) -> None:
         service = object.__new__(openai_responses_service.OpenAIResponsesLLMService)
 
         items = service._message_to_responses_items(

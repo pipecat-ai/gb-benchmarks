@@ -1,0 +1,43 @@
+{
+  "schema_version": "gpt56_authorization_ledger.v1",
+  "entries": [
+    {
+      "entry_id": "through_v8_rebased_to_physical_requests",
+      "accounted_tokens": 63173158,
+      "estimated_usd": 176.606044975,
+      "wall_secs": 7956.062,
+      "physical_requests": 255,
+      "known_returned_tokens": 2846553,
+      "accounting_note": "The production-v1 a001/a002 replay_error traces performed no provider requests. Their three completed physical requests have complete usage totaling 20,328 tokens and $0.02098145 under the existing price function. This successor replaces the two 55,000,000-token/$153.75 full reservations with those measured values while preserving wall time, physical-request count, known-returned usage, and the original audit artifacts.",
+      "evidence": [
+        {
+          "path": "proj-2026-07-16-1632/step4-authorization-ledger-production-input-replay-v9.json",
+          "sha256": "f971b97282e84f3b88d53ce6c917fe9628d83ef701d7533f952f7a83245ab7b4"
+        },
+        {
+          "path": "runs/gpt56-luna-low-r01-a001.json",
+          "sha256": "4e12b1ec71fbe9ef6cb4223d50cc03e7b229fca0243effea27346c53436fe871"
+        },
+        {
+          "path": "runs/gpt56-luna-low-r01-a002.json",
+          "sha256": "de6e60acc60d927b4d77099b7ffa593f4567d5c0d9246b9d85976defb0b99590"
+        },
+        {
+          "path": "runs/gpt56-luna-low-r01-a001.log",
+          "sha256": "bebeecf2d1dd66a5d2f37f763b3b19a144eace529220f482d32bacbba87a7b35"
+        },
+        {
+          "path": "runs/gpt56-luna-low-r01-a002.log",
+          "sha256": "8f96449acf3dc38c42565d73eca33c339a7a0409478ed1216e34c2af7e4e4953"
+        }
+      ]
+    }
+  ],
+  "cumulative": {
+    "accounted_tokens": 63173158,
+    "estimated_usd": 176.606044975,
+    "wall_secs": 7956.062,
+    "physical_requests": 255,
+    "known_returned_tokens": 2846553
+  }
+}

@@ -1,0 +1,155 @@
+{
+  "schema_version": 1,
+  "openai_sdk_version": "2.21.0",
+  "captured_success": {
+    "source": "sanitized captured Responses event sequence",
+    "attempt_number": 1,
+    "expected_event_types": [
+      "response.created",
+      "response.in_progress",
+      "response.output_item.added",
+      "response.function_call_arguments.delta",
+      "response.function_call_arguments.done",
+      "response.output_item.done",
+      "response.completed"
+    ],
+    "function_call_arguments": "{\"code\":\"gpt56-contract-v1\"}",
+    "terminal_status": "completed",
+    "events": [
+      {
+        "sequence_number": 0,
+        "type": "response.created"
+      },
+      {
+        "sequence_number": 1,
+        "type": "response.in_progress"
+      },
+      {
+        "item": {
+          "arguments": "",
+          "call_id": "call_fixture_1",
+          "id": "fc_fixture_1",
+          "name": "lookup_probe",
+          "status": "in_progress",
+          "type": "function_call"
+        },
+        "output_index": 0,
+        "sequence_number": 2,
+        "type": "response.output_item.added"
+      },
+      {
+        "delta": "{\"code\":\"gpt56-contract-v1\"}",
+        "item_id": "fc_fixture_1",
+        "output_index": 0,
+        "sequence_number": 3,
+        "type": "response.function_call_arguments.delta"
+      },
+      {
+        "arguments": "{\"code\":\"gpt56-contract-v1\"}",
+        "item_id": "fc_fixture_1",
+        "name": null,
+        "output_index": 0,
+        "sequence_number": 4,
+        "type": "response.function_call_arguments.done"
+      },
+      {
+        "item": {
+          "arguments": "{\"code\":\"gpt56-contract-v1\"}",
+          "call_id": "call_fixture_1",
+          "id": "fc_fixture_1",
+          "name": "lookup_probe",
+          "status": "completed",
+          "type": "function_call"
+        },
+        "output_index": 0,
+        "sequence_number": 5,
+        "type": "response.output_item.done"
+      },
+      {
+        "response": {
+          "error": null,
+          "id": "resp_fixture_1",
+          "incomplete_reason": null,
+          "model": "gpt-5.6-luna",
+          "output_types": [
+            "function_call"
+          ],
+          "service_tier": "default",
+          "status": "completed",
+          "usage": {
+            "cached_tokens": 0,
+            "input_tokens": 112,
+            "output_tokens": 23,
+            "reasoning_tokens": 0,
+            "total_tokens": 135
+          }
+        },
+        "sequence_number": 6,
+        "type": "response.completed"
+      }
+    ]
+  },
+  "synthetic_sdk_schema_events": {
+    "incomplete": {
+      "type": "response.incomplete",
+      "sequence_number": 1,
+      "response": {
+        "id": "resp_synthetic_incomplete",
+        "created_at": 0,
+        "model": "gpt-5.6-luna",
+        "object": "response",
+        "output": [],
+        "parallel_tool_calls": false,
+        "tool_choice": "auto",
+        "tools": [],
+        "service_tier": "default",
+        "status": "incomplete",
+        "incomplete_details": {
+          "reason": "max_output_tokens"
+        },
+        "usage": {
+          "input_tokens": 112,
+          "input_tokens_details": {
+            "cached_tokens": 0
+          },
+          "output_tokens": 16384,
+          "output_tokens_details": {
+            "reasoning_tokens": 16384
+          },
+          "total_tokens": 16496
+        }
+      }
+    },
+    "failed": {
+      "type": "response.failed",
+      "sequence_number": 1,
+      "response": {
+        "id": "resp_synthetic_failed",
+        "created_at": 0,
+        "model": "gpt-5.6-luna",
+        "object": "response",
+        "output": [],
+        "parallel_tool_calls": false,
+        "tool_choice": "auto",
+        "tools": [],
+        "service_tier": "default",
+        "status": "failed",
+        "error": {
+          "code": "server_error",
+          "message": "synthetic fixture"
+        },
+        "usage": {
+          "input_tokens": 112,
+          "input_tokens_details": {
+            "cached_tokens": 0
+          },
+          "output_tokens": 0,
+          "output_tokens_details": {
+            "reasoning_tokens": 0
+          },
+          "total_tokens": 112
+        }
+      }
+    }
+  }
+}

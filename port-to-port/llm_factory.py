@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import urllib.parse
 from dataclasses import dataclass
 from enum import Enum
 from typing import Any, Optional
@@ -36,6 +37,8 @@ class LLMServiceConfig:
     run_in_parallel: Optional[bool] = None
     openai_base_url: Optional[str] = None
     openai_params: Optional[dict[str, Any]] = None
+    llm_request_timeout_secs: Optional[float] = None
+    llm_stream_idle_timeout_secs: Optional[float] = None
 
 
 def _is_google_thinking_level_model(model: str) -> bool:
@@ -63,9 +66,69 @@ def _normalize_openai_base_url(base_url: str) -> str:
     return f"{normalized}/v1"
 
 
+def _is_openrouter_laguna_model(model: str, openai_base_url: Optional[str]) -> bool:
+    if not openai_base_url:
+        return False
+    host = (urllib.parse.urlparse(openai_base_url).hostname or "").lower()
+    normalized_model = model.strip().lower()
+    return host in {"openrouter.ai", "www.openrouter.ai"} and normalized_model in {
+        "poolside/laguna-s-2.1",
+        "poolside/laguna-s-2.1-20260720",
+    }
+
+
+def _is_openrouter_qwen36_model(model: str, openai_base_url: Optional[str]) -> bool:
+    if not openai_base_url:
+        return False
+    host = (urllib.parse.urlparse(openai_base_url).hostname or "").lower()
+    normalized_model = model.strip().lower()
+    return host in {"openrouter.ai", "www.openrouter.ai"} and normalized_model.startswith(
+        "qwen/qwen3.6-"
+    )
+
+
+def _is_baseten_qwen36_model(model: str, openai_base_url: Optional[str]) -> bool:
+    if not openai_base_url:
+        return False
+    host = (urllib.parse.urlparse(openai_base_url).hostname or "").lower()
+    normalized_model = model.strip().lower()
+    return host.endswith(".baseten.co") and normalized_model in {
+        "qwen/qwen3.6-27b",
+        "qwen/qwen3.6-35b-a3b-fp8",
+    }
+
+
+def _is_baseten_gemma4_model(model: str, openai_base_url: Optional[str]) -> bool:
+    if not openai_base_url:
+        return False
+    host = (urllib.parse.urlparse(openai_base_url).hostname or "").lower()
+    normalized_model = model.strip().lower()
+    return host.endswith(".baseten.co") and normalized_model == (
+        "google/gemma-4-26b-a4b-it"
+    )
+
+
+GPT56_RESPONSES_MODELS = frozenset(
+    {
+        "gpt-5.6-luna",
+        "gpt-5.6-sol",
+        "gpt-5.6-terra",
+    }
+)
+
+
+def _is_gpt56_responses_model(model: str, openai_base_url: Optional[str]) -> bool:
+    """Return the full routing decision for the exact hosted GPT-5.6 set."""
+
+    normalized = (model or "").strip().lower()
+    return openai_base_url is None and normalized in GPT56_RESPONSES_MODELS
+
+
 def _is_openai_responses_model(model: str, openai_base_url: Optional[str]) -> bool:
     normalized = model.strip().lower()
-    return openai_base_url is None and normalized.startswith("gpt-5.4")
+    return (
+        openai_base_url is None and normalized.startswith("gpt-5.4")
+    ) or _is_gpt56_responses_model(model, openai_base_url)
 
 
 def _merge_openai_extra(existing_extra: Any, *, thinking_budget: int) -> dict[str, Any]:
@@ -126,6 +189,8 @@ def create_llm_service(config: LLMServiceConfig) -> LLMService:
             function_call_timeout_secs=config.function_call_timeout_secs,
             openai_base_url=config.openai_base_url,
             openai_params=config.openai_params,
+            llm_request_timeout_secs=config.llm_request_timeout_secs,
+            llm_stream_idle_timeout_secs=config.llm_stream_idle_timeout_secs,
         )
     elif config.provider == LLMProvider.CEREBRAS:
         service = _create_cerebras_service(
@@ -180,6 +245,39 @@ def _create_google_service(
     )
 
 
+def _install_anthropic_thinking_roundtrip_fix() -> None:
+    """Runtime monkeypatch: tolerate empty-thinking assistant turns in the Anthropic adapter.
+
+    Newer adaptive Anthropic models (Sonnet 5, Opus 4.7/4.8, Fable) return thinking
+    blocks with empty text when thinking is disabled (``--thinking none``) or when the
+    model's ``display`` defaults to ``"omitted"``. pipecat stores these as "thought"
+    LLMSpecificMessages; on the next turn ``AnthropicLLMAdapter._from_anthropic_specific_message``
+    hits its fallthrough and returns the raw thought dict, which has no ``"role"`` key,
+    raising ``KeyError: 'role'`` in ``_from_universal_context_messages``. We wrap that
+    method so a role-less result becomes a benign empty assistant turn (which pipecat's
+    consecutive-message merge folds into the adjacent assistant content). Idempotent;
+    patches the in-memory class only -- it does not modify the installed package on disk.
+    """
+    from pipecat.adapters.services.anthropic_adapter import AnthropicLLMAdapter
+
+    if getattr(AnthropicLLMAdapter, "_gb_thinking_roundtrip_fix", False):
+        return
+
+    _orig_from_specific = AnthropicLLMAdapter._from_anthropic_specific_message
+
+    def _from_anthropic_specific_message(self, message):
+        result = _orig_from_specific(self, message)
+        if not (isinstance(result, dict) and "role" in result):
+            # Empty/blank "thought" fallthrough -> emit a benign, role-carrying
+            # assistant turn instead of a role-less dict.
+            return {"role": "assistant", "content": []}
+        return result
+
+    AnthropicLLMAdapter._from_anthropic_specific_message = _from_anthropic_specific_message
+    AnthropicLLMAdapter._gb_thinking_roundtrip_fix = True
+    logger.info("Installed AnthropicLLMAdapter empty-thinking round-trip monkeypatch")
+
+
 def _create_anthropic_service(
     *,
     api_key: str,
@@ -188,6 +286,8 @@ def _create_anthropic_service(
     function_call_timeout_secs: Optional[float],
 ) -> LLMService:
     from pipecat.services.anthropic.llm import AnthropicLLMService
+
+    _install_anthropic_thinking_roundtrip_fix()
 
     params_kwargs: dict[str, object] = {"enable_prompt_caching": True}
     if thinking and thinking.enabled:
@@ -217,9 +317,30 @@ def _create_openai_service(
     function_call_timeout_secs: Optional[float],
     openai_base_url: Optional[str],
     openai_params: Optional[dict[str, Any]],
+    llm_request_timeout_secs: Optional[float] = None,
+    llm_stream_idle_timeout_secs: Optional[float] = None,
 ) -> LLMService:
-    if _is_openai_responses_model(model, openai_base_url):
+    uses_responses = _is_openai_responses_model(model, openai_base_url)
+    is_gpt56_responses = _is_gpt56_responses_model(model, openai_base_url)
+    if uses_responses:
         from openai_responses_service import OpenAIResponsesLLMService as OpenAIServiceClass
+    elif _is_openrouter_laguna_model(
+        model, openai_base_url
+    ) or _is_openrouter_qwen36_model(model, openai_base_url):
+        from openrouter_reasoning_service import (
+            OpenRouterReasoningLLMService as OpenAIServiceClass,
+        )
+    elif _is_baseten_qwen36_model(model, openai_base_url):
+        from baseten_qwen_reasoning_service import (
+            BasetenQwenReasoningLLMService as OpenAIServiceClass,
+        )
+    elif _is_baseten_gemma4_model(model, openai_base_url):
+        # vLLM's Gemma 4 reasoning parser streams thought text separately as
+        # `reasoning`/`reasoning_content`. Preserve that field on assistant
+        # tool-call turns, as required by Gemma's multi-turn tool template.
+        from openrouter_reasoning_service import (
+            OpenRouterReasoningLLMService as OpenAIServiceClass,
+        )
     else:
         from pipecat.services.openai.llm import OpenAILLMService as OpenAIServiceClass
 
@@ -253,6 +374,12 @@ def _create_openai_service(
         kwargs["base_url"] = normalized_base_url
     if params is not None:
         kwargs["params"] = params
+    if is_gpt56_responses:
+        kwargs["benchmark_observability_enabled"] = True
+        if llm_request_timeout_secs is not None:
+            kwargs["request_timeout_secs"] = float(llm_request_timeout_secs)
+        if llm_stream_idle_timeout_secs is not None:
+            kwargs["stream_idle_timeout_secs"] = float(llm_stream_idle_timeout_secs)
 
     return OpenAIServiceClass(
         api_key=api_key,

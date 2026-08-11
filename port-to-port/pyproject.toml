@@ -10,6 +10,11 @@ dependencies = [
   "google-genai>=2.3.0,<2.4.0",
 ]
 
+[dependency-groups]
+dev = [
+  "pytest>=8.0",
+]
+
 [tool.uv]
 package = false
 # Override pipecat-ai's google-genai<2 cap so we can pick up gemini-3.5-flash

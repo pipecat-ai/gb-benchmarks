@@ -1,0 +1,837 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="A trace-based comparison of Inkling and Inkling Small on the port-to-port benchmark.">
+  <meta name="review" content="Visualization plan reviewed by claude-fable-5 at medium effort through the Claude Agent SDK.">
+  <title>Inkling family: the same score can hide opposite failures</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --paper: #fbfaf5;
+      --paper-deep: #f1eee5;
+      --ink: #25231f;
+      --muted: #6e695f;
+      --faint: #9b9589;
+      --rule: #d8d2c6;
+      --large: #68747b;
+      --small: #176f82;
+      --failure: #b54a30;
+      --early: #b27a24;
+      --floor: #9c7b32;
+      --serif: Georgia, "Times New Roman", serif;
+      --sans: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    }
+
+    * { box-sizing: border-box; }
+
+    html {
+      background: var(--paper);
+      color: var(--ink);
+      font-family: var(--serif);
+      font-size: 18px;
+      line-height: 1.55;
+      text-rendering: optimizeLegibility;
+    }
+
+    body { margin: 0; }
+
+    article {
+      width: min(1180px, calc(100% - 40px));
+      margin: 0 auto;
+      padding: 72px 0 96px;
+    }
+
+    header, section, footer { max-width: 780px; }
+
+    .wide {
+      width: min(1120px, calc(100vw - 40px));
+      max-width: none;
+    }
+
+    .eyebrow, .meta, .figure-label, .chart-label, th, .legend, .provenance {
+      font-family: var(--sans);
+    }
+
+    .eyebrow {
+      margin: 0 0 12px;
+      color: var(--small);
+      font-size: .72rem;
+      font-weight: 700;
+      letter-spacing: .13em;
+      text-transform: uppercase;
+    }
+
+    h1 {
+      max-width: 900px;
+      margin: 0;
+      font-size: clamp(2.5rem, 6vw, 5.4rem);
+      font-weight: 400;
+      letter-spacing: -.045em;
+      line-height: .98;
+    }
+
+    h2 {
+      margin: 76px 0 12px;
+      font-size: clamp(1.65rem, 3vw, 2.45rem);
+      font-weight: 400;
+      letter-spacing: -.025em;
+      line-height: 1.12;
+    }
+
+    h3 {
+      margin: 0 0 8px;
+      font-family: var(--sans);
+      font-size: .92rem;
+      letter-spacing: -.01em;
+      line-height: 1.25;
+    }
+
+    p { margin: 0 0 1rem; }
+
+    .lede {
+      max-width: 870px;
+      margin: 28px 0 28px;
+      color: #3f3b35;
+      font-size: clamp(1.18rem, 2.2vw, 1.55rem);
+      line-height: 1.4;
+    }
+
+    .meta {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px 24px;
+      padding: 14px 0;
+      border-top: 1px solid var(--ink);
+      border-bottom: 1px solid var(--rule);
+      color: var(--muted);
+      font-size: .72rem;
+      letter-spacing: .02em;
+    }
+
+    .finding {
+      margin: 34px 0 0;
+      padding-left: 24px;
+      border-left: 3px solid var(--small);
+      font-size: 1.12rem;
+    }
+
+    .finding strong { font-weight: 600; }
+
+    a { color: var(--small); text-underline-offset: .16em; }
+    a:hover { color: var(--failure); }
+
+    code, pre { font-family: var(--mono); }
+
+    code {
+      padding: .06em .22em;
+      background: var(--paper-deep);
+      font-size: .88em;
+    }
+
+    pre {
+      overflow-x: auto;
+      margin: 18px 0;
+      padding: 16px 0 16px 18px;
+      border-left: 2px solid var(--rule);
+      background: transparent;
+      font-size: .74rem;
+      line-height: 1.55;
+    }
+
+    figure {
+      margin: 34px 0 18px;
+    }
+
+    .figure-label {
+      margin: 0 0 8px;
+      color: var(--muted);
+      font-size: .7rem;
+      font-weight: 700;
+      letter-spacing: .1em;
+      text-transform: uppercase;
+    }
+
+    figcaption {
+      max-width: 880px;
+      margin-top: 12px;
+      color: var(--muted);
+      font-size: .8rem;
+      line-height: 1.45;
+    }
+
+    .chart-shell {
+      overflow-x: auto;
+      padding-bottom: 4px;
+    }
+
+    svg.chart {
+      display: block;
+      width: 100%;
+      min-width: 760px;
+      height: auto;
+      overflow: visible;
+      font-family: var(--sans);
+    }
+
+    .diagnostic-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 30px;
+      margin-top: 30px;
+    }
+
+    .diagnostic {
+      min-width: 0;
+      padding-top: 12px;
+      border-top: 1px solid var(--ink);
+    }
+
+    .diagnostic p {
+      min-height: 5.7em;
+      color: var(--muted);
+      font-size: .78rem;
+      line-height: 1.42;
+    }
+
+    .diagnostic svg {
+      display: block;
+      width: 100%;
+      min-height: 270px;
+      font-family: var(--sans);
+    }
+
+    .trace-signatures {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 28px;
+      margin: 28px 0;
+    }
+
+    .trace-signatures p {
+      margin: 0;
+      font-size: .82rem;
+      line-height: 1.48;
+    }
+
+    .trace {
+      margin-top: 8px;
+      color: var(--ink);
+      font-family: var(--mono);
+      font-size: .7rem;
+      line-height: 1.65;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 24px 0 12px;
+      font-variant-numeric: tabular-nums;
+    }
+
+    th {
+      padding: 8px 9px 8px 0;
+      border-bottom: 1px solid var(--ink);
+      color: var(--muted);
+      font-size: .66rem;
+      font-weight: 650;
+      letter-spacing: .035em;
+      text-align: right;
+      text-transform: uppercase;
+      vertical-align: bottom;
+    }
+
+    th:first-child, td:first-child { text-align: left; }
+
+    td {
+      padding: 9px 9px 9px 0;
+      border-bottom: 1px solid var(--rule);
+      font-family: var(--sans);
+      font-size: .74rem;
+      text-align: right;
+      vertical-align: middle;
+    }
+
+    tr.family-break td { border-top: 1px solid var(--ink); }
+    td.note-cell { color: var(--muted); font-family: var(--serif); text-align: left; }
+    .best { color: var(--small); font-weight: 700; }
+    .bad { color: var(--failure); font-weight: 700; }
+
+    .inline-bar {
+      display: inline-block;
+      width: 94px;
+      height: 5px;
+      margin-right: 7px;
+      background: linear-gradient(to right, var(--bar-color, var(--small)) 0 var(--bar-width), var(--rule) var(--bar-width) 100%);
+      vertical-align: middle;
+    }
+
+    .method-note, .caveat {
+      margin: 22px 0;
+      color: var(--muted);
+      font-size: .82rem;
+    }
+
+    .caveat {
+      padding: 16px 0 16px 20px;
+      border-left: 2px solid var(--failure);
+    }
+
+    .two-column {
+      display: grid;
+      grid-template-columns: minmax(0, 1.3fr) minmax(260px, .7fr);
+      gap: 48px;
+      align-items: start;
+    }
+
+    .side-note {
+      margin-top: 82px;
+      color: var(--muted);
+      font-size: .76rem;
+      line-height: 1.46;
+    }
+
+    details {
+      margin: 28px 0;
+      padding: 12px 0;
+      border-top: 1px solid var(--rule);
+      border-bottom: 1px solid var(--rule);
+    }
+
+    summary {
+      cursor: pointer;
+      font-family: var(--sans);
+      font-size: .76rem;
+      font-weight: 650;
+    }
+
+    ol.compact, ul.compact {
+      padding-left: 1.15em;
+      font-size: .86rem;
+    }
+
+    ol.compact li, ul.compact li { margin-bottom: .55em; }
+
+    footer {
+      margin-top: 78px;
+      padding-top: 16px;
+      border-top: 1px solid var(--ink);
+      color: var(--muted);
+      font-size: .75rem;
+    }
+
+    .provenance { font-size: .67rem; line-height: 1.55; }
+
+    @media (max-width: 900px) {
+      article { width: min(100% - 28px, 780px); padding-top: 42px; }
+      .wide { width: 100%; }
+      .diagnostic-grid, .trace-signatures, .two-column { grid-template-columns: 1fr; }
+      .diagnostic p { min-height: 0; }
+      .side-note { margin-top: 0; }
+    }
+
+    @media print {
+      html { font-size: 15px; }
+      article { width: 100%; padding: 0; }
+      .wide { width: 100%; }
+      .chart-shell { overflow: visible; }
+      a { color: inherit; }
+      h2 { break-after: avoid; }
+      figure, table, .diagnostic { break-inside: avoid; }
+    }
+  </style>
+</head>
+<body>
+<article>
+  <header class="wide">
+    <p class="eyebrow">Port-to-port · natural v1 · 150 production episodes</p>
+    <h1>The same score can hide opposite failures.</h1>
+    <p class="lede">Larger Inkling completed every episode at every requested effort. Inkling Small was faster per turn, but low effort abandoned the mission before it began, while max effort usually found the objective and then reasoned itself into the turn limit.</p>
+    <div class="meta" aria-label="Experiment summary">
+      <span>2 models</span>
+      <span>3 requested effort settings</span>
+      <span>25 episodes per configuration</span>
+      <span>same prompt hash <code>68d2c77b…</code></span>
+      <span>official judge <code>claude-sonnet-4-6</code></span>
+    </div>
+    <p class="finding"><strong>The service did not fail.</strong> Across both 75-episode collections there were no empty responses, rate limits, asynchronous tool timeouts, or missing raw artifacts. The failures are in the observed policies: search myopia, invalid-trade loops, and loss of goal state.</p>
+  </header>
+
+  <section class="wide" aria-labelledby="outcomes-heading">
+    <h2 id="outcomes-heading">First, compared to what?</h2>
+    <p>The composite score is useful for ranking, but every episode reveals the distribution it compresses. Filled marks completed the task; rust outlines did not. The vertical tick is the official median.</p>
+
+    <figure aria-labelledby="fig1-caption">
+      <p class="figure-label">Figure 1 · Every judged episode</p>
+      <div class="chart-shell">
+        <svg id="score-chart" class="chart" viewBox="0 0 1120 430" role="img" aria-labelledby="score-title score-desc">
+          <title id="score-title">Primary score distributions for Inkling and Inkling Small</title>
+          <desc id="score-desc">Six rows show 25 episode scores each on a zero to one hundred axis. Larger Inkling has a median of 86 and completes all episodes at every effort. Inkling Small medians are 43, 79, and 44, with zero, nineteen, and five completions respectively.</desc>
+        </svg>
+      </div>
+      <figcaption id="fig1-caption">Primary score is the median of per-episode totals. The 80-point line is the README curation floor, not a statistical threshold. Completion labels use counts because each cohort contains only 25 episodes.</figcaption>
+    </figure>
+
+    <p>Small-high is not uniformly weak: its 19 completed episodes cluster near the larger model. Its six failures form a separate low-scoring tail. Small-max is different—20 failures move the median itself down to 44.</p>
+  </section>
+
+  <section class="wide" aria-labelledby="milestones-heading">
+    <h2 id="milestones-heading">Where the mission breaks</h2>
+    <p>The benchmark has a natural sequence: discover a mega-port, reach it, recharge fully, return to the start, satisfy the round-trip predicate, then finish with a valid report. Counts—not funnel area—show attrition honestly.</p>
+
+    <figure aria-labelledby="fig2-caption">
+      <p class="figure-label">Figure 2 · Mission-stage attrition</p>
+      <div class="chart-shell">
+        <svg id="milestone-chart" class="chart" viewBox="0 0 1120 350" role="img" aria-labelledby="milestone-title milestone-desc">
+          <title id="milestone-title">Mission-stage attrition by requested effort</title>
+          <desc id="milestone-desc">Three aligned panels compare larger Inkling with Inkling Small at low, high, and max requested effort. Larger Inkling stays at 25 episodes through every milestone. Small drops at discovery under low effort and during return and finish under high and max effort.</desc>
+        </svg>
+      </div>
+      <figcaption id="fig2-caption">“Returned” records arrival at the start sector. “Round trip” additionally requires the objective history to be satisfied, so Small-high records 23 returns but only 22 valid round trips. Large Inkling is flat at 25 in all three panels.</figcaption>
+    </figure>
+
+    <div class="trace-signatures" aria-label="Trace signatures">
+      <div>
+        <h3>Low · search myopia</h3>
+        <p>Twenty-five episodes declared themselves finished; none completed the mission.</p>
+        <div class="trace">search 10 hops<br>→ “no mega-port”<br>→ premature finish</div>
+      </div>
+      <div>
+        <h3>High · capable, brittle</h3>
+        <p>All 25 recharged. Six exhausted 50 turns; three completed a valid round trip but still did not finish correctly.</p>
+        <div class="trace">reach + recharge<br>→ invalid trade loop<br>→ late or missing finish</div>
+      </div>
+      <div>
+        <h3>Max · over-operates</h3>
+        <p>Nineteen of the 20 failures had already recharged; seven returned and still failed. The remaining failure never reached the mega-port.</p>
+        <div class="trace">reach + recharge<br>→ trade / reverse / wander<br>→ turn 50</div>
+      </div>
+    </div>
+  </section>
+
+  <section class="wide" aria-labelledby="fingerprints-heading">
+    <h2 id="fingerprints-heading">Three diagnostic fingerprints</h2>
+    <p>Low and max land at almost the same composite score—43 and 44—but by opposite mechanisms. The displays below retain the denominators that the composite hides.</p>
+
+    <div class="diagnostic-grid">
+      <figure class="diagnostic" aria-labelledby="radius-caption">
+        <h3>Low: the first search is too narrow</h3>
+        <p>The nearest mega-port is 11 hops away. Seventeen of 25 Small-low episodes explicitly searched 10 hops or fewer and could not possibly see it.</p>
+        <svg id="radius-chart" viewBox="0 0 350 285" role="img" aria-labelledby="radius-title radius-desc">
+          <title id="radius-title">First mega-port search radius at low effort</title>
+          <desc id="radius-desc">Inkling Small uses a radius below the required eleven hops in seventeen of twenty-five episodes. Larger Inkling uses the effective one-hundred-hop radius in all twenty-five.</desc>
+        </svg>
+        <figcaption id="radius-caption">Omitting <code>max_hops</code> uses the documented 100-hop default. Small used the default once; larger Inkling used it 23 times. Even among Small’s eight adequate first searches, only one episode reached the mega-port.</figcaption>
+      </figure>
+
+      <figure class="diagnostic" aria-labelledby="trade-caption">
+        <h3>High/max: invalid trades compound</h3>
+        <p>Rates normalize by all executed turns. Small-low looks “disciplined” only because it usually exits before meaningful trading begins.</p>
+        <svg id="trade-chart" viewBox="0 0 350 285" role="img" aria-labelledby="trade-title trade-desc">
+          <title id="trade-title">Invalid trade calls per one hundred turns</title>
+          <desc id="trade-desc">Large Inkling ranges from 3.3 to 5.0 invalid trades per one hundred turns. Inkling Small high and max record 15.8 and 18.4.</desc>
+        </svg>
+        <figcaption id="trade-caption">Typical errors: selling to a port that does not buy the commodity, buying with no empty holds, misspelling <code>neuro_symbolics</code>, then retrying a semantically similar invalid action.</figcaption>
+      </figure>
+
+      <figure class="diagnostic" aria-labelledby="terminal-caption">
+        <h3>Opposite terminal patterns</h3>
+        <p>Each strip is 25 episodes. Ochre means an incomplete early finish; rust means incomplete at the 50-turn cap.</p>
+        <svg id="terminal-chart" viewBox="0 0 350 285" role="img" aria-labelledby="terminal-title terminal-desc">
+          <title id="terminal-title">Episode terminal patterns</title>
+          <desc id="terminal-desc">All larger Inkling episodes complete. All Small-low episodes end incomplete before the turn cap. Six Small-high and twenty Small-max episodes fail at the fifty-turn cap.</desc>
+        </svg>
+        <figcaption id="terminal-caption">Median turns: larger Inkling 30/31/32; Small 6/44/50 at low/high/max. Small-low’s eight-second total latency is abandonment, not efficiency.</figcaption>
+      </figure>
+    </div>
+  </section>
+
+  <section class="wide" aria-labelledby="reasoning-heading">
+    <div class="two-column">
+      <div>
+        <h2 id="reasoning-heading">The effort control moved; reasoning barely appeared</h2>
+        <p>Provider-reported reasoning telemetry is bursty for larger Inkling and nearly absent for Small. Higher requested effort changes Small’s token counts, but it does not stabilize the policy.</p>
+      </div>
+      <aside class="side-note">Inline bars share a common 0–25% scale. Token totals remain printed numbers: a common linear mark would make Small invisible, while a log scale would visually compress a 330× gap.</aside>
+    </div>
+
+    <table aria-label="Reasoning telemetry by model and requested effort">
+      <thead>
+        <tr>
+          <th>Model · requested effort</th>
+          <th>Turns with reasoning</th>
+          <th>Share</th>
+          <th>Total reasoning tokens</th>
+          <th>Tokens / episode</th>
+          <th>Primary</th>
+          <th>Complete</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr><td>Inkling · low</td><td>153 / 734</td><td><span class="inline-bar" style="--bar-width:83.2%;--bar-color:var(--large)"></span>20.8%</td><td>26,491</td><td>1,060</td><td>86</td><td>25 / 25</td></tr>
+        <tr><td>Inkling Small · low</td><td>0 / 163</td><td><span class="inline-bar" style="--bar-width:0%;--bar-color:var(--small)"></span>0.0%</td><td>0</td><td>0</td><td>43</td><td>0 / 25</td></tr>
+        <tr class="family-break"><td>Inkling · high</td><td>169 / 788</td><td><span class="inline-bar" style="--bar-width:85.6%;--bar-color:var(--large)"></span>21.4%</td><td>221,792</td><td>8,872</td><td>86</td><td>25 / 25</td></tr>
+        <tr><td>Inkling Small · high</td><td>17 / 1,120</td><td><span class="inline-bar" style="--bar-width:6%;--bar-color:var(--small)"></span>1.5%</td><td>688</td><td>27.5</td><td>79</td><td>19 / 25</td></tr>
+        <tr class="family-break"><td>Inkling · max</td><td>154 / 795</td><td><span class="inline-bar" style="--bar-width:77.6%;--bar-color:var(--large)"></span>19.4%</td><td>229,463</td><td>9,179</td><td>86</td><td>25 / 25</td></tr>
+        <tr><td>Inkling Small · max</td><td>25 / 1,240</td><td><span class="inline-bar" style="--bar-width:8%;--bar-color:var(--small)"></span>2.0%</td><td>1,458</td><td>58.3</td><td>44</td><td>5 / 25</td></tr>
+      </tbody>
+    </table>
+
+    <p class="caveat"><strong>Calibration remains unresolved.</strong> <a href="https://docs.baseten.co/inference/model-apis/reasoning">Baseten documents the named settings</a> and says <code>high</code> is the default, while Thinking Machines reports public evaluations at numeric <code>effort=0.99</code>. The public docs do not map one scale to the other. These traces are consistent with a reasoning-allocation deficit, but they do not distinguish model policy from preview-serving or effort-calibration effects.</p>
+  </section>
+
+  <section class="wide" aria-labelledby="results-heading">
+    <h2 id="results-heading">Official results and the scoring denominator</h2>
+    <p>Each episode can earn 40 points for mission completion plus 15 each for trade quality, path efficiency, tool discipline, and report quality. Primary is the median per-episode total. The displayed component scores are cohort means, so adding those means to a completion rate will not reproduce the median primary score.</p>
+
+    <table aria-label="Official Inkling family leaderboard results">
+      <thead>
+        <tr>
+          <th>Model · requested effort</th>
+          <th>N</th>
+          <th>Primary /100</th>
+          <th>Complete</th>
+          <th>Trade /15 mean</th>
+          <th>Path /15 mean</th>
+          <th>Tools /15 mean</th>
+          <th>Report /15 mean</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr><td>Inkling · low</td><td>25</td><td class="best">86</td><td>100%</td><td>2.6</td><td>15.0</td><td>13.7</td><td>14.6</td></tr>
+        <tr><td>Inkling Small · low</td><td>25</td><td class="bad">43</td><td class="bad">0%</td><td>0.0</td><td>14.4</td><td>14.5</td><td>12.6</td></tr>
+        <tr class="family-break"><td>Inkling · high</td><td>25</td><td class="best">86</td><td>100%</td><td>3.2</td><td>14.8</td><td>13.2</td><td>14.5</td></tr>
+        <tr><td>Inkling Small · high</td><td>25</td><td>79</td><td>76%</td><td>2.8</td><td>13.7</td><td>7.7</td><td>10.8</td></tr>
+        <tr class="family-break"><td>Inkling · max</td><td>25</td><td class="best">86</td><td>100%</td><td>2.8</td><td>15.0</td><td>13.2</td><td>14.7</td></tr>
+        <tr><td>Inkling Small · max</td><td>25</td><td class="bad">44</td><td class="bad">20%</td><td>2.3</td><td>13.7</td><td>5.6</td><td>2.8</td></tr>
+      </tbody>
+    </table>
+
+    <p class="method-note">Small-low’s high path, tool, and report means are not evidence of a nearly successful policy: it stopped after a median six turns, rarely attempted the mission, and produced internally coherent descriptions of an incomplete outcome. Larger Inkling’s weakness is real too—its 2.6–3.2 trade mean caps the score despite flawless completion.</p>
+  </section>
+
+  <section class="wide" aria-labelledby="latency-heading">
+    <h2 id="latency-heading">Fast and robust, but not controlled</h2>
+    <p>Small’s median turn was about 1.5× faster. Its tail was 2.1× tighter at low and roughly 6.5–7.1× tighter at high/max. That makes it an excellent-latency endpoint, not an effective agent for this task.</p>
+
+    <table aria-label="Latency and service health">
+      <thead>
+        <tr><th>Model · requested effort</th><th>Turn p50</th><th>Turn p90</th><th>Total p50</th><th>Infra failures</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>Inkling · low</td><td>594 ms</td><td>1,337 ms</td><td>57.2 s</td><td>0 / 25</td></tr>
+        <tr><td>Inkling Small · low</td><td>378 ms</td><td>622 ms</td><td>8.0 s*</td><td>0 / 25</td></tr>
+        <tr class="family-break"><td>Inkling · high</td><td>606 ms</td><td>3,402 ms</td><td>111.7 s</td><td>0 / 25</td></tr>
+        <tr><td>Inkling Small · high</td><td>411 ms</td><td>476 ms</td><td>66.1 s</td><td>0 / 25</td></tr>
+        <tr class="family-break"><td>Inkling · max</td><td>606 ms</td><td>3,156 ms</td><td>129.8 s</td><td>0 / 25</td></tr>
+        <tr><td>Inkling Small · max</td><td>416 ms</td><td>486 ms</td><td>73.2 s</td><td>0 / 25</td></tr>
+      </tbody>
+    </table>
+    <p class="method-note">* Small-low’s total duration is not comparable as task latency because every episode failed early.</p>
+  </section>
+
+  <section aria-labelledby="interpretation-heading">
+    <h2 id="interpretation-heading">Interpretation</h2>
+    <p>This task taxes persistent procedural state: read tool semantics precisely, remember the objective, maintain cargo and port state, recover after explicit errors, retain the return route, and recognize when to stop. Small often navigates correctly—the path mean remains 13.7–14.4—but it does not reliably control the complete sequence.</p>
+    <p>The comparison is consistent with Thinking Machines’ own public results. Inkling Small stays close on many static evaluations but trails the larger model on Terminal Bench 2.1 (52.7% versus 63.8%) and Tau 3 Banking (13.6% versus 23.7%), both relatively stateful agentic tasks. Those results support the diagnosis; they do not prove that parameter count alone causes it. <a href="https://thinkingmachines.ai/news/introducing-inkling/">Thinking Machines’ Inkling report</a></p>
+    <p>The defensible conclusion is narrow: <strong>under these Baseten settings and this harness, Inkling Small has a long-horizon control gap relative to larger Inkling.</strong> Checkpoint maturity, preview FP8 serving, and the undocumented mapping to numeric <code>effort=0.99</code> remain plausible contributors.</p>
+  </section>
+
+  <section class="wide" aria-labelledby="integration-heading">
+    <h2 id="integration-heading">Integration and reproduction</h2>
+    <p>Both models use Baseten’s OpenAI-compatible Model API at <code>https://inference.baseten.co/v1</code>, native top-level <code>reasoning_effort</code>, <code>temperature=1</code>, streaming tool calls, and a 16,384-token output cap.</p>
+
+    <table aria-label="Model and endpoint configuration">
+      <thead><tr><th>Model</th><th>Baseten slug</th><th>Architecture</th><th>Context</th><th>Serving note</th></tr></thead>
+      <tbody>
+        <tr><td>Inkling</td><td><code>thinkingmachines/inkling</code></td><td>975B MoE · 41B active</td><td>up to 1M</td><td>serverless Model API</td></tr>
+        <tr><td>Inkling Small</td><td><code>thinkingmachines/inkling-small</code></td><td>276B MoE · 12B active</td><td>1M live metadata</td><td>FP8 preview on 2026-07-31</td></tr>
+      </tbody>
+    </table>
+
+    <pre><code># Larger Inkling
+CONFIG_FILTER=inkling-low,inkling-high,inkling-max ROUNDS=25 \
+  bash run_baseten_sweep.sh
+
+# Inkling Small
+CONFIG_FILTER=inkling-small-low,inkling-small-high,inkling-small-max \
+  ROUNDS=25 bash run_baseten_sweep.sh</code></pre>
+
+    <ul class="compact">
+      <li>Benchmark <code>xhigh</code> maps to Baseten <code>reasoning_effort=max</code>; the report calls that requested setting “max.”</li>
+      <li>Runs were strictly sequential on the shared Baseten provider endpoint and retained raw JSON and logs.</li>
+      <li>Both collections used natural prompt v1, hash <code>68d2c77be6548b77cd2e65ca0489edb2080c4a652feeb11f5ef5317f91e4b1f0</code>, and a 50-turn cap.</li>
+      <li>The larger collection used a 30-second function-call timeout; Small used the current 20-second default. No episode exercised either timeout path.</li>
+      <li>Small recorded 96–98% cache-read shares. Baseten’s model metadata advertised zero token rates for the preview on collection day; that is provisional metadata, not a durable price.</li>
+    </ul>
+  </section>
+
+  <section class="wide" aria-labelledby="evidence-heading">
+    <h2 id="evidence-heading">Evidence and limitations</h2>
+    <details>
+      <summary>Data behind the milestone and diagnostic figures</summary>
+      <table aria-label="Milestone counts behind Figure 2">
+        <thead><tr><th>Config</th><th>Start</th><th>Mega</th><th>Recharge</th><th>Returned</th><th>Round trip</th><th>Complete</th></tr></thead>
+        <tbody>
+          <tr><td>Inkling · all requested efforts</td><td>25</td><td>25</td><td>25</td><td>25</td><td>25</td><td>25</td></tr>
+          <tr><td>Small · low</td><td>25</td><td>1</td><td>1</td><td>0</td><td>0</td><td>0</td></tr>
+          <tr><td>Small · high</td><td>25</td><td>25</td><td>25</td><td>23</td><td>22</td><td>19</td></tr>
+          <tr><td>Small · max</td><td>25</td><td>24</td><td>24</td><td>12</td><td>12</td><td>5</td></tr>
+        </tbody>
+      </table>
+      <table aria-label="Diagnostic fractions behind Figure 3">
+        <thead><tr><th>Config</th><th>Invalid trades / turns</th><th>Rate</th><th>Early incomplete</th><th>Incomplete at cap</th></tr></thead>
+        <tbody>
+          <tr><td>Inkling · low</td><td>24 / 734</td><td>3.3%</td><td>0</td><td>0</td></tr>
+          <tr><td>Small · low</td><td>3 / 163</td><td>1.8%</td><td>25</td><td>0</td></tr>
+          <tr><td>Inkling · high</td><td>32 / 788</td><td>4.1%</td><td>0</td><td>0</td></tr>
+          <tr><td>Small · high</td><td>177 / 1,120</td><td>15.8%</td><td>0</td><td>6</td></tr>
+          <tr><td>Inkling · max</td><td>40 / 795</td><td>5.0%</td><td>0</td><td>0</td></tr>
+          <tr><td>Small · max</td><td>228 / 1,240</td><td>18.4%</td><td>0</td><td>20</td></tr>
+        </tbody>
+      </table>
+    </details>
+
+    <ol class="compact">
+      <li>Collections occurred 15 days apart, on 2026-07-16 and 2026-07-31, and used different runner revisions. Prompt and score-rubric identity were held constant.</li>
+      <li>Each rate uses 25 episodes. The report shows episode marks and raw counts rather than manufacturing confidence intervals for a fixed benchmark cohort.</li>
+      <li>Judge-based report-quality fields use <code>claude-sonnet-4-6</code>; judge calls are not assumed deterministic. Mission milestones, tool errors, turns, and service failures are trace-derived and carry the failure-pattern argument.</li>
+      <li>Reasoning tokens are provider-reported telemetry, not architecture-independent compute.</li>
+      <li>The report describes association and observed mechanism. It does not isolate model size from checkpoint, quantization, serving, or effort calibration.</li>
+    </ol>
+
+    <p class="provenance">Primary sources: <a href="inkling-benchmark-notes-20260716.md">larger Inkling notes</a>; <a href="inkling-small-benchmark-notes-20260731.md">Inkling Small notes</a>; <a href="../runs/eval-inkling-20260716/enriched_runs.jsonl">larger enriched episodes</a>; <a href="../runs/eval-inkling-small-canonical-all-20260731/enriched_runs.jsonl">Small enriched episodes</a>; <a href="../leaderboards/leaderboard-natural.md">canonical natural leaderboard</a>. Visualization architecture follows the local Tufte skill and received a medium-effort adversarial design review from <code>claude-fable-5</code> through the Claude Agent SDK. Generated 2026-07-31.</p>
+  </section>
+
+  <footer>
+    <p><strong>Practical choice:</strong> larger Inkling at low requested effort remains the family default for this benchmark: the same score as high/max, 100% completion, less reasoning, and the best latency tail. Inkling Small high is the only viable Small setting tested, but its 19/25 completion rate keeps it below the curated README floor.</p>
+  </footer>
+</article>
+
+<script>
+(() => {
+  "use strict";
+  const NS = "http://www.w3.org/2000/svg";
+  const C = {
+    ink: "#25231f", muted: "#6e695f", faint: "#9b9589", rule: "#d8d2c6",
+    paper: "#fbfaf5", large: "#68747b", small: "#176f82",
+    failure: "#b54a30", early: "#b27a24", floor: "#9c7b32"
+  };
+
+  function el(name, attrs = {}, text = null) {
+    const node = document.createElementNS(NS, name);
+    Object.entries(attrs).forEach(([key, value]) => node.setAttribute(key, value));
+    if (text !== null) node.textContent = text;
+    return node;
+  }
+
+  function add(parent, name, attrs = {}, text = null) {
+    const node = el(name, attrs, text);
+    parent.appendChild(node);
+    return node;
+  }
+
+  function text(parent, x, y, value, attrs = {}) {
+    return add(parent, "text", { x, y, fill: C.ink, "font-size": 12, ...attrs }, value);
+  }
+
+  const scoreRows = [
+    { label: "Inkling · low", family: "large", median: 86, complete: 25, scores: [[89,1],[86,1],[82,1],[86,1],[88,1],[85,1],[83,1],[89,1],[89,1],[89,1],[84,1],[87,1],[85,1],[87,1],[84,1],[88,1],[87,1],[84,1],[89,1],[85,1],[88,1],[84,1],[80,1],[87,1],[82,1]] },
+    { label: "Inkling Small · low", family: "small", median: 43, complete: 0, scores: [[43,0],[39,0],[45,0],[45,0],[41,0],[59,0],[38,0],[45,0],[40,0],[34,0],[40,0],[43,0],[42,0],[43,0],[40,0],[40,0],[40,0],[45,0],[45,0],[43,0],[45,0],[45,0],[39,0],[43,0],[36,0]] },
+    { label: "Inkling · high", family: "large", median: 86, complete: 25, scores: [[87,1],[83,1],[88,1],[86,1],[86,1],[87,1],[87,1],[84,1],[82,1],[88,1],[85,1],[85,1],[84,1],[85,1],[83,1],[84,1],[89,1],[88,1],[87,1],[88,1],[86,1],[86,1],[84,1],[87,1],[85,1]] },
+    { label: "Inkling Small · high", family: "small", median: 79, complete: 19, scores: [[76,1],[82,1],[84,1],[79,1],[79,1],[84,1],[81,1],[82,1],[81,1],[26,0],[78,1],[86,1],[57,0],[76,1],[67,0],[80,1],[53,0],[81,1],[78,1],[82,1],[82,1],[37,0],[81,1],[48,0],[76,1]] },
+    { label: "Inkling · max", family: "large", median: 86, complete: 25, scores: [[84,1],[84,1],[87,1],[84,1],[83,1],[87,1],[86,1],[90,1],[85,1],[84,1],[82,1],[85,1],[87,1],[88,1],[84,1],[83,1],[86,1],[87,1],[83,1],[88,1],[84,1],[88,1],[89,1],[87,1],[87,1]] },
+    { label: "Inkling Small · max", family: "small", median: 44, complete: 5, scores: [[41,0],[55,0],[80,1],[44,0],[78,1],[75,1],[65,0],[42,0],[44,0],[43,0],[35,0],[55,0],[53,0],[38,0],[39,0],[74,1],[37,0],[79,1],[41,0],[59,0],[26,0],[54,0],[40,0],[59,0],[40,0]] }
+  ];
+
+  function renderScores() {
+    const svg = document.getElementById("score-chart");
+    const left = 184, right = 930, top = 56, rowGap = 56;
+    const x = value => left + (right - left) * value / 100;
+
+    [0, 40, 80, 100].forEach(value => {
+      add(svg, "line", { x1: x(value), y1: 24, x2: x(value), y2: 377,
+        stroke: value === 80 ? C.floor : C.rule,
+        "stroke-width": value === 80 ? 1.2 : .7,
+        "stroke-dasharray": value === 80 ? "4 4" : "none" });
+      text(svg, x(value), 405, String(value), { "text-anchor": "middle", fill: C.muted, "font-size": 11 });
+    });
+    text(svg, x(80) + 5, 17, "README floor", { fill: C.floor, "font-size": 10 });
+    text(svg, (left + right) / 2, 426, "Primary score /100", { "text-anchor": "middle", fill: C.muted, "font-size": 11 });
+
+    scoreRows.forEach((row, rowIndex) => {
+      const y = top + rowIndex * rowGap;
+      if (rowIndex === 2 || rowIndex === 4) {
+        add(svg, "line", { x1: 12, y1: y - 28, x2: 1094, y2: y - 28, stroke: C.rule, "stroke-width": .7 });
+      }
+      text(svg, 8, y + 4, row.label, { fill: row.family === "large" ? C.large : C.small, "font-size": 12.5, "font-weight": row.family === "small" ? 650 : 500 });
+      add(svg, "line", { x1: left, y1: y, x2: right, y2: y, stroke: C.rule, "stroke-width": .65 });
+
+      const seen = new Map();
+      row.scores.slice().sort((a, b) => a[0] - b[0] || b[1] - a[1]).forEach(([score, completed]) => {
+        const key = `${score}-${completed}`;
+        const n = seen.get(key) || 0;
+        seen.set(key, n + 1);
+        const offset = (n % 2 === 0 ? 1 : -1) * Math.ceil(n / 2) * 6;
+        add(svg, "circle", {
+          cx: x(score), cy: y + offset, r: 3.6,
+          fill: completed ? (row.family === "large" ? C.large : C.small) : C.paper,
+          stroke: completed ? C.paper : C.failure,
+          "stroke-width": completed ? .8 : 1.8
+        });
+      });
+      add(svg, "line", { x1: x(row.median), y1: y - 18, x2: x(row.median), y2: y + 18, stroke: C.ink, "stroke-width": 1.4 });
+      text(svg, right + 18, y + 4, `median ${row.median} · complete ${row.complete}/25`, {
+        fill: row.complete === 25 ? C.muted : C.failure, "font-size": 11.5
+      });
+    });
+
+    add(svg, "circle", { cx: 804, cy: 405, r: 3.5, fill: C.small });
+    text(svg, 813, 409, "complete", { fill: C.muted, "font-size": 10 });
+    add(svg, "circle", { cx: 872, cy: 405, r: 3.5, fill: C.paper, stroke: C.failure, "stroke-width": 1.6 });
+    text(svg, 881, 409, "incomplete", { fill: C.muted, "font-size": 10 });
+  }
+
+  const milestones = [
+    { effort: "Low", small: [25, 1, 1, 0, 0, 0] },
+    { effort: "High", small: [25, 25, 25, 23, 22, 19] },
+    { effort: "Max", small: [25, 24, 24, 12, 12, 5] }
+  ];
+  const stages = ["Start", "Mega", "Recharge", "Returned", "Round trip", "Complete"];
+
+  function renderMilestones() {
+    const svg = document.getElementById("milestone-chart");
+    const panelW = 338, gap = 34, left = 14, top = 40, bottom = 282;
+    milestones.forEach((panel, panelIndex) => {
+      const px = left + panelIndex * (panelW + gap);
+      const x = i => px + 20 + i * 58;
+      const y = value => bottom - (bottom - top) * value / 25;
+      text(svg, px + panelW / 2, 19, `${panel.effort} requested`, { "text-anchor": "middle", "font-size": 12.5, "font-weight": 650 });
+      [0, 25].forEach(value => {
+        add(svg, "line", { x1: x(0), y1: y(value), x2: x(5), y2: y(value), stroke: C.rule, "stroke-width": .7 });
+      });
+      text(svg, x(0) - 8, y(25) + 4, "25", { "text-anchor": "end", fill: C.faint, "font-size": 9 });
+      text(svg, x(0) - 8, y(0) + 4, "0", { "text-anchor": "end", fill: C.faint, "font-size": 9 });
+
+      const largePoints = stages.map((_, i) => `${x(i)},${y(25)}`).join(" ");
+      const smallPoints = panel.small.map((value, i) => `${x(i)},${y(value)}`).join(" ");
+      add(svg, "polyline", { points: largePoints, fill: "none", stroke: C.large, "stroke-width": 1.5, "stroke-dasharray": "4 3" });
+      add(svg, "polyline", { points: smallPoints, fill: "none", stroke: C.small, "stroke-width": 2.2 });
+
+      panel.small.forEach((value, i) => {
+        add(svg, "circle", { cx: x(i), cy: y(value), r: 4, fill: C.small, stroke: C.paper, "stroke-width": 1 });
+        text(svg, x(i), y(value) - 9, String(value), { "text-anchor": "middle", fill: value < 25 ? C.failure : C.small, "font-size": 10.5, "font-weight": 700 });
+        const stageLines = stages[i].split(" ");
+        text(svg, x(i), 305, stageLines[0], { "text-anchor": "middle", fill: C.muted, "font-size": 8.5 });
+        if (stageLines[1]) text(svg, x(i), 316, stageLines[1], { "text-anchor": "middle", fill: C.muted, "font-size": 8.5 });
+      });
+      stages.forEach((_, i) => add(svg, "circle", { cx: x(i), cy: y(25), r: 2.6, fill: C.large }));
+      text(svg, x(5) + 8, y(25) + 4, "Inkling 25", { fill: C.large, "font-size": 9.5 });
+      text(svg, x(5) + 8, y(panel.small[5]) + 4, `Small ${panel.small[5]}`, { fill: C.small, "font-size": 9.5, "font-weight": 650 });
+    });
+  }
+
+  function renderRadius() {
+    const svg = document.getElementById("radius-chart");
+    const left = 48, right = 330, top = 34, bottom = 225;
+    const x = value => left + (Math.log(value) - Math.log(3)) / (Math.log(100) - Math.log(3)) * (right - left);
+    const bins = [3, 5, 10, 20, 50, 100];
+    bins.forEach(value => {
+      add(svg, "line", { x1: x(value), y1: top, x2: x(value), y2: bottom, stroke: C.rule, "stroke-width": .65 });
+      text(svg, x(value), 247, String(value), { "text-anchor": "middle", fill: C.muted, "font-size": 9 });
+    });
+    text(svg, (left + right) / 2, 269, "Effective first-search radius (hops, log position)", { "text-anchor": "middle", fill: C.muted, "font-size": 9 });
+    const threshold = x(11);
+    add(svg, "line", { x1: threshold, y1: 22, x2: threshold, y2: bottom, stroke: C.failure, "stroke-width": 1.2, "stroke-dasharray": "3 3" });
+    text(svg, threshold + 4, 17, "mega at 11", { fill: C.failure, "font-size": 9 });
+    text(svg, 42, 96, "Small", { "text-anchor": "end", fill: C.small, "font-size": 10 });
+    text(svg, 42, 185, "Inkling", { "text-anchor": "end", fill: C.large, "font-size": 10 });
+
+    const small = new Map([[3,2],[5,5],[10,10],[20,3],[50,3],[100,2]]);
+    const large = new Map([[100,25]]);
+    function dots(series, baseY, family) {
+      series.forEach((count, value) => {
+        for (let i = 0; i < count; i++) {
+          const col = i % 5, row = Math.floor(i / 5);
+          const insufficient = value < 11;
+          add(svg, "circle", {
+            cx: x(value) + (col - 2) * 5.2, cy: baseY - row * 6,
+            r: 2.4,
+            fill: insufficient ? C.failure : (family === "large" ? C.large : C.small)
+          });
+        }
+      });
+    }
+    dots(small, 108, "small");
+    dots(large, 197, "large");
+    text(svg, x(7), 52, "17 / 25 below threshold", { "text-anchor": "middle", fill: C.failure, "font-size": 9.5, "font-weight": 650 });
+    text(svg, x(100), 158, "25 / 25 effective 100", { "text-anchor": "end", fill: C.large, "font-size": 9.5 });
+  }
+
+  function renderTrades() {
+    const svg = document.getElementById("trade-chart");
+    const rows = [
+      ["Inkling · low", 3.27, "24/734", "large"], ["Small · low*", 1.84, "3/163", "small"],
+      ["Inkling · high", 4.06, "32/788", "large"], ["Small · high", 15.80, "177/1,120", "small"],
+      ["Inkling · max", 5.03, "40/795", "large"], ["Small · max", 18.39, "228/1,240", "small"]
+    ];
+    const left = 96, right = 320, x = value => left + (right - left) * value / 20;
+    [0, 10, 20].forEach(value => {
+      add(svg, "line", { x1: x(value), y1: 24, x2: x(value), y2: 236, stroke: C.rule, "stroke-width": .65 });
+      text(svg, x(value), 257, String(value), { "text-anchor": "middle", fill: C.muted, "font-size": 9 });
+    });
+    text(svg, (left + right) / 2, 278, "Invalid trades per 100 turns", { "text-anchor": "middle", fill: C.muted, "font-size": 9 });
+    rows.forEach((row, i) => {
+      const y = 42 + i * 34;
+      if (i === 2 || i === 4) add(svg, "line", { x1: 5, y1: y - 17, x2: 337, y2: y - 17, stroke: C.rule, "stroke-width": .6 });
+      text(svg, 90, y + 4, row[0], { "text-anchor": "end", fill: row[3] === "large" ? C.large : C.small, "font-size": 9.5 });
+      add(svg, "line", { x1: left, y1: y, x2: x(row[1]), y2: y, stroke: row[3] === "large" ? C.large : C.small, "stroke-width": 1.3 });
+      add(svg, "circle", { cx: x(row[1]), cy: y, r: 4, fill: row[3] === "large" ? C.large : C.small });
+      text(svg, Math.min(x(row[1]) + 7, 286), y + 4, `${row[1].toFixed(1)} · ${row[2]}`, { fill: row[1] > 10 ? C.failure : C.muted, "font-size": 8.8 });
+    });
+  }
+
+  function renderTerminals() {
+    const svg = document.getElementById("terminal-chart");
+    const rows = [
+      { label: "Inkling · low", complete: 25, early: 0, cap: 0, median: 30, family: "large" },
+      { label: "Small · low", complete: 0, early: 25, cap: 0, median: 6, family: "small" },
+      { label: "Inkling · high", complete: 25, early: 0, cap: 0, median: 31, family: "large" },
+      { label: "Small · high", complete: 19, early: 0, cap: 6, median: 44, family: "small" },
+      { label: "Inkling · max", complete: 25, early: 0, cap: 0, median: 32, family: "large" },
+      { label: "Small · max", complete: 5, early: 0, cap: 20, median: 50, family: "small" }
+    ];
+    rows.forEach((row, rowIndex) => {
+      const y = 30 + rowIndex * 35;
+      if (rowIndex === 2 || rowIndex === 4) add(svg, "line", { x1: 5, y1: y - 17, x2: 344, y2: y - 17, stroke: C.rule, "stroke-width": .6 });
+      text(svg, 88, y + 5, row.label, { "text-anchor": "end", fill: row.family === "large" ? C.large : C.small, "font-size": 9.3 });
+      for (let i = 0; i < 25; i++) {
+        let fill;
+        if (i < row.complete) fill = row.family === "large" ? C.large : C.small;
+        else if (i < row.complete + row.early) fill = C.early;
+        else fill = C.failure;
+        add(svg, "rect", { x: 98 + i * 6.6, y, width: 5, height: 9, fill });
+      }
+      text(svg, 270, y + 8, `median ${row.median} turns`, { fill: C.muted, "font-size": 8.7 });
+      if (row.early) text(svg, 270, y + 19, "25 early incomplete", { fill: C.early, "font-size": 8.5, "font-weight": 650 });
+      if (row.cap) text(svg, 270, y + 19, `${row.cap} failed at cap`, { fill: C.failure, "font-size": 8.5, "font-weight": 650 });
+    });
+    add(svg, "rect", { x: 98, y: 253, width: 6, height: 9, fill: C.small });
+    text(svg, 109, 261, "complete", { fill: C.muted, "font-size": 8.5 });
+    add(svg, "rect", { x: 167, y: 253, width: 6, height: 9, fill: C.early });
+    text(svg, 178, 261, "early incomplete", { fill: C.muted, "font-size": 8.5 });
+    add(svg, "rect", { x: 272, y: 253, width: 6, height: 9, fill: C.failure });
+    text(svg, 283, 261, "cap failure", { fill: C.muted, "font-size": 8.5 });
+  }
+
+  renderScores();
+  renderMilestones();
+  renderRadius();
+  renderTrades();
+  renderTerminals();
+})();
+</script>
+</body>
+</html>

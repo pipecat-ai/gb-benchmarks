@@ -1,0 +1,205 @@
+{
+  "as_of": "2026-07-28",
+  "currency": "USD",
+  "basis": "Standard synchronous API provider list prices, before credits, discounts, taxes, and data-residency uplifts.",
+  "sources": {
+    "anthropic": "https://platform.claude.com/docs/en/about-claude/pricing",
+    "aws_bedrock": "https://aws.amazon.com/bedrock/pricing/",
+    "baseten": "https://www.baseten.co/pricing/",
+    "empiriolabs": "https://empiriolabs.ai/models/qwen3-5-4b",
+    "google": "https://ai.google.dev/gemini-api/docs/pricing",
+    "openrouter": "https://openrouter.ai/api/v1/models",
+    "openai": "https://developers.openai.com/api/docs/pricing",
+    "openai_gpt_5_2": "https://developers.openai.com/api/docs/models/gpt-5.2",
+    "openai_gpt_5_1": "https://developers.openai.com/api/docs/models/gpt-5.1",
+    "openai_gpt_4_1": "https://developers.openai.com/api/docs/models/gpt-4.1",
+    "openai_gpt_4o": "https://developers.openai.com/api/docs/models/gpt-4o"
+  },
+  "token_rates_per_million": {
+    "anthropic-sonnet-5-intro": {
+      "input": 2.0,
+      "cached_input": 0.2,
+      "cache_write": 2.5,
+      "output": 10.0,
+      "usage_semantics": "anthropic",
+      "note": "Introductory price through 2026-08-31; 5-minute cache writes."
+    },
+    "anthropic-sonnet-4-6": {
+      "input": 3.0,
+      "cached_input": 0.3,
+      "cache_write": 3.75,
+      "output": 15.0,
+      "usage_semantics": "anthropic"
+    },
+    "anthropic-haiku-4-5": {
+      "input": 1.0,
+      "cached_input": 0.1,
+      "cache_write": 1.25,
+      "output": 5.0,
+      "usage_semantics": "anthropic"
+    },
+    "baseten-glm-5-2": {
+      "input": 1.4,
+      "cached_input": 0.14,
+      "output": 4.4,
+      "usage_semantics": "openai"
+    },
+    "baseten-inkling": {
+      "input": 1.0,
+      "cached_input": 0.17,
+      "output": 4.05,
+      "usage_semantics": "openai"
+    },
+    "baseten-kimi-k2-6-proxy": {
+      "input": 0.95,
+      "cached_input": 0.16,
+      "output": 4.0,
+      "usage_semantics": "openai",
+      "proxy": true,
+      "note": "Public Baseten Kimi K2.6 Model API price used as a market proxy because the measured Cerebras dedicated-endpoint contract is not public."
+    },
+    "baseten-nemotron-3-ultra": {
+      "input": 0.6,
+      "cached_input": 0.12,
+      "output": 2.4,
+      "usage_semantics": "openai"
+    },
+    "bedrock-gemma-4-31b": {
+      "input": 0.14,
+      "output": 0.4,
+      "usage_semantics": "openai",
+      "note": "Amazon Bedrock US Standard on-demand price. No separate cached-input rate is published for this model."
+    },
+    "google-gemini-3-5-flash": {
+      "input": 1.5,
+      "cached_input": 0.15,
+      "output": 9.0,
+      "usage_semantics": "google"
+    },
+    "google-gemini-3-6-flash": {
+      "input": 1.5,
+      "cached_input": 0.15,
+      "output": 7.5,
+      "usage_semantics": "google"
+    },
+    "google-gemini-3-5-flash-lite": {
+      "input": 0.3,
+      "cached_input": 0.03,
+      "output": 2.5,
+      "usage_semantics": "google"
+    },
+    "google-gemini-3-1-flash-lite": {
+      "input": 0.25,
+      "cached_input": 0.025,
+      "output": 1.5,
+      "usage_semantics": "google"
+    },
+    "google-gemini-3-1-pro": {
+      "input": 2.0,
+      "cached_input": 0.2,
+      "output": 12.0,
+      "usage_semantics": "google",
+      "note": "Prompts in this benchmark are below the 200K-token higher-price threshold."
+    },
+    "google-gemini-2-5-flash": {
+      "input": 0.3,
+      "cached_input": 0.03,
+      "output": 2.5,
+      "usage_semantics": "google"
+    },
+    "openai-gpt-5-6-luna": {
+      "input": 1.0,
+      "cached_input": 0.1,
+      "cache_write": 1.25,
+      "output": 6.0,
+      "usage_semantics": "openai_responses",
+      "note": "Prompts in this benchmark are below the 272K-token higher-price threshold."
+    },
+    "openai-gpt-5-6-terra": {
+      "input": 2.5,
+      "cached_input": 0.25,
+      "cache_write": 3.125,
+      "output": 15.0,
+      "usage_semantics": "openai_responses",
+      "note": "Prompts in this benchmark are below the 272K-token higher-price threshold."
+    },
+    "openai-gpt-5-4": {
+      "input": 2.5,
+      "cached_input": 0.25,
+      "output": 15.0,
+      "usage_semantics": "openai"
+    },
+    "openai-gpt-5-2": {
+      "input": 1.75,
+      "cached_input": 0.175,
+      "output": 14.0,
+      "usage_semantics": "openai"
+    },
+    "openai-gpt-5-1": {
+      "input": 1.25,
+      "cached_input": 0.125,
+      "output": 10.0,
+      "usage_semantics": "openai"
+    },
+    "openai-gpt-4-1": {
+      "input": 2.0,
+      "cached_input": 0.5,
+      "output": 8.0,
+      "usage_semantics": "openai"
+    },
+    "openai-gpt-4o": {
+      "input": 2.5,
+      "cached_input": 1.25,
+      "output": 10.0,
+      "usage_semantics": "openai"
+    },
+    "openrouter-poolside-laguna-s-2-1": {
+      "input": 0.1,
+      "cached_input": 0.01,
+      "output": 0.2,
+      "usage_semantics": "openai"
+    },
+    "openrouter-nemotron-3-super-120b": {
+      "input": 0.08,
+      "output": 0.45,
+      "usage_semantics": "openai"
+    },
+    "openrouter-qwen3-6-27b": {
+      "input": 0.3,
+      "cached_input": 0.15,
+      "output": 2.0,
+      "usage_semantics": "openai",
+      "proxy": true,
+      "note": "OpenRouter same-model price proxy for the BaseTen vLLM 0.26 BF16 benchmark cohort. Historical run traces do not expose API cache-read token buckets, so the estimate conservatively prices all observed input at the standard input rate."
+    },
+    "openrouter-qwen3-6-35b-a3b": {
+      "input": 0.14,
+      "output": 1.0,
+      "usage_semantics": "openai",
+      "proxy": true,
+      "note": "OpenRouter same-model price proxy for the official FP8 checkpoint benchmarked on BaseTen; OpenRouter does not promise that its served precision matches the scored checkpoint."
+    },
+    "openrouter-qwen3-5-9b": {
+      "input": 0.1,
+      "output": 0.15,
+      "usage_semantics": "openai"
+    },
+    "openrouter-qwen3-5-27b": {
+      "input": 0.195,
+      "output": 1.56,
+      "usage_semantics": "openai"
+    },
+    "empiriolabs-qwen3-5-4b": {
+      "input": 0.04,
+      "cached_input": 0.02,
+      "output": 0.07,
+      "usage_semantics": "openai"
+    },
+    "openrouter-glm-4-7-flash": {
+      "input": 0.06,
+      "cached_input": 0.01,
+      "output": 0.4,
+      "usage_semantics": "openai"
+    }
+  }
+}
