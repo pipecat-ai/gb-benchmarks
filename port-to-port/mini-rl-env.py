@@ -1596,6 +1596,36 @@ def _apply_benchmark_thinking_mode(
             extra["extra_body"] = extra_body
             return f"openai-compatible:sglang qwen3.5 enable_thinking={enable_thinking}"
 
+        if openai_base_url and model_lower.startswith("muse-glimmer"):
+            if normalized_thinking not in {"low", "medium", "high", "xhigh"}:
+                raise ValueError(
+                    "Muse Glimmer supports reasoning strength "
+                    "low|medium|high|xhigh on OpenAI-compatible endpoints."
+                )
+            settings["temperature"] = 1.0
+            settings["top_p"] = 0.95
+            existing_extra_body = extra.get("extra_body")
+            extra_body = (
+                dict(existing_extra_body)
+                if isinstance(existing_extra_body, dict)
+                else {}
+            )
+            extra_body.pop("vllm_xargs", None)
+            existing_ctk = extra_body.get("chat_template_kwargs")
+            chat_template_kwargs = (
+                dict(existing_ctk) if isinstance(existing_ctk, dict) else {}
+            )
+            chat_template_kwargs["reasoning_strength"] = normalized_thinking
+            extra_body["chat_template_kwargs"] = chat_template_kwargs
+            extra_body["top_k"] = 64
+            extra_body["min_p"] = 0.0
+            extra["extra_body"] = extra_body
+            return (
+                "openai-compatible:muse-glimmer "
+                f"reasoning_strength={normalized_thinking} "
+                "T=1.0 top_p=0.95 top_k=64 min_p=0.0 no_budget"
+            )
+
         if openai_base_url:
             budget = (
                 int(thinking_budget)

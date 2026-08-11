@@ -1510,6 +1510,43 @@ class MiniRLEnvRegressionTests(unittest.TestCase):
         self.assertEqual(extra["extra_body"]["vllm_xargs"]["thinking_budget"], 1536)
         self.assertEqual(policy, "openai-compatible:vllm thinking_budget=1536")
 
+    def test_apply_benchmark_thinking_mode_uses_native_muse_strength(self) -> None:
+        llm_service = types.SimpleNamespace(
+            _settings={
+                "temperature": 0.6,
+                "top_p": 0.95,
+                "extra": {
+                    "extra_body": {
+                        "vllm_xargs": {"thinking_budget": 2048},
+                    }
+                },
+            }
+        )
+
+        policy = mini_rl_env._apply_benchmark_thinking_mode(
+            llm_service=llm_service,
+            provider=mini_rl_env.LLMProvider.OPENAI,
+            model="muse-glimmer-30b",
+            thinking="high",
+            thinking_budget=None,
+            openai_base_url="http://127.0.0.1:8080/v1",
+        )
+
+        self.assertEqual(llm_service._settings["temperature"], 1.0)
+        self.assertEqual(llm_service._settings["top_p"], 0.95)
+        extra_body = llm_service._settings["extra"]["extra_body"]
+        self.assertNotIn("vllm_xargs", extra_body)
+        self.assertEqual(
+            extra_body["chat_template_kwargs"], {"reasoning_strength": "high"}
+        )
+        self.assertEqual(extra_body["top_k"], 64)
+        self.assertEqual(extra_body["min_p"], 0.0)
+        self.assertEqual(
+            policy,
+            "openai-compatible:muse-glimmer reasoning_strength=high "
+            "T=1.0 top_p=0.95 top_k=64 min_p=0.0 no_budget",
+        )
+
     def test_apply_benchmark_thinking_mode_disables_adaptive_claude_when_none(self) -> None:
         llm_service = types.SimpleNamespace(_settings={})
 

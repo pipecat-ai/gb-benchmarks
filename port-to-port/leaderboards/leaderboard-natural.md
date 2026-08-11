@@ -4,8 +4,8 @@
 - Prompt hash: `68d2c77be6548b77cd2e65ca0489edb2080c4a652feeb11f5ef5317f91e4b1f0`
 - Score rubric version: `port_to_port_primary_v1`
 - Aggregation: Primary=median, Task Complete=rate, Trade/Path/Tools/Report=mean
-- Source runs: `runs/leaderboard-natural-v2-linked-qwen36-27b-35b-inkling-small-20260731/*.json`
-- Enriched scores: `runs/leaderboard-natural-v2-linked-refresh-qwen36-27b-35b-inkling-small-20260731.jsonl`
+- Source runs: `runs/leaderboard-natural-v2-linked-qwen36-27b-35b-inkling-small-20260731/*.json` plus `runs/muse-glimmer-30b-natural-high-card-nomax-dflash15-n25-20260810T213830Z/raw/*.json`
+- Enriched scores: `runs/leaderboard-natural-v2-linked-refresh-qwen36-27b-35b-inkling-small-20260731.jsonl` plus `runs/muse-glimmer-30b-natural-high-card-nomax-dflash15-n25-20260810T213830Z/eval/enriched_runs.jsonl`
 - Sort: Primary /100 desc, Task Complete % desc, Total Time P50 (s) asc
 
 | Model | N | Primary /100 | Task Complete % | Trade /15 Avg | Path /15 Avg | Tools /15 Avg | Report /15 Avg | Turn P50 (ms) | Turn P90 (ms) | Total Time P50 (s) |
@@ -46,6 +46,7 @@
 | gpt-5.6-sol (eff=medium, mt=16384) | 25 | 87 | 100.0% | 3.6 | 15.0 | 14.8 | 14.8 | 1809.4 | 4705.2 | 116.62 |
 | claude-haiku-4-5-20251001 (th=medium) | 25 | 87 | 100.0% | 3.3 | 14.2 | 14.4 | 14.8 | 2151.4 | 7263.9 | 131.10 |
 | gpt-5.4 (th=none, mt=4096) | 25 | 87 | 96.0% | 4.0 | 14.0 | 14.6 | 14.6 | 1206.0 | 2547.9 | 50.23 |
+| muse-glimmer-30b (th=high, base=127.0.0.1:8080) | 25 | 87 | 92.0% | 4.1 | 14.1 | 13.0 | 13.7 | 487.0 | 9429.3 | 166.07 |
 | inkling (th=low, mt=16384, base=inference.baseten.co) | 25 | 86 | 100.0% | 2.6 | 15.0 | 13.7 | 14.6 | 594.0 | 1337.1 | 57.16 |
 | gpt-4.1 (th=medium) | 25 | 86 | 100.0% | 2.4 | 14.3 | 14.4 | 13.7 | 805.9 | 1395.4 | 61.33 |
 | inkling (th=high, mt=16384, base=inference.baseten.co) | 25 | 86 | 100.0% | 3.2 | 14.8 | 13.2 | 14.5 | 605.6 | 3402.2 | 111.73 |
