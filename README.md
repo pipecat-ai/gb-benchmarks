@@ -35,11 +35,11 @@ These are the configurations for which no cheaper model scores as well or better
 | kimi-2.6 Cerebras (thinking)           |    92 |        100.0% |               $0.137 | BaseTen     |
 | glm-5.2 (max)                          |    97 |        100.0% |               $0.174 | BaseTen     |
 
-### Score–time tradeoff
+### Score and completion reliability
 
-![Scatter plot of official judge score versus median turn time, with the speed-quality frontier highlighted](port-to-port/leaderboards/assets/score-time-frontier.svg)
+![Ranked dot plot of primary score for the best under-four-second configuration of each model, with tails showing incomplete task share](port-to-port/leaderboards/assets/under-four-reliability.svg)
 
-Configurations on the red line are not matched or beaten by a faster model. The four-second boundary is the inclusion cutoff for the main table.
+The dot is the median primary score. A hairline tail appears only below 100% task completion; its length is the unfinished share, and the exact completion rate is labeled. The model details at left show total batch time, estimated cost per completed task, and provider.
 
 ### Full under-four-second leaderboard
 

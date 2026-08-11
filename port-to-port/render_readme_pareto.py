@@ -58,6 +58,10 @@ def load_points(readme_path: Path, costs_path: Path) -> list[Point]:
         if len(cells) != 12:
             raise ValueError(f"unexpected README leaderboard row: {line}")
         label = cells[0]
+        if cells[10] == "—" and label not in estimates:
+            # Locally served rows without a public-API price do not belong on
+            # the cost frontier, but should not make the renderer unusable.
+            continue
         if label not in estimates:
             raise ValueError(f"no canonical cost estimate for README row {label!r}")
         estimate = estimates[label]
