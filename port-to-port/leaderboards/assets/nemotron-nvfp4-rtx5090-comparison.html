@@ -1,0 +1,317 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>Nemotron NVFP4 on RTX 5090</title>
+  <style>
+    :root {
+      --paper: #f5f2ea;
+      --paper-deep: #ebe6da;
+      --ink: #18201d;
+      --muted: #626a64;
+      --rule: #cbc6b9;
+      --lightning: #096b62;
+      --lightning-soft: #d9ebe6;
+      --nano: #b54b28;
+      --nano-soft: #f0ddd3;
+      --white: #fffdf8;
+      --shadow: 0 18px 55px rgba(35, 45, 40, 0.08);
+    }
+
+    * { box-sizing: border-box; }
+
+    html { background: var(--paper-deep); }
+
+    body {
+      margin: 0;
+      color: var(--ink);
+      background:
+        radial-gradient(circle at 82% 2%, rgba(9, 107, 98, 0.075), transparent 25rem),
+        linear-gradient(180deg, #faf8f2 0, var(--paper) 38rem);
+      font-family: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      font-variant-numeric: tabular-nums lining-nums;
+    }
+
+    main {
+      width: min(1440px, calc(100% - 48px));
+      margin: 0 auto;
+      padding: 38px 0 54px;
+    }
+
+    header {
+      display: flex;
+      justify-content: space-between;
+      gap: 30px;
+      align-items: end;
+      margin-bottom: 24px;
+      padding-bottom: 17px;
+      border-bottom: 1px solid var(--ink);
+    }
+
+    h1, h2, h3, p { margin-top: 0; }
+
+    h1 {
+      margin: 0;
+      font-family: Georgia, "Times New Roman", serif;
+      font-size: clamp(20px, 2.25vw, 32px);
+      font-weight: 400;
+      letter-spacing: -0.035em;
+      line-height: 1;
+    }
+
+    .header-meta {
+      margin: 0;
+      color: var(--muted);
+      font-size: 11px;
+      line-height: 1.5;
+      text-align: right;
+    }
+
+    .top-grid {
+      display: grid;
+      grid-template-columns: 1.05fr 0.95fr;
+      gap: 20px;
+      align-items: stretch;
+    }
+
+    .panel {
+      min-width: 0;
+      padding: 26px 28px 28px;
+      border: 1px solid var(--rule);
+      background: rgba(255, 253, 248, 0.77);
+      box-shadow: var(--shadow);
+    }
+
+    .panel-head {
+      display: flex;
+      justify-content: space-between;
+      gap: 20px;
+      align-items: baseline;
+      margin-bottom: 19px;
+      padding-bottom: 13px;
+      border-bottom: 1px solid var(--ink);
+    }
+
+    h2 {
+      margin: 0;
+      font-family: Georgia, "Times New Roman", serif;
+      font-size: clamp(18px, 1.75vw, 25px);
+      font-weight: 400;
+      letter-spacing: -0.035em;
+      line-height: 1;
+    }
+
+    .panel-head span {
+      color: var(--muted);
+      font-size: 9px;
+      font-weight: 750;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      white-space: nowrap;
+    }
+
+    .table-wrap { overflow-x: auto; }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 12px;
+    }
+
+    th, td {
+      padding: 14px 9px;
+      border-bottom: 1px solid var(--rule);
+      text-align: right;
+      white-space: nowrap;
+    }
+
+    th {
+      color: var(--muted);
+      font-size: 10px;
+      font-weight: 780;
+      letter-spacing: 0.055em;
+      text-transform: uppercase;
+    }
+
+    th:first-child, td:first-child { padding-left: 0; text-align: left; }
+    td:first-child { font-family: Georgia, "Times New Roman", serif; font-size: 14px; }
+    tbody tr:last-child td { border-bottom: 0; }
+
+    .task-table tr.on td { background: rgba(255,255,255,0.35); }
+    .task-table tr.on td:first-child { box-shadow: inset 3px 0 var(--tone); padding-left: 11px; }
+
+    .turn-highlight {
+      position: relative;
+      color: var(--white);
+      font-size: 17px;
+      font-weight: 860;
+      letter-spacing: -0.025em;
+    }
+
+    .turn-highlight::before {
+      position: absolute;
+      inset: 6px 1px;
+      z-index: -1;
+      border-radius: 2px;
+      background: var(--tone);
+      content: "";
+    }
+
+    td.turn-highlight { isolation: isolate; padding-left: 13px; padding-right: 13px; }
+
+    .detail-table td:first-child { font-size: 12px; }
+    .detail-table td:nth-child(2) { color: var(--lightning); font-weight: 760; }
+    .detail-table td:nth-child(3) { color: var(--nano); font-weight: 760; }
+
+    .reliability {
+      margin-top: 20px;
+    }
+
+    .reliability-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 18px;
+    }
+
+    .tool-card {
+      padding: 23px 25px 24px;
+      border: 1px solid var(--rule);
+      background: rgba(255,255,255,0.28);
+    }
+
+    .tool-card h3 {
+      margin-bottom: 17px;
+      font-size: 12px;
+      font-weight: 730;
+    }
+
+    .tool-number {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 20px;
+      margin-bottom: 14px;
+    }
+
+    .tool-number strong {
+      font-family: Georgia, "Times New Roman", serif;
+      font-size: clamp(22px, 2.5vw, 33px);
+      font-weight: 400;
+      letter-spacing: -0.055em;
+      line-height: 0.9;
+    }
+
+    .tool-number span { color: var(--muted); font-size: 11px; }
+
+    .ticks {
+      position: relative;
+      height: 13px;
+      background: repeating-linear-gradient(to right, var(--rule) 0 1px, transparent 1px 10%);
+    }
+
+    .ticks::after {
+      position: absolute;
+      top: 4px;
+      left: 0;
+      width: var(--fill);
+      height: 5px;
+      background: var(--tone);
+      content: "";
+    }
+
+    @media (max-width: 1040px) {
+      main { width: min(100% - 28px, 760px); }
+      header { align-items: start; flex-direction: column; }
+      .header-meta { text-align: left; }
+      .top-grid, .reliability-grid { grid-template-columns: 1fr; }
+      .task-table { min-width: 690px; }
+    }
+
+    @media (max-width: 560px) {
+      main { padding-top: 25px; }
+      .panel { padding: 20px 17px; }
+      .panel-head { align-items: start; flex-direction: column; gap: 7px; }
+    }
+
+    @media print {
+      body { background: white; }
+      main { width: 100%; padding: 18px; }
+      .panel { box-shadow: none; }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <div>
+        <h1>Nemotron 3 Nano and Nemotron 3.5 Lightning<br>/ NVFP4 on RTX5090</h1>
+      </div>
+      <p class="header-meta">Port-to-port natural prompt · 25 runs per configuration<br>Binary native thinking · one RTX 5090 · SGLang</p>
+    </header>
+
+    <div class="top-grid">
+      <section class="panel">
+        <div class="panel-head">
+          <h2>Task Agent Benchmark</h2>
+          <span>Mean score</span>
+        </div>
+        <div class="table-wrap">
+          <table class="task-table" aria-label="Nemotron NVFP4 task agent benchmark results">
+            <thead>
+              <tr><th>Model</th><th>Thinking</th><th>Score (100)</th><th>Complete</th><th>Turn P50</th><th>Turn P90</th><th>Total P50</th></tr>
+            </thead>
+            <tbody>
+              <tr class="on" style="--tone:var(--lightning)"><td>Nemotron 3.5 Lightning</td><td>On</td><td>48.4</td><td>48%</td><td class="turn-highlight">0.470s</td><td>3.457s</td><td>107.87s</td></tr>
+              <tr class="on" style="--tone:var(--nano)"><td>Nemotron 3 Nano</td><td>On</td><td>39.0</td><td>12%</td><td class="turn-highlight">6.753s</td><td>31.782s</td><td>358.18s</td></tr>
+              <tr><td>Nemotron 3.5 Lightning</td><td>Off</td><td>21.7</td><td>0%</td><td>0.163s</td><td>0.230s</td><td>61.47s</td></tr>
+              <tr><td>Nemotron 3 Nano</td><td>Off</td><td>16.3</td><td>0%</td><td>0.246s</td><td>0.282s</td><td>62.17s</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="panel">
+        <div class="panel-head">
+          <h2>Thinking-on detail</h2>
+          <span>Full model response</span>
+        </div>
+        <div class="table-wrap">
+          <table class="detail-table" aria-label="Thinking-on model details">
+            <thead><tr><th>Metric</th><th>Lightning</th><th>Nano</th></tr></thead>
+            <tbody>
+              <tr><td>Turn P50</td><td>0.470s</td><td>6.753s</td></tr>
+              <tr><td>Warm Turn P50, excluding turn 1</td><td>0.463s</td><td>7.109s</td></tr>
+              <tr><td>Warm TTFT P50</td><td>86.0ms</td><td>93.7ms</td></tr>
+              <tr><td>Completion tokens P50</td><td>136</td><td>2,169</td></tr>
+              <tr><td>Tool-producing turns: tokens P50</td><td>134</td><td>1,540</td></tr>
+              <tr><td>Decode throughput</td><td>~342 tok/s</td><td>~324 tok/s</td></tr>
+              <tr><td>Prefix-cache hit P50</td><td>98.0%</td><td>98.0%</td></tr>
+              <tr><td>Turns hitting 10,000-token ceiling</td><td>1 / 1,083</td><td>124 / 704</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </div>
+
+    <section class="panel reliability">
+      <div class="panel-head">
+        <h2>Percentage of turns with a tool call</h2>
+      </div>
+      <div class="reliability-grid">
+        <article class="tool-card" style="--tone:var(--lightning);--fill:96.5%">
+          <h3>Nemotron 3.5 Lightning</h3>
+          <div class="tool-number"><strong>96.5%</strong><span>1,045 / 1,083 turns</span></div>
+          <div class="ticks" aria-label="96.5 percent of turns produced a tool call"></div>
+        </article>
+        <article class="tool-card" style="--tone:var(--nano);--fill:82%">
+          <h3>Nemotron 3 Nano</h3>
+          <div class="tool-number"><strong>82.0%</strong><span>577 / 704 turns</span></div>
+          <div class="ticks" aria-label="82 percent of turns produced a tool call"></div>
+        </article>
+      </div>
+    </section>
+  </main>
+</body>
+</html>

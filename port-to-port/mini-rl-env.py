@@ -1084,10 +1084,12 @@ def _validate_generation_controls(args: argparse.Namespace, parser: argparse.Arg
     round_id = getattr(args, "round_id", None)
     request_timeout = getattr(args, "llm_request_timeout_secs", None)
     stream_idle_timeout = getattr(args, "llm_stream_idle_timeout_secs", None)
+    pipeline_idle_timeout = getattr(args, "pipeline_idle_timeout_secs", None)
 
     for label, value in (
         ("--llm-request-timeout-secs", request_timeout),
         ("--llm-stream-idle-timeout-secs", stream_idle_timeout),
+        ("--pipeline-idle-timeout-secs", pipeline_idle_timeout),
     ):
         if value is not None and value <= 0:
             parser.error(f"{label} must be greater than zero.")
@@ -1553,6 +1555,10 @@ def _apply_benchmark_thinking_mode(
             existing_ctk = extra_body.get("chat_template_kwargs")
             chat_template_kwargs = dict(existing_ctk) if isinstance(existing_ctk, dict) else {}
             chat_template_kwargs["enable_thinking"] = enable_thinking
+            # NVIDIA's Nemotron 3.5 Lightning SGLang cookbook requires this
+            # when reasoning and tool parsing are used together. Keep it on
+            # for both binary cells so enable_thinking is the only difference.
+            chat_template_kwargs["force_nonempty_content"] = True
             extra_body["chat_template_kwargs"] = chat_template_kwargs
 
             existing_xargs = extra_body.get("vllm_xargs")
@@ -3397,7 +3403,8 @@ async def _run_benchmark(args: argparse.Namespace) -> int:
             args.llm_request_timeout_secs = 900.0
         if getattr(args, "llm_stream_idle_timeout_secs", None) is None:
             args.llm_stream_idle_timeout_secs = 600.0
-    args.pipeline_idle_timeout_secs = _resolve_gpt56_pipeline_idle_timeout_secs(args)
+    if getattr(args, "pipeline_idle_timeout_secs", None) is None:
+        args.pipeline_idle_timeout_secs = _resolve_gpt56_pipeline_idle_timeout_secs(args)
 
     args.effective_effort = _resolve_gpt56_effective_effort(
         model=args.model,
@@ -3705,6 +3712,15 @@ def _build_parser() -> argparse.ArgumentParser:
         type=float,
         default=None,
         help="Maximum idle wait between GPT-5.6 Responses events (default: 600).",
+    )
+    parser.add_argument(
+        "--pipeline-idle-timeout-secs",
+        type=float,
+        default=None,
+        help=(
+            "Maximum time without an actionable pipeline frame before stopping the run. "
+            "Unlike max tokens, this does not cap model generation."
+        ),
     )
     parser.add_argument(
         "--log-json",

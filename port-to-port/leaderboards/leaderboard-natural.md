@@ -4,9 +4,11 @@
 - Prompt hash: `68d2c77be6548b77cd2e65ca0489edb2080c4a652feeb11f5ef5317f91e4b1f0`
 - Score rubric version: `port_to_port_primary_v1`
 - Aggregation: Primary=median, Task Complete=rate, Trade/Path/Tools/Report=mean
-- Source runs: `runs/leaderboard-natural-v2-linked-qwen36-27b-35b-inkling-small-20260731/*.json` plus `runs/muse-glimmer-30b-natural-high-card-nomax-dflash15-n25-20260810T213830Z/raw/*.json`
-- Enriched scores: `runs/leaderboard-natural-v2-linked-refresh-qwen36-27b-35b-inkling-small-20260731.jsonl` plus `runs/muse-glimmer-30b-natural-high-card-nomax-dflash15-n25-20260810T213830Z/eval/enriched_runs.jsonl`
+- Source runs: `runs/leaderboard-natural-v2-linked-qwen36-27b-35b-inkling-small-20260731/*.json`, `runs/muse-glimmer-30b-natural-high-card-nomax-dflash15-n25-20260810T213830Z/raw/*.json`, `runs/nemotron-3.5-lightning-natural-*-sglang-20260811T223912Z-r*.json`, and `runs/nemotron-3-nano-30b-nvfp4-natural-*-sglang-prod-native-20260812T192200Z-r*.json`
+- Enriched scores: `runs/leaderboard-natural-v2-linked-refresh-qwen36-27b-35b-inkling-small-20260731.jsonl`, `runs/muse-glimmer-30b-natural-high-card-nomax-dflash15-n25-20260810T213830Z/eval/enriched_runs.jsonl`, `runs/eval-nemotron-3.5-lightning-natural-*-sglang-20260811T223912Z/enriched_runs.jsonl`, and `runs/eval-nemotron3-nano-native-prod-20260812T192200Z/enriched_runs.jsonl`
 - Sort: Primary /100 desc, Task Complete % desc, Total Time P50 (s) asc
+
+The local Nemotron rows used official NVIDIA NVFP4 checkpoints on one RTX 5090 with SGLang and binary native thinking, without a thinking-token budget. Nano used a 262,144-token context, `max_tokens=10000`, model-card tool sampling (`temperature=0.6`, `top_p=0.95`) when thinking was on, greedy decoding when off, and a cache flush between conversations. Lightning used `temperature=1.0`, `top_p=0.95`, no output-token ceiling, and did not flush between conversations, so its latency regime is not identical to Nano's.
 
 | Model | N | Primary /100 | Task Complete % | Trade /15 Avg | Path /15 Avg | Tools /15 Avg | Report /15 Avg | Turn P50 (ms) | Turn P90 (ms) | Total Time P50 (s) |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
@@ -83,12 +85,16 @@
 | qwen3.5-27b (th=none, mt=4096, base=daily--qwen35-sglang-serve-27b.modal.run) | 25 | 39 | 8.0% | 2.5 | 14.5 | 0.0 | 1.8 | 1932.7 | 4479.8 | 282.62 |
 | nemotron-3-super-120b (th=none, tb=0, mt=4096, base=daily--nemotron-super-b200-sglang-serve.modal.run) | 25 | 37 | 16.0% | 1.6 | 14.2 | 0.2 | 2.3 | 1497.1 | 2994.8 | 260.14 |
 | qwen3.5-4b (th=none, mt=4096, base=daily--qwen35-sglang-serve-4b.modal.run) | 25 | 37 | 12.0% | 0.8 | 13.5 | 0.1 | 2.8 | 1178.9 | 3033.4 | 241.03 |
+| nemotron-3-nano-30b-nvfp4 (th=high, mt=10000, base=127.0.0.1:8000) | 25 | 37 | 12.0% | 1.6 | 14.5 | 4.8 | 5.6 | 6753.2 | 31781.8 | 358.18 |
 | nemotron-3-nano-30b (th=medium, tb=512, mt=4096, base=daily--nemotron-nano-b200-sglang-serve.modal.run) | 25 | 37 | 0.0% | 0.2 | 11.0 | 5.1 | 9.3 | 4882.8 | 5633.4 | 218.07 |
 | gemma-4-e4b (th=high, mt=4096, base=daily--gemma4-e4b-vllm.modal.run) | 25 | 35 | 20.0% | 0.6 | 11.5 | 1.7 | 5.4 | 1001.9 | 5828.9 | 180.49 |
 | qwen3.5-4b (th=high, mt=4096, base=daily--qwen35-sglang-serve-4b.modal.run) | 25 | 34 | 28.0% | 1.0 | 3.5 | 8.3 | 7.0 | 2372.3 | 6146.6 | 222.93 |
+| nemotron-3.5-lightning (th=high, base=127.0.0.1:8000) | 25 | 31 | 48.0% | 1.0 | 5.9 | 7.5 | 8.0 | 470.1 | 3457.3 | 107.87 |
 | glm-4.7-flash (th=none, mt=4096, base=daily--glm47-sglang-serve.modal.run) | 25 | 29 | 12.0% | 1.1 | 6.6 | 6.9 | 3.4 | 1875.3 | 3692.8 | 168.69 |
 | nemotron-3-nano-30b (th=low, tb=128, mt=4096, base=daily--nemotron-nano-b200-sglang-serve.modal.run) | 25 | 28 | 0.0% | 0.0 | 11.4 | 5.5 | 8.1 | 2150.8 | 4918.5 | 108.50 |
 | gemma-4-e4b (th=none, mt=4096, base=daily--gemma4-e4b-vllm.modal.run) | 25 | 27 | 28.0% | 0.5 | 11.4 | 3.0 | 4.6 | 1045.6 | 6246.7 | 172.13 |
+| nemotron-3.5-lightning (th=none, base=127.0.0.1:8000) | 25 | 23 | 0.0% | 0.8 | 7.0 | 4.3 | 0.0 | 163.5 | 230.4 | 61.47 |
 | qwen3.5-122b (th=high, mt=4096, base=daily--qwen35-sglang-serve-122b.modal.run) | 25 | 22 | 4.0% | 0.2 | 15.0 | 7.2 | 0.5 | 976.0 | 4021.8 | 27.00 |
 | gpt-5.4-mini (th=xhigh, mt=4096) | 25 | 20 | 0.0% | 0.0 | 15.0 | 4.7 | 0.0 | 24118.1 | 28550.8 | 221.99 |
 | nemotron-3-nano-30b (th=none, tb=0, mt=4096, base=daily--nemotron-nano-b200-sglang-serve.modal.run) | 25 | 16 | 0.0% | 0.2 | 4.6 | 4.1 | 3.0 | 915.0 | 1291.6 | 102.65 |
+| nemotron-3-nano-30b-nvfp4 (th=none, mt=10000, base=127.0.0.1:8000) | 25 | 13 | 0.0% | 0.0 | 9.6 | 4.7 | 0.0 | 246.4 | 282.5 | 62.17 |
