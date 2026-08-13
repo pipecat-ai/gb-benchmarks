@@ -55,6 +55,12 @@ def _effective_budget_for_display(row: dict[str, Any]) -> int | None:
     if isinstance(thinking_budget, float) and thinking_budget.is_integer():
         return int(thinking_budget)
 
+    # These runs use the chat template's binary enable_thinking toggle and
+    # deliberately omit any token budget. Do not reinterpret the benchmark's
+    # none/high labels as the legacy Nemotron 0/2048 budget mapping.
+    if row.get("openai_no_budget_thinking_toggle") is True:
+        return None
+
     # Baseten endpoints control reasoning via reasoning.effort levels, not an exact
     # token budget, so do not synthesize a tb= display value for them.
     if _is_baseten_endpoint(row.get("openai_base_url")):
@@ -356,6 +362,9 @@ def _build_rows(
         model = str(summary.get("model") or config.get("model") or "UNKNOWN")
         thinking = summary.get("thinking", config.get("thinking", summary.get("thinking_budget")))
         thinking_budget = summary.get("thinking_budget", config.get("thinking_budget"))
+        openai_no_budget_thinking_toggle = bool(
+            config.get("openai_no_budget_thinking_toggle", False)
+        )
         max_tokens = summary.get("max_tokens", config.get("max_tokens"))
         metadata = payload.get("metadata") or {}
         effective_effort = config.get(
@@ -366,7 +375,14 @@ def _build_rows(
             config.get("openai_base_url") or summary.get("openai_base_url")
         )
         display_model = model_name_aliases.get(model, model)
-        legacy_group_key = (model, thinking, thinking_budget, max_tokens, openai_base_url)
+        legacy_group_key = (
+            model,
+            thinking,
+            thinking_budget,
+            openai_no_budget_thinking_toggle,
+            max_tokens,
+            openai_base_url,
+        )
         group_key = (
             legacy_group_key
             if effective_effort in {None, ""}
@@ -374,6 +390,7 @@ def _build_rows(
                 model,
                 ("effective_effort", effective_effort),
                 thinking_budget,
+                openai_no_budget_thinking_toggle,
                 max_tokens,
                 openai_base_url,
             )
@@ -386,6 +403,7 @@ def _build_rows(
                 "display_model": display_model,
                 "thinking": thinking,
                 "thinking_budget": thinking_budget,
+                "openai_no_budget_thinking_toggle": openai_no_budget_thinking_toggle,
                 "max_tokens": max_tokens,
                 "effective_effort": effective_effort,
                 "openai_base_url": openai_base_url,
@@ -431,6 +449,7 @@ def _build_rows(
             "display_model": rec["display_model"],
             "thinking": rec["thinking"],
             "thinking_budget": rec["thinking_budget"],
+            "openai_no_budget_thinking_toggle": rec["openai_no_budget_thinking_toggle"],
             "max_tokens": rec["max_tokens"],
             "effective_effort": rec["effective_effort"],
             "openai_base_url": rec["openai_base_url"],

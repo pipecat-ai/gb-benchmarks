@@ -1800,6 +1800,7 @@ class MiniRLEnvRegressionTests(unittest.TestCase):
         self.assertEqual(policy, "openai-compatible:nemotron enable_thinking=True no_budget")
         extra_body = llm_service._settings["extra"]["extra_body"]
         self.assertEqual(extra_body["chat_template_kwargs"]["enable_thinking"], True)
+        self.assertEqual(extra_body["chat_template_kwargs"]["force_nonempty_content"], True)
         self.assertNotIn("thinking_budget", extra_body["vllm_xargs"])
         self.assertEqual(extra_body["vllm_xargs"]["top_k"], 40)
 
@@ -1830,6 +1831,37 @@ class MiniRLEnvRegressionTests(unittest.TestCase):
         )
 
         mini_rl_env._validate_generation_controls(args, parser)
+
+    def test_validate_generation_controls_allows_positive_pipeline_idle_timeout(self) -> None:
+        parser = argparse.ArgumentParser()
+        args = types.SimpleNamespace(
+            provider="openai",
+            model="nemotron-3.5-lightning",
+            openai_base_url="http://127.0.0.1:8000/v1",
+            thinking="high",
+            thinking_budget=None,
+            max_tokens=None,
+            openai_no_budget_thinking_toggle=True,
+            pipeline_idle_timeout_secs=900.0,
+        )
+
+        mini_rl_env._validate_generation_controls(args, parser)
+
+    def test_validate_generation_controls_rejects_nonpositive_pipeline_idle_timeout(self) -> None:
+        parser = argparse.ArgumentParser()
+        args = types.SimpleNamespace(
+            provider="openai",
+            model="nemotron-3.5-lightning",
+            openai_base_url="http://127.0.0.1:8000/v1",
+            thinking="high",
+            thinking_budget=None,
+            max_tokens=None,
+            openai_no_budget_thinking_toggle=True,
+            pipeline_idle_timeout_secs=0.0,
+        )
+
+        with self.assertRaises(SystemExit):
+            mini_rl_env._validate_generation_controls(args, parser)
 
     def test_validate_generation_controls_rejects_nonbinary_nemotron_no_budget_toggle(self) -> None:
         parser = argparse.ArgumentParser()
@@ -2514,6 +2546,52 @@ class LeaderboardRegressionTests(unittest.TestCase):
         self.assertEqual(len(rows), 1)
         self.assertIn("th=high", rows[0]["model_label"])
         self.assertNotIn("tb=", rows[0]["model_label"])
+
+    def test_no_budget_nemotron_toggle_does_not_display_inferred_budget(self) -> None:
+        payload = {
+            "schema_version": "mini_rl_run.v3",
+            "summary": {
+                "model": "nemotron-3-nano-30b-nvfp4",
+                "thinking": "high",
+                "thinking_budget": None,
+                "max_tokens": 10000,
+                "elapsed_ms": 1000,
+                "turns_executed": 1,
+            },
+            "config": {
+                "openai_base_url": "http://127.0.0.1:8000/v1",
+                "openai_no_budget_thinking_toggle": True,
+            },
+            "turns": [],
+            "metadata": {"task_prompt_hash": "prompt-a"},
+        }
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            run_path = Path(tmpdir) / "run.json"
+            run_path.write_text(json.dumps(payload), encoding="utf-8")
+
+            rows, _rubric_versions = build_primary_leaderboard._build_rows(
+                [run_path],
+                enriched_by_file={
+                    str(run_path.resolve()): {
+                        "file": str(run_path),
+                        "score_rubric_version": "port_to_port_primary_v1",
+                        "primary_score_100": 80,
+                        "task_complete": True,
+                        "trade_quality_score": 12,
+                        "path_efficiency_score": 13,
+                        "tool_discipline_score": 14,
+                        "report_quality_score": 11,
+                    }
+                },
+                model_name_aliases={},
+            )
+
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(
+            rows[0]["model_label"],
+            "nemotron-3-nano-30b-nvfp4 (th=high, mt=10000, base=127.0.0.1:8000)",
+        )
 
 
 class ScriptRegressionTests(unittest.TestCase):
