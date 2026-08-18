@@ -1,6 +1,6 @@
 {
   "schema_version": "leaderboard_cost_estimates.v1",
-  "pricing_as_of": "2026-07-28",
+  "pricing_as_of": "2026-08-13",
   "currency": "USD",
   "definition": "mean representative cost per attempt divided by official-judge Task Complete rate",
   "pricing_basis": "Standard synchronous API provider list prices, before credits, discounts, taxes, and data-residency uplifts.",
@@ -10,14 +10,96 @@
     "baseten": "https://www.baseten.co/pricing/",
     "empiriolabs": "https://empiriolabs.ai/models/qwen3-5-4b",
     "google": "https://ai.google.dev/gemini-api/docs/pricing",
+    "google_gemini_3_7_flash_launch": "https://blog.google/innovation-and-ai/models-and-research/gemini-models/introducing-gemini-3-7-flash/",
     "openrouter": "https://openrouter.ai/api/v1/models",
     "openai": "https://developers.openai.com/api/docs/pricing",
     "openai_gpt_5_2": "https://developers.openai.com/api/docs/models/gpt-5.2",
     "openai_gpt_5_1": "https://developers.openai.com/api/docs/models/gpt-5.1",
     "openai_gpt_4_1": "https://developers.openai.com/api/docs/models/gpt-4.1",
-    "openai_gpt_4o": "https://developers.openai.com/api/docs/models/gpt-4o"
+    "openai_gpt_4o": "https://developers.openai.com/api/docs/models/gpt-4o",
+    "xai": "https://docs.x.ai/developers/pricing"
   },
   "results": [
+    {
+      "label": "grok-4.6 (high)",
+      "method": "token_history",
+      "historical_runs": 25,
+      "task_complete_rate": 1.0,
+      "cost_samples": 25,
+      "price_key": "xai-grok-4-6",
+      "provider": "xAI",
+      "proxy_price": false,
+      "mean_cost_per_attempt": 0.40616568,
+      "median_cost_per_attempt": 0.397932,
+      "mean_cost_per_turn": 0.011711813148788927,
+      "estimated_cost_per_completed_task": 0.40616568,
+      "aggregate_billable_tokens": {
+        "uncached_input": 1512396,
+        "cached_input": 12507264,
+        "cache_write": 0,
+        "output": 145953
+      }
+    },
+    {
+      "label": "grok-4.6 (low)",
+      "method": "token_history",
+      "historical_runs": 25,
+      "task_complete_rate": 1.0,
+      "cost_samples": 25,
+      "price_key": "xai-grok-4-6",
+      "provider": "xAI",
+      "proxy_price": false,
+      "mean_cost_per_attempt": 0.29261096,
+      "median_cost_per_attempt": 0.289934,
+      "mean_cost_per_turn": 0.009132676654182274,
+      "estimated_cost_per_completed_task": 0.29261096,
+      "aggregate_billable_tokens": {
+        "uncached_input": 1277198,
+        "cached_input": 8944256,
+        "cache_write": 0,
+        "output": 48125
+      }
+    },
+    {
+      "label": "gemini-3.7-flash (high)",
+      "method": "token_history",
+      "historical_runs": 25,
+      "task_complete_rate": 1.0,
+      "cost_samples": 25,
+      "price_key": "google-gemini-3-7-flash-intro",
+      "provider": "AI Studio",
+      "proxy_price": false,
+      "mean_cost_per_attempt": 0.260873271,
+      "median_cost_per_attempt": 0.260916,
+      "mean_cost_per_turn": 0.007394367091836734,
+      "estimated_cost_per_completed_task": 0.260873271,
+      "aggregate_billable_tokens": {
+        "uncached_input": 7038212,
+        "cached_input": 7275637,
+        "cache_write": 0,
+        "output": 186000
+      }
+    },
+    {
+      "label": "gemini-3.7-flash (medium)",
+      "method": "token_history",
+      "historical_runs": 25,
+      "task_complete_rate": 1.0,
+      "cost_samples": 25,
+      "price_key": "google-gemini-3-7-flash-intro",
+      "provider": "AI Studio",
+      "proxy_price": false,
+      "mean_cost_per_attempt": 0.248439936,
+      "median_cost_per_attempt": 0.249631875,
+      "mean_cost_per_turn": 0.007230498719441211,
+      "estimated_cost_per_completed_task": 0.248439936,
+      "aggregate_billable_tokens": {
+        "uncached_input": 7104976,
+        "cached_input": 5411802,
+        "cache_write": 0,
+        "output": 127035
+      }
+    },
     {
       "label": "gemini-3.6-flash (high)",
       "method": "token_history",
@@ -29,6 +111,7 @@
       "proxy_price": false,
       "mean_cost_per_attempt": 0.448742394,
       "median_cost_per_attempt": 0.45295290000000005,
+      "mean_cost_per_turn": 0.013014570591647331,
       "estimated_cost_per_completed_task": 0.448742394,
       "aggregate_billable_tokens": {
         "uncached_input": 5575377,
@@ -48,6 +131,7 @@
       "proxy_price": false,
       "mean_cost_per_attempt": 0.535310172,
       "median_cost_per_attempt": 0.5382399,
+      "mean_cost_per_turn": 0.014754966152149945,
       "estimated_cost_per_completed_task": 0.535310172,
       "aggregate_billable_tokens": {
         "uncached_input": 6785622,
@@ -63,10 +147,11 @@
       "task_complete_rate": 1.0,
       "cost_samples": 25,
       "price_key": "baseten-glm-5-2",
-      "provider": "BaseTen",
+      "provider": "Baseten",
       "proxy_price": false,
       "mean_cost_per_attempt": 0.17417853760000002,
       "median_cost_per_attempt": 0.17422744,
+      "mean_cost_per_turn": 0.004999383972445465,
       "estimated_cost_per_completed_task": 0.17417853760000002,
       "aggregate_billable_tokens": {
         "uncached_input": 523874,
@@ -86,6 +171,7 @@
       "proxy_price": false,
       "mean_cost_per_attempt": 0.38372226400000004,
       "median_cost_per_attempt": 0.3844525,
+      "mean_cost_per_turn": 0.010938490992018244,
       "estimated_cost_per_completed_task": 0.38372226400000004,
       "aggregate_billable_tokens": {
         "uncached_input": 3508,
@@ -95,22 +181,83 @@
       }
     },
     {
-      "label": "kimi-2.6 Cerebras (thinking)",
-      "method": "token_history_proxy",
+      "label": "kimi-2.6 (thinking)",
+      "method": "token_history",
+      "historical_runs": 25,
+      "task_complete_rate": 0.96,
+      "cost_samples": 25,
+      "price_key": "baseten-kimi-k2-6",
+      "provider": "Baseten",
+      "proxy_price": false,
+      "mean_cost_per_attempt": 0.1366657092,
+      "median_cost_per_attempt": 0.13585918,
+      "mean_cost_per_turn": 0.003882548556818182,
+      "estimated_cost_per_completed_task": 0.14236011375000002,
+      "aggregate_billable_tokens": {
+        "uncached_input": 556175,
+        "cached_input": 12971328,
+        "cache_write": 0,
+        "output": 203216
+      }
+    },
+    {
+      "label": "deepseek-v4-flash-0731 (low)",
+      "method": "token_history",
       "historical_runs": 25,
       "task_complete_rate": 1.0,
       "cost_samples": 25,
-      "price_key": "baseten-kimi-k2-6-proxy",
-      "provider": "BaseTen",
-      "proxy_price": true,
-      "mean_cost_per_attempt": 0.1368886508,
-      "median_cost_per_attempt": 0.12681045999999999,
-      "estimated_cost_per_completed_task": 0.1368886508,
+      "price_key": "baseten-deepseek-v4-flash-0731",
+      "provider": "Baseten",
+      "proxy_price": false,
+      "mean_cost_per_attempt": 0.03255740904,
+      "median_cost_per_attempt": 0.031822274,
+      "mean_cost_per_turn": 0.0009486424545454545,
+      "estimated_cost_per_completed_task": 0.03255740904,
       "aggregate_billable_tokens": {
-        "uncached_input": 286885,
-        "cached_input": 8985472,
+        "uncached_input": 4121769,
+        "cached_input": 7551232,
         "cache_write": 0,
-        "output": 428000
+        "output": 256426
+      }
+    },
+    {
+      "label": "deepseek-v4-flash-0731 (high)",
+      "method": "token_history",
+      "historical_runs": 25,
+      "task_complete_rate": 1.0,
+      "cost_samples": 25,
+      "price_key": "baseten-deepseek-v4-flash-0731",
+      "provider": "Baseten",
+      "proxy_price": false,
+      "mean_cost_per_attempt": 0.03543910032,
+      "median_cost_per_attempt": 0.034956762,
+      "mean_cost_per_turn": 0.0010067926227272728,
+      "estimated_cost_per_completed_task": 0.03543910032,
+      "aggregate_billable_tokens": {
+        "uncached_input": 4169634,
+        "cached_input": 8285056,
+        "cache_write": 0,
+        "output": 430552
+      }
+    },
+    {
+      "label": "deepseek-v4-pro-0813 (low)",
+      "method": "token_history",
+      "historical_runs": 25,
+      "task_complete_rate": 1.0,
+      "cost_samples": 25,
+      "price_key": "baseten-deepseek-v4-pro-0813",
+      "provider": "Baseten",
+      "proxy_price": false,
+      "mean_cost_per_attempt": 0.31358109024,
+      "median_cost_per_attempt": 0.318164616,
+      "mean_cost_per_turn": 0.009468028086956522,
+      "estimated_cost_per_completed_task": 0.31358109024,
+      "aggregate_billable_tokens": {
+        "uncached_input": 3781644,
+        "cached_input": 6939648,
+        "cache_write": 0,
+        "output": 487809
       }
     },
     {
@@ -124,6 +271,7 @@
       "proxy_price": false,
       "mean_cost_per_attempt": 0.280906134,
       "median_cost_per_attempt": 0.27791685,
+      "mean_cost_per_turn": 0.008606192830882353,
       "estimated_cost_per_completed_task": 0.280906134,
       "aggregate_billable_tokens": {
         "uncached_input": 4780,
@@ -143,6 +291,7 @@
       "proxy_price": false,
       "mean_cost_per_attempt": 0.2564473,
       "median_cost_per_attempt": 0.249545,
+      "mean_cost_per_turn": 0.00800397315855181,
       "estimated_cost_per_completed_task": 0.2564473,
       "aggregate_billable_tokens": {
         "uncached_input": 929019,
@@ -188,6 +337,7 @@
       "price_key": "openai-gpt-5-6-terra",
       "provider": "OpenAI",
       "mean_cost_per_attempt": 0.22170975,
+      "mean_cost_per_turn": 0.006520875000000001,
       "estimated_cost_per_completed_task": 0.22170975,
       "sample_billable_tokens": {
         "uncached_input": 102,
@@ -207,6 +357,7 @@
       "proxy_price": false,
       "mean_cost_per_attempt": 0.170620366,
       "median_cost_per_attempt": 0.1675198,
+      "mean_cost_per_turn": 0.005108394191616766,
       "estimated_cost_per_completed_task": 0.170620366,
       "aggregate_billable_tokens": {
         "uncached_input": 454181,
@@ -226,6 +377,7 @@
       "proxy_price": true,
       "mean_cost_per_attempt": 0.194001672,
       "median_cost_per_attempt": 0.1915956,
+      "mean_cost_per_turn": 0.005726141440377803,
       "estimated_cost_per_completed_task": 0.194001672,
       "aggregate_billable_tokens": {
         "uncached_input": 14695226,
@@ -245,6 +397,7 @@
       "proxy_price": true,
       "mean_cost_per_attempt": 0.096988824,
       "median_cost_per_attempt": 0.08966946,
+      "mean_cost_per_turn": 0.0028326175233644862,
       "estimated_cost_per_completed_task": 0.096988824,
       "aggregate_billable_tokens": {
         "uncached_input": 15177040,
@@ -264,6 +417,7 @@
       "proxy_price": false,
       "mean_cost_per_attempt": 0.051223460000000005,
       "median_cost_per_attempt": 0.051223780000000003,
+      "mean_cost_per_turn": 0.0017074486666666668,
       "estimated_cost_per_completed_task": 0.051223460000000005,
       "aggregate_billable_tokens": {
         "uncached_input": 9102175,
@@ -283,6 +437,7 @@
       "proxy_price": false,
       "mean_cost_per_attempt": 0.115896604,
       "median_cost_per_attempt": 0.10773285,
+      "mean_cost_per_turn": 0.0037146347435897437,
       "estimated_cost_per_completed_task": 0.115896604,
       "aggregate_billable_tokens": {
         "uncached_input": 15780,
@@ -298,10 +453,11 @@
       "task_complete_rate": 1.0,
       "cost_samples": 25,
       "price_key": "baseten-nemotron-3-ultra",
-      "provider": "BaseTen",
+      "provider": "Baseten",
       "proxy_price": false,
       "mean_cost_per_attempt": 0.299188056,
       "median_cost_per_attempt": 0.2937606,
+      "mean_cost_per_turn": 0.0092228130702836,
       "estimated_cost_per_completed_task": 0.299188056,
       "aggregate_billable_tokens": {
         "uncached_input": 11710529,
@@ -321,6 +477,7 @@
       "proxy_price": false,
       "mean_cost_per_attempt": 0.1729235,
       "median_cost_per_attempt": 0.1681115,
+      "mean_cost_per_turn": 0.005621700260078023,
       "estimated_cost_per_completed_task": 0.1729235,
       "aggregate_billable_tokens": {
         "uncached_input": 1002494,
@@ -366,6 +523,7 @@
       "price_key": "openai-gpt-5-6-luna",
       "provider": "OpenAI",
       "mean_cost_per_attempt": 0.10653975,
+      "mean_cost_per_turn": 0.0033293671875,
       "estimated_cost_per_completed_task": 0.11097890625000001,
       "sample_billable_tokens": {
         "uncached_input": 96,
@@ -385,6 +543,7 @@
       "proxy_price": false,
       "mean_cost_per_attempt": 0.0109493248,
       "median_cost_per_attempt": 0.010539980000000001,
+      "mean_cost_per_turn": 0.00029244991452991454,
       "estimated_cost_per_completed_task": 0.013034910476190476,
       "aggregate_billable_tokens": {
         "uncached_input": 1046380,
@@ -394,22 +553,23 @@
       }
     },
     {
-      "label": "gemini-3.1-flash-lite-preview (high)",
+      "label": "gemini-3.5-flash-lite (high)",
       "method": "token_history",
       "historical_runs": 25,
       "task_complete_rate": 1.0,
       "cost_samples": 25,
-      "price_key": "google-gemini-3-1-flash-lite",
+      "price_key": "google-gemini-3-5-flash-lite",
       "provider": "AI Studio",
       "proxy_price": false,
-      "mean_cost_per_attempt": 0.049031614,
-      "median_cost_per_attempt": 0.04917765,
-      "estimated_cost_per_completed_task": 0.049031614,
+      "mean_cost_per_attempt": 0.11322469439999999,
+      "median_cost_per_attempt": 0.11246582000000001,
+      "mean_cost_per_turn": 0.003234991268571428,
+      "estimated_cost_per_completed_task": 0.11322469439999999,
       "aggregate_billable_tokens": {
-        "uncached_input": 3795139,
-        "cached_input": 4848384,
+        "uncached_input": 7664343,
+        "cached_input": 5604232,
         "cache_write": 0,
-        "output": 103864
+        "output": 145275
       }
     },
     {
@@ -419,10 +579,11 @@
       "task_complete_rate": 1.0,
       "cost_samples": 25,
       "price_key": "baseten-inkling",
-      "provider": "BaseTen",
+      "provider": "Baseten",
       "proxy_price": false,
       "mean_cost_per_attempt": 0.073520652,
       "median_cost_per_attempt": 0.07227423,
+      "mean_cost_per_turn": 0.002504109400544959,
       "estimated_cost_per_completed_task": 0.073520652,
       "aggregate_billable_tokens": {
         "uncached_input": 426503,
@@ -442,6 +603,7 @@
       "proxy_price": false,
       "mean_cost_per_attempt": 0.21028304,
       "median_cost_per_attempt": 0.203242,
+      "mean_cost_per_turn": 0.006629351828499369,
       "estimated_cost_per_completed_task": 0.21028304,
       "aggregate_billable_tokens": {
         "uncached_input": 788474,
@@ -461,6 +623,7 @@
       "proxy_price": false,
       "mean_cost_per_attempt": 0.0588865676,
       "median_cost_per_attempt": 0.0577555,
+      "mean_cost_per_turn": 0.0017019239190751445,
       "estimated_cost_per_completed_task": 0.0588865676,
       "aggregate_billable_tokens": {
         "uncached_input": 2068141,
@@ -480,6 +643,7 @@
       "proxy_price": false,
       "mean_cost_per_attempt": 0.1043245916,
       "median_cost_per_attempt": 0.1022679,
+      "mean_cost_per_turn": 0.003529248700947226,
       "estimated_cost_per_completed_task": 0.1043245916,
       "aggregate_billable_tokens": {
         "uncached_input": 8550348,
@@ -499,6 +663,7 @@
       "proxy_price": false,
       "mean_cost_per_attempt": 0.0438677736,
       "median_cost_per_attempt": 0.041696519999999994,
+      "mean_cost_per_turn": 0.001360662952853598,
       "estimated_cost_per_completed_task": 0.0438677736,
       "aggregate_billable_tokens": {
         "uncached_input": 12164313,
@@ -518,6 +683,7 @@
       "proxy_price": false,
       "mean_cost_per_attempt": 0.4286068,
       "median_cost_per_attempt": 0.416335,
+      "mean_cost_per_turn": 0.013377240948813983,
       "estimated_cost_per_completed_task": 0.4658769565217391,
       "aggregate_billable_tokens": {
         "uncached_input": 443276,
@@ -537,6 +703,7 @@
       "proxy_price": false,
       "mean_cost_per_attempt": 0.287263448,
       "median_cost_per_attempt": 0.28771559999999996,
+      "mean_cost_per_turn": 0.008800963480392157,
       "estimated_cost_per_completed_task": 0.287263448,
       "aggregate_billable_tokens": {
         "uncached_input": 2226757,
@@ -556,6 +723,7 @@
       "proxy_price": false,
       "mean_cost_per_attempt": 0.057619492,
       "median_cost_per_attempt": 0.0551448,
+      "mean_cost_per_turn": 0.001488106714876033,
       "estimated_cost_per_completed_task": 0.10289195,
       "aggregate_billable_tokens": {
         "uncached_input": 13797154,
@@ -575,6 +743,7 @@
       "proxy_price": false,
       "mean_cost_per_attempt": 0.14968937100000002,
       "median_cost_per_attempt": 0.154401585,
+      "mean_cost_per_turn": 0.003062384840425532,
       "estimated_cost_per_completed_task": 1.8711171375000002,
       "aggregate_billable_tokens": {
         "uncached_input": 18387745,
@@ -594,6 +763,7 @@
       "proxy_price": false,
       "mean_cost_per_attempt": 0.0626025716,
       "median_cost_per_attempt": 0.06382963,
+      "mean_cost_per_turn": 0.0012923734847233692,
       "estimated_cost_per_completed_task": 0.3912660725,
       "aggregate_billable_tokens": {
         "uncached_input": 19041208,
@@ -613,6 +783,7 @@
       "proxy_price": false,
       "mean_cost_per_attempt": 0.0301135108,
       "median_cost_per_attempt": 0.030715419999999997,
+      "mean_cost_per_turn": 0.0006226945988420182,
       "estimated_cost_per_completed_task": 0.2509459233333333,
       "aggregate_billable_tokens": {
         "uncached_input": 18572026,
@@ -632,6 +803,7 @@
       "proxy_price": false,
       "mean_cost_per_attempt": 0.0356960816,
       "median_cost_per_attempt": 0.03907116,
+      "mean_cost_per_turn": 0.0007814378633975482,
       "estimated_cost_per_completed_task": 0.2974673466666667,
       "aggregate_billable_tokens": {
         "uncached_input": 14665314,

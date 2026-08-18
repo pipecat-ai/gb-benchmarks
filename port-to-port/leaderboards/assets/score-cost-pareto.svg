@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 660" role="img" aria-labelledby="title desc">
   <title id="title">Score versus estimated cost per completed port-to-port task</title>
-  <desc id="desc">A logarithmic scatter plot of the best under-four-second configuration for each model. Laguna S 2.1, Gemma 4 31B, Kimi 2.6, and GLM 5.2 form the efficient frontier.</desc>
+  <desc id="desc">A logarithmic scatter plot of the best under-four-second configuration for each model. Laguna S 2.1, Gemma 4 31B, Gemini 3.5 Flash Lite, Kimi 2.6, and Grok 4.6 form the efficient frontier.</desc>
   <style>
     text { font-family: ui-sans-serif, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; fill: #24211f; }
     .title { font-family: Georgia, 'Times New Roman', serif; font-size: 24px; }
@@ -14,6 +14,7 @@
     .other { fill: #b9b5b0; fill-opacity: .72; }
     .notable { fill: #625d59; fill-opacity: .9; }
     .frontier-line { fill: none; stroke: #a23b2a; stroke-width: 2; }
+    .label-hairline { stroke: #aaa49e; stroke-width: .65; }
     .frontier { fill: #a23b2a; stroke: #fff; stroke-width: 1.5; }
     .point-label { font-size: 13px; font-weight: 600; }
     .notable-label { font-size: 12px; font-weight: 600; fill: #4f4a46; }
@@ -44,32 +45,43 @@
   <line class="axis" x1="92" y1="582" x2="966" y2="582"/>
   <text class="axis-label" x="529.0" y="635" text-anchor="middle">Estimated cost per completed task (USD)</text>
   <text class="axis-label" transform="translate(25 334.0) rotate(-90)" text-anchor="middle">Official judge score</text>
-  <path class="frontier-line" d="M 142.3 383.6 L 402.0 358.8 L 588.6 284.4 L 634.3 160.4"/>
-  <circle class="notable" cx="813.9" cy="160.4" r="4"><title>gemini-3.6-flash (high): 97, $0.449 per completed task</title></circle>
+  <path class="frontier-line" d="M 142.3 383.6 L 316.0 160.4 L 795.0 110.8"/>
+  <circle class="notable" cx="711.0" cy="160.4" r="4"><title>gemini-3.7-flash (high): 97, $0.261 per completed task</title></circle>
+  <circle class="other" cx="813.9" cy="160.4" r="4"><title>gemini-3.6-flash (high): 97, $0.449 per completed task</title></circle>
+  <circle class="notable" cx="634.3" cy="160.4" r="4"><title>glm-5.2 (max): 97, $0.174 per completed task</title></circle>
+  <circle class="other" cx="745.9" cy="160.4" r="4"><title>deepseek-v4-pro-0813 (low): 97, $0.314 per completed task</title></circle>
+  <circle class="other" cx="596.0" cy="160.4" r="4"><title>kimi-2.6 (thinking): 97, $0.142 per completed task</title></circle>
   <circle class="notable" cx="784.2" cy="259.6" r="4"><title>claude-sonnet-5 (xhigh): 93, $0.384 per completed task</title></circle>
   <circle class="other" cx="725.0" cy="284.4" r="4"><title>claude-sonnet-4-6 (none): 92, $0.281 per completed task</title></circle>
   <circle class="other" cx="707.7" cy="284.4" r="4"><title>gpt-5.4 (low): 92, $0.256 per completed task</title></circle>
   <circle class="notable" cx="680.1" cy="284.4" r="4"><title>gpt-5.6-terra (xhigh): 92, $0.222 per completed task</title></circle>
+  <circle class="other" cx="552.6" cy="309.2" r="4"><title>gemini-3.5-flash-lite (high): 91, $0.113 per completed task</title></circle>
   <circle class="other" cx="630.4" cy="309.2" r="4"><title>gpt-5.2 (medium): 91, $0.171 per completed task</title></circle>
   <circle class="other" cx="654.8" cy="334.0" r="4"><title>qwen3.6-27b (high): 90, $0.194 per completed task</title></circle>
+  <circle class="other" cx="402.0" cy="358.8" r="4"><title>gemma-4-31b (thinking): 89, $0.051 per completed task</title></circle>
   <circle class="other" cx="557.0" cy="358.8" r="4"><title>claude-haiku-4-5-20251001 (low): 89, $0.116 per completed task</title></circle>
   <circle class="other" cx="737.0" cy="383.6" r="4"><title>nemotron-3-ultra-550b (thinking): 88, $0.299 per completed task</title></circle>
   <circle class="other" cx="523.2" cy="383.6" r="4"><title>qwen3.6-35b-a3b (high, FP8): 88, $0.097 per completed task</title></circle>
   <circle class="other" cx="548.8" cy="383.6" r="4"><title>gpt-5.6-luna (xhigh): 88, $0.111 per completed task</title></circle>
-  <circle class="other" cx="393.7" cy="408.4" r="4"><title>gemini-3.1-flash-lite-preview (high): 87, $0.049 per completed task</title></circle>
   <circle class="other" cx="470.6" cy="433.2" r="4"><title>inkling (low): 86, $0.074 per completed task</title></circle>
   <circle class="other" cx="670.1" cy="433.2" r="4"><title>gpt-4.1: 86, $0.210 per completed task</title></circle>
   <circle class="other" cx="537.0" cy="482.8" r="4"><title>gemini-3.5-flash-lite (minimal): 84, $0.104 per completed task</title></circle>
   <circle class="other" cx="372.6" cy="532.4" r="4"><title>nemotron-3-super-120b (tb=512): 82, $0.044 per completed task</title></circle>
+  <line class="label-hairline" x1="150.3" y1="398.6" x2="144.9" y2="388.5"/>
   <circle class="frontier" cx="142.3" cy="383.6" r="5.5"><title>poolside/laguna-s-2.1 (none): 88, $0.013 per completed task</title></circle>
-  <text class="point-label" x="155.3" y="414.6">Laguna S 2.1 · none<tspan class="point-detail" x="155.3" dy="16">88 · $0.013</tspan></text>
-  <circle class="frontier" cx="402.0" cy="358.8" r="5.5"><title>gemma-4-31b (thinking): 89, $0.051 per completed task</title></circle>
-  <text class="point-label" x="415.0" y="395.8">Gemma 4 31B · thinking<tspan class="point-detail" x="415.0" dy="16">89 · $0.051</tspan></text>
-  <circle class="frontier" cx="588.6" cy="284.4" r="5.5"><title>kimi-2.6 Cerebras (thinking): 92, $0.137 per completed task</title></circle>
-  <text class="point-label" x="601.6" y="249.4">Kimi 2.6 · thinking<tspan class="point-detail" x="601.6" dy="16">92 · $0.137</tspan></text>
-  <circle class="frontier" cx="634.3" cy="160.4" r="5.5"><title>glm-5.2 (max): 97, $0.174 per completed task</title></circle>
-  <text class="point-label" x="647.3" y="125.4">GLM 5.2 · max<tspan class="point-detail" x="647.3" dy="16">97 · $0.174</tspan></text>
-  <text class="notable-label" x="800.9" y="191.4" text-anchor="end">Gemini 3.6 Flash · high<tspan class="point-detail" x="800.9" dy="15">97 · $0.449</tspan></text>
-  <text class="notable-label" x="797.2" y="239.6" text-anchor="start">Claude Sonnet 5 · xhigh<tspan class="point-detail" x="797.2" dy="15">93 · $0.384</tspan></text>
-  <text class="notable-label" x="693.1" y="336.4" text-anchor="start">GPT-5.6 Terra · xhigh<tspan class="point-detail" x="693.1" dy="15">92 · $0.222</tspan></text>
+  <text class="point-label" x="150.3" y="411.6" text-anchor="start">Laguna S 2.1 · none<tspan class="point-detail" x="150.3" dy="16">88 · $0.013 · 0.83s</tspan></text>
+  <line class="label-hairline" x1="328.0" y1="181.4" x2="318.8" y2="165.2"/>
+  <circle class="frontier" cx="316.0" cy="160.4" r="5.5"><title>deepseek-v4-flash-0731 (low): 97, $0.033 per completed task</title></circle>
+  <text class="point-label" x="328.0" y="194.4" text-anchor="start">DeepSeek V4 Flash · low<tspan class="point-detail" x="328.0" dy="16">97 · $0.033 · 0.86s</tspan></text>
+  <line class="label-hairline" x1="811.0" y1="115.8" x2="800.3" y2="112.4"/>
+  <circle class="frontier" cx="795.0" cy="110.8" r="5.5"><title>grok-4.6 (high): 99, $0.406 per completed task</title></circle>
+  <text class="point-label" x="811.0" y="128.8" text-anchor="start">Grok 4.6 · high<tspan class="point-detail" x="811.0" dy="16">99 · $0.406 · 1.69s</tspan></text>
+  <line class="label-hairline" x1="723.0" y1="172.4" x2="713.8" y2="163.2"/>
+  <text class="notable-label" x="723.0" y="184.4" text-anchor="start">Gemini 3.7 Flash · high<tspan class="point-detail" x="723.0" dy="15">97 · $0.261 · 1.14s</tspan></text>
+  <line class="label-hairline" x1="634.3" y1="176.4" x2="634.3" y2="164.4"/>
+  <text class="notable-label" x="612.3" y="188.4" text-anchor="start">GLM 5.2 · max<tspan class="point-detail" x="612.3" dy="15">97 · $0.174 · 1.19s</tspan></text>
+  <line class="label-hairline" x1="773.2" y1="248.6" x2="781.4" y2="256.8"/>
+  <text class="notable-label" x="773.2" y="230.6" text-anchor="end">Claude Sonnet 5 · xhigh<tspan class="point-detail" x="773.2" dy="15">93 · $0.384 · 2.53s</tspan></text>
+  <line class="label-hairline" x1="690.1" y1="296.4" x2="682.7" y2="287.5"/>
+  <text class="notable-label" x="690.1" y="308.4" text-anchor="start">GPT-5.6 Terra · xhigh<tspan class="point-detail" x="690.1" dy="15">92 · $0.222 · 2.25s</tspan></text>
 </svg>

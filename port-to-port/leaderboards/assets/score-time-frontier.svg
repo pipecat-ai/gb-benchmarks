@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 620" role="img" aria-labelledby="title desc">
-  <title id="title">Official judge score versus median turn time</title>
-  <desc id="desc">A scatter plot of the curated under-four-second models. Kimi 2.6 and Gemini 3.6 Flash form the speed-quality frontier.</desc>
+  <title id="title">Official judge score versus turn completion time</title>
+  <desc id="desc">A scatter plot of the curated under-four-second models. Turn completion time measures the full model response or tool call, not time to first token. The red path marks configurations not dominated on lower median turn completion time and higher score.</desc>
   <style>
     text { font-family: ui-sans-serif, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; fill: #24211f; }
     .title { font-family: Georgia, 'Times New Roman', serif; font-size: 24px; }
@@ -15,13 +15,14 @@
     .other { fill: #b9b5b0; fill-opacity: .72; }
     .notable { fill: #625d59; fill-opacity: .9; }
     .frontier-line { fill: none; stroke: #a23b2a; stroke-width: 2; }
+    .label-hairline { stroke: #aaa49e; stroke-width: .65; }
     .frontier { fill: #a23b2a; stroke: #fff; stroke-width: 1.5; }
     .point-label { font-size: 13px; font-weight: 600; }
     .notable-label { font-size: 12px; font-weight: 600; fill: #4f4a46; }
     .point-detail { font-size: 12px; font-weight: 400; }
   </style>
-  <text class="title" x="92" y="31">Score versus median turn time</text>
-  <text class="subtitle" x="92" y="55">Curated README models · upper left is better · speed–quality frontier in red</text>
+  <text class="title" x="92" y="31">Score versus turn completion time</text>
+  <text class="subtitle" x="92" y="55">Turn P50: full response or tool call · upper left is better · frontier in red</text>
   <line class="grid" x1="92" y1="548.0" x2="966" y2="548.0"/>
   <text class="tick" x="79" y="552.0" text-anchor="end">80</text>
   <line class="grid" x1="92" y1="432.5" x2="966" y2="432.5"/>
@@ -44,34 +45,47 @@
   <text class="tick" x="966.0" y="571" text-anchor="middle">4s</text>
   <line class="axis" x1="92" y1="548" x2="966" y2="548"/>
   <line class="cutoff" x1="966.0" y1="86" x2="966.0" y2="548"/>
-  <text class="axis-label" x="529.0" y="599" text-anchor="middle">Median time per model turn</text>
+  <text class="axis-label" x="529.0" y="599" text-anchor="middle">Turn P50 completion time</text>
   <text class="axis-label" transform="translate(25 317.0) rotate(-90)" text-anchor="middle">Official judge score</text>
-  <path class="frontier-line" d="M 200.8 270.8 L 349.0 155.3"/>
-  <circle class="notable" cx="352.2" cy="155.3" r="4"><title>glm-5.2 (max): 97, 1.19s median turn time</title></circle>
+  <path class="frontier-line" d="M 221.8 409.4 L 263.9 293.9 L 279.7 155.3 L 461.3 109.1"/>
+  <circle class="notable" cx="341.8" cy="155.3" r="4"><title>gemini-3.7-flash (high): 97, 1.14s median turn time</title></circle>
+  <circle class="other" cx="349.0" cy="155.3" r="4"><title>gemini-3.6-flash (high): 97, 1.18s median turn time</title></circle>
+  <circle class="other" cx="352.2" cy="155.3" r="4"><title>glm-5.2 (max): 97, 1.19s median turn time</title></circle>
+  <circle class="other" cx="366.2" cy="155.3" r="4"><title>deepseek-v4-pro-0813 (low): 97, 1.25s median turn time</title></circle>
+  <circle class="other" cx="317.9" cy="155.3" r="4"><title>kimi-2.6 (thinking): 97, 1.03s median turn time</title></circle>
   <circle class="notable" cx="644.2" cy="247.7" r="4"><title>claude-sonnet-5 (xhigh): 93, 2.53s median turn time</title></circle>
   <circle class="other" cx="528.6" cy="270.8" r="4"><title>claude-sonnet-4-6 (none): 92, 2.00s median turn time</title></circle>
   <circle class="other" cx="623.8" cy="270.8" r="4"><title>gpt-5.4 (low): 92, 2.43s median turn time</title></circle>
   <circle class="notable" cx="584.3" cy="270.8" r="4"><title>gpt-5.6-terra (xhigh): 92, 2.25s median turn time</title></circle>
   <circle class="other" cx="321.0" cy="293.9" r="4"><title>gpt-5.2 (medium): 91, 1.05s median turn time</title></circle>
   <circle class="other" cx="444.0" cy="317.0" r="4"><title>qwen3.6-27b (high): 90, 1.61s median turn time</title></circle>
-  <circle class="notable" cx="277.9" cy="340.1" r="4"><title>gemma-4-31b (thinking): 89, 0.85s median turn time</title></circle>
+  <circle class="other" cx="277.9" cy="340.1" r="4"><title>gemma-4-31b (thinking): 89, 0.85s median turn time</title></circle>
   <circle class="other" cx="563.5" cy="340.1" r="4"><title>claude-haiku-4-5-20251001 (low): 89, 2.16s median turn time</title></circle>
   <circle class="other" cx="308.2" cy="363.2" r="4"><title>nemotron-3-ultra-550b (thinking): 88, 0.99s median turn time</title></circle>
   <circle class="other" cx="330.4" cy="363.2" r="4"><title>qwen3.6-35b-a3b (high, FP8): 88, 1.09s median turn time</title></circle>
   <circle class="other" cx="417.6" cy="363.2" r="4"><title>gpt-5.6-luna (xhigh): 88, 1.49s median turn time</title></circle>
   <circle class="notable" cx="274.2" cy="363.2" r="4"><title>poolside/laguna-s-2.1 (none): 88, 0.83s median turn time</title></circle>
-  <circle class="other" cx="267.4" cy="386.3" r="4"><title>gemini-3.1-flash-lite-preview (high): 87, 0.80s median turn time</title></circle>
-  <circle class="other" cx="221.8" cy="409.4" r="4"><title>inkling (low): 86, 0.59s median turn time</title></circle>
   <circle class="other" cx="268.1" cy="409.4" r="4"><title>gpt-4.1: 86, 0.81s median turn time</title></circle>
   <circle class="other" cx="222.7" cy="455.6" r="4"><title>gemini-3.5-flash-lite (minimal): 84, 0.60s median turn time</title></circle>
   <circle class="other" cx="715.7" cy="501.8" r="4"><title>nemotron-3-super-120b (tb=512): 82, 2.85s median turn time</title></circle>
-  <circle class="frontier" cx="200.8" cy="270.8" r="5.5"><title>kimi-2.6 Cerebras (thinking): 92, 0.50s median turn time</title></circle>
-  <text class="point-label" x="213.8" y="302.8">Kimi 2.6 · thinking<tspan class="point-detail" x="213.8" dy="16">92 · 0.50s</tspan></text>
-  <circle class="frontier" cx="349.0" cy="155.3" r="5.5"><title>gemini-3.6-flash (high): 97, 1.18s median turn time</title></circle>
-  <text class="point-label" x="362.0" y="133.3">Gemini 3.6 Flash · high<tspan class="point-detail" x="362.0" dy="16">97 · 1.18s</tspan></text>
-  <text class="notable-label" x="365.2" y="193.3" text-anchor="start">GLM 5.2 · max<tspan class="point-detail" x="365.2" dy="15">97 · 1.19s</tspan></text>
-  <text class="notable-label" x="657.2" y="227.7" text-anchor="start">Claude Sonnet 5 · xhigh<tspan class="point-detail" x="657.2" dy="15">93 · 2.53s</tspan></text>
-  <text class="notable-label" x="571.3" y="301.8" text-anchor="end">GPT-5.6 Terra · xhigh<tspan class="point-detail" x="571.3" dy="15">92 · 2.25s</tspan></text>
-  <text class="notable-label" x="290.9" y="372.1" text-anchor="start">Gemma 4 31B · thinking<tspan class="point-detail" x="290.9" dy="15">89 · 0.85s</tspan></text>
-  <text class="notable-label" x="261.2" y="407.2" text-anchor="end">Laguna S 2.1 · none<tspan class="point-detail" x="261.2" dy="15">88 · 0.83s</tspan></text>
+  <line class="label-hairline" x1="213.8" y1="394.4" x2="219.2" y2="404.5"/>
+  <circle class="frontier" cx="221.8" cy="409.4" r="5.5"><title>inkling (low): 86, 0.59s median turn time</title></circle>
+  <text class="point-label" x="213.8" y="375.4" text-anchor="end">inkling (low)<tspan class="point-detail" x="213.8" dy="16">86 · 0.59s · $0.074</tspan></text>
+  <line class="label-hairline" x1="251.9" y1="274.9" x2="261.0" y2="289.2"/>
+  <circle class="frontier" cx="263.9" cy="293.9" r="5.5"><title>gemini-3.5-flash-lite (high): 91, 0.79s median turn time</title></circle>
+  <text class="point-label" x="251.9" y="255.9" text-anchor="end">Gemini 3.5 Flash Lite · high<tspan class="point-detail" x="251.9" dy="16">91 · 0.79s · $0.113</tspan></text>
+  <line class="label-hairline" x1="267.7" y1="129.3" x2="277.4" y2="150.3"/>
+  <circle class="frontier" cx="279.7" cy="155.3" r="5.5"><title>deepseek-v4-flash-0731 (low): 97, 0.86s median turn time</title></circle>
+  <text class="point-label" x="267.7" y="110.3" text-anchor="end">DeepSeek V4 Flash · low<tspan class="point-detail" x="267.7" dy="16">97 · 0.86s · $0.033</tspan></text>
+  <line class="label-hairline" x1="469.3" y1="124.1" x2="463.9" y2="114.0"/>
+  <circle class="frontier" cx="461.3" cy="109.1" r="5.5"><title>grok-4.6 (high): 99, 1.69s median turn time</title></circle>
+  <text class="point-label" x="469.3" y="137.1" text-anchor="start">Grok 4.6 · high<tspan class="point-detail" x="469.3" dy="16">99 · 1.69s · $0.406</tspan></text>
+  <line class="label-hairline" x1="346.1" y1="169.3" x2="343.0" y2="159.1"/>
+  <text class="notable-label" x="483.8" y="181.3" text-anchor="end">Gemini 3.7 Flash · high<tspan class="point-detail" x="483.8" dy="15">97 · 1.14s · $0.261</tspan></text>
+  <line class="label-hairline" x1="656.2" y1="237.7" x2="647.3" y2="245.1"/>
+  <text class="notable-label" x="656.2" y="219.7" text-anchor="start">Claude Sonnet 5 · xhigh<tspan class="point-detail" x="656.2" dy="15">93 · 2.53s · $0.384</tspan></text>
+  <line class="label-hairline" x1="577.8" y1="256.8" x2="582.6" y2="267.2"/>
+  <text class="notable-label" x="442.3" y="238.8" text-anchor="start">GPT-5.6 Terra · xhigh<tspan class="point-detail" x="442.3" dy="15">92 · 2.25s · $0.222</tspan></text>
+  <line class="label-hairline" x1="290.2" y1="405.2" x2="275.7" y2="366.9"/>
+  <text class="notable-label" x="290.2" y="417.2" text-anchor="start">Laguna S 2.1 · none<tspan class="point-detail" x="290.2" dy="15">88 · 0.83s · $0.013</tspan></text>
 </svg>
