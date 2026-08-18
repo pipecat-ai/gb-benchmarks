@@ -150,7 +150,7 @@ def render_svg(points: list[Point]) -> str:
         lines.append(
             f'  <circle class="{point_class}" cx="{x(point.turn_p50_ms):.1f}" '
             f'cy="{y(point.score):.1f}" r="4"><title>{html.escape(point.label)}: '
-            f'{point.score}, {point.turn_p50_ms / 1000:.2f}s median turn time</title></circle>'
+            f'{point.score:g}, {point.turn_p50_ms / 1000:.2f}s median turn time</title></circle>'
         )
 
     label_offsets = {
@@ -168,7 +168,7 @@ def render_svg(points: list[Point]) -> str:
         label_x = px + dx
         label = html.escape(_short_label(point.label))
         detail = (
-            f"{point.score} · {point.turn_p50_ms / 1000:.2f}s · "
+            f"{point.score:g} · {point.turn_p50_ms / 1000:.2f}s · "
             f"{_money(point.cost_per_complete)}"
         )
         geometry = _label_geometry(
@@ -187,7 +187,7 @@ def render_svg(points: list[Point]) -> str:
         lines.extend(
             [
                 _label_hairline(geometry),
-                f'  <circle class="frontier" cx="{px:.1f}" cy="{py:.1f}" r="5.5"><title>{html.escape(point.label)}: {point.score}, {point.turn_p50_ms / 1000:.2f}s median turn time</title></circle>',
+                f'  <circle class="frontier" cx="{px:.1f}" cy="{py:.1f}" r="5.5"><title>{html.escape(point.label)}: {point.score:g}, {point.turn_p50_ms / 1000:.2f}s median turn time</title></circle>',
                 f'  <text class="point-label" x="{label_x:.1f}" y="{py + dy:.1f}" text-anchor="{anchor}">{label}'
                 f'<tspan class="point-detail" x="{label_x:.1f}" dy="16">{detail}</tspan></text>',
             ]
@@ -209,7 +209,7 @@ def render_svg(points: list[Point]) -> str:
         label_x = px + dx
         label = html.escape(_short_label(point.label))
         detail = (
-            f"{point.score} · {point.turn_p50_ms / 1000:.2f}s · "
+            f"{point.score:g} · {point.turn_p50_ms / 1000:.2f}s · "
             f"{_money(point.cost_per_complete)}"
         )
         geometry = _label_geometry(
@@ -280,7 +280,7 @@ def main() -> int:
     if args.print_frontier:
         for point in time_frontier(points):
             print(
-                f"{point.label}\t{point.score}\t"
+                f"{point.label}\t{point.score:g}\t"
                 f"{point.task_complete_rate * 100:.1f}%\t{point.turn_p50_ms:.1f}ms"
             )
     return 0

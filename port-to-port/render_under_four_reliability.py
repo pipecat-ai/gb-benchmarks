@@ -21,6 +21,7 @@ class Row:
     score: int
     completion: float
     total_time_s: float
+    cost_per_turn: str
     cost: str
     provider: str
 
@@ -48,16 +49,18 @@ def load_rows(readme_path: Path) -> list[Row]:
         if not line.startswith("|"):
             break
         cells = _table_cells(line)
-        if len(cells) != 12:
+        if len(cells) not in {12, 13}:
             raise ValueError(f"unexpected README leaderboard row: {line}")
+        has_turn_cost = len(cells) == 13
         rows.append(
             Row(
                 label=cells[0],
-                score=int(cells[1]),
+                score=float(cells[1]),
                 completion=float(cells[2].rstrip("%")),
                 total_time_s=float(cells[9]),
-                cost=cells[10],
-                provider=cells[11],
+                cost_per_turn=cells[10] if has_turn_cost else "—",
+                cost=cells[11] if has_turn_cost else cells[10],
+                provider=cells[12] if has_turn_cost else cells[11],
             )
         )
     if not rows:
@@ -67,10 +70,13 @@ def load_rows(readme_path: Path) -> list[Row]:
 
 def _display_label(label: str) -> str:
     replacements = {
+        "gemini-3.7-flash (high)": "Gemini 3.7 Flash · high",
+        "grok-4.6 (high)": "Grok 4.6 · high",
+        "grok-4.6 (low)": "Grok 4.6 · low",
         "gemini-3.6-flash (high)": "Gemini 3.6 Flash · high",
         "glm-5.2 (max)": "GLM 5.2 · max",
         "claude-sonnet-5 (xhigh)": "Claude Sonnet 5 · xhigh",
-        "kimi-2.6 Cerebras (thinking)": "Kimi 2.6 Cerebras · thinking",
+        "kimi-2.6 (thinking)": "Kimi 2.6 · thinking",
         "claude-sonnet-4-6 (none)": "Claude Sonnet 4.6 · none",
         "gpt-5.4 (low)": "GPT-5.4 · low",
         "gpt-5.6-terra (xhigh)": "GPT-5.6 Terra · xhigh",
@@ -82,7 +88,9 @@ def _display_label(label: str) -> str:
         "qwen3.6-35b-a3b (high, FP8)": "Qwen 3.6 35B-A3B · high, FP8",
         "gpt-5.6-luna (xhigh)": "GPT-5.6 Luna · xhigh",
         "poolside/laguna-s-2.1 (none)": "Laguna S 2.1 · none",
-        "gemini-3.1-flash-lite-preview (high)": "Gemini 3.1 Flash Lite · high",
+        "qwen3.8-27b (low, NVFP4)": "Qwen 3.8 27B · low, NVFP4",
+        "qwen3.8-27b (xhigh, FP8)": "Qwen 3.8 27B · xhigh, FP8",
+        "gemini-3.5-flash-lite (high)": "Gemini 3.5 Flash Lite · high",
         "muse-glimmer-30b (high, GGUF)": "Muse Glimmer 30B · high, GGUF",
         "inkling (low)": "Inkling · low",
         "gpt-4.1": "GPT-4.1",
@@ -96,7 +104,7 @@ def _metadata(row: Row) -> str:
     seconds = f"{row.total_time_s:.0f}s total"
     if row.cost == "—":
         return f"{seconds} · no API price · {row.provider}"
-    return f"{seconds} · {row.cost} / complete · {row.provider}"
+    return f"{seconds} · {row.cost} / completion · {row.provider}"
 
 
 def render_svg(rows: list[Row]) -> str:
@@ -119,8 +127,8 @@ def render_svg(rows: list[Row]) -> str:
     lines = [
         '<?xml version="1.0" encoding="UTF-8"?>',
         f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {width} {height}" role="img" aria-labelledby="title desc">',
-        '  <title id="title">Port-to-port score and completion reliability</title>',
-        '  <desc id="desc">A ranked dot plot of the best under-four-second configuration for each model. Dots show median primary score from 60 to 100. Hairline tails on three models show their incomplete task share.</desc>',
+        '  <title id="title">Port-to-port benchmark: rankings</title>',
+        '  <desc id="desc">A ranked dot plot of the best under-four-second configuration for each model. Dots show median primary score from 60 to 100. Hairline tails show incomplete task share for configurations below 100 percent completion.</desc>',
         "  <style>",
         "    text { fill: #282522; font-family: ui-sans-serif, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; font-variant-numeric: tabular-nums; }",
         "    .title, .model { font-family: Georgia, 'Times New Roman', serif; }",
@@ -139,7 +147,7 @@ def render_svg(rows: list[Row]) -> str:
         "    .score { fill: #292623; font-size: 12px; font-weight: 600; }",
         "    .note { fill: #77716b; font-family: Georgia, 'Times New Roman', serif; font-size: 11.5px; font-style: italic; }",
         "  </style>",
-        f'  <text class="title" x="{left}" y="{title_y}">Port-to-port: score and completion reliability</text>',
+        f'  <text class="title" x="{left}" y="{title_y}">Port-to-port benchmark: rankings</text>',
         f'  <text class="subtitle" x="{left}" y="{subtitle_y}">Best configuration per model · turn P50 under four seconds · higher is better</text>',
         f'  <text class="axis-label" x="{plot_right}" y="{axis_y - 22}" text-anchor="end">Median primary score</text>',
     ]
@@ -160,8 +168,9 @@ def render_svg(rows: list[Row]) -> str:
         label = html.escape(_display_label(row.label))
         metadata = html.escape(_metadata(row))
         details = html.escape(
-            f"{row.label}: score {row.score}; {row.completion:.0f}% task completion; "
-            f"{row.total_time_s:.2f} seconds total; {row.cost} per complete; {row.provider}"
+            f"{row.label}: score {row.score:g}; {row.completion:.0f}% task completion; "
+            f"{row.total_time_s:.2f} seconds total; {row.cost} per completion; "
+            f"{row.provider}"
         )
         lines.extend(
             [
@@ -187,7 +196,7 @@ def render_svg(rows: list[Row]) -> str:
         lines.extend(
             [
                 f'  <circle class="dot" cx="{px:.1f}" cy="{py}" r="4.5"><title>{details}</title></circle>',
-                f'  <text class="score" x="{score_x:.1f}" y="{py + 4}" text-anchor="{score_anchor}">{row.score}</text>',
+                f'  <text class="score" x="{score_x:.1f}" y="{py + 4}" text-anchor="{score_anchor}">{row.score:g}</text>',
             ]
         )
 

@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 1439" role="img" aria-labelledby="title desc">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 1487" role="img" aria-labelledby="title desc">
   <title id="title">Port-to-port benchmark: rankings</title>
   <desc id="desc">A ranked dot plot of the best under-four-second configuration for each model. Dots show median primary score from 60 to 100. Hairline tails show incomplete task share for configurations below 100 percent completion.</desc>
   <style>
@@ -23,15 +23,15 @@
   <text class="title" x="38" y="38">Port-to-port benchmark: rankings</text>
   <text class="subtitle" x="38" y="64">Best configuration per model · turn P50 under four seconds · higher is better</text>
   <text class="axis-label" x="1166" y="80" text-anchor="end">Median primary score</text>
-  <line class="guide edge" x1="430.0" y1="102" x2="430.0" y2="1357"/>
+  <line class="guide edge" x1="430.0" y1="102" x2="430.0" y2="1405"/>
   <text class="tick" x="430.0" y="95" text-anchor="middle">60</text>
-  <line class="guide" x1="614.0" y1="102" x2="614.0" y2="1357"/>
+  <line class="guide" x1="614.0" y1="102" x2="614.0" y2="1405"/>
   <text class="tick" x="614.0" y="95" text-anchor="middle">70</text>
-  <line class="guide" x1="798.0" y1="102" x2="798.0" y2="1357"/>
+  <line class="guide" x1="798.0" y1="102" x2="798.0" y2="1405"/>
   <text class="tick" x="798.0" y="95" text-anchor="middle">80</text>
-  <line class="guide" x1="982.0" y1="102" x2="982.0" y2="1357"/>
+  <line class="guide" x1="982.0" y1="102" x2="982.0" y2="1405"/>
   <text class="tick" x="982.0" y="95" text-anchor="middle">90</text>
-  <line class="guide edge" x1="1166.0" y1="102" x2="1166.0" y2="1357"/>
+  <line class="guide edge" x1="1166.0" y1="102" x2="1166.0" y2="1405"/>
   <text class="tick" x="1166.0" y="95" text-anchor="middle">100</text>
   <text class="model" x="38" y="137">Grok 4.6 · high</text>
   <text class="meta" x="38" y="154">156s total · $0.406 / completion · xAI</text>
@@ -68,89 +68,96 @@
   <text class="meta" x="38" y="490">247s total · $0.384 / completion · Anthropic</text>
   <circle class="dot" cx="1037.2" cy="476" r="4.5"><title>claude-sonnet-5 (xhigh): score 93; 100% task completion; 246.87 seconds total; $0.384 per completion; Anthropic</title></circle>
   <text class="score" x="1048.2" y="480" text-anchor="start">93</text>
-  <text class="model" x="38" y="521">Claude Sonnet 4.6 · none</text>
-  <text class="meta" x="38" y="538">126s total · $0.281 / completion · Anthropic</text>
-  <circle class="dot" cx="1018.8" cy="524" r="4.5"><title>claude-sonnet-4-6 (none): score 92; 100% task completion; 125.53 seconds total; $0.281 per completion; Anthropic</title></circle>
-  <text class="score" x="1029.8" y="528" text-anchor="start">92</text>
-  <text class="model" x="38" y="569">GPT-5.4 · low</text>
-  <text class="meta" x="38" y="586">136s total · $0.256 / completion · OpenAI</text>
-  <circle class="dot" cx="1018.8" cy="572" r="4.5"><title>gpt-5.4 (low): score 92; 100% task completion; 136.22 seconds total; $0.256 per completion; OpenAI</title></circle>
+  <text class="model" x="38" y="521">Qwen 3.8 27B · xhigh, FP8</text>
+  <text class="meta" x="38" y="538">227s total · no API price · Baseten (dedicated)</text>
+  <line class="tail" x1="880.8" y1="524" x2="1023.0" y2="524"/>
+  <line class="tail-cap" x1="880.8" y1="520.5" x2="880.8" y2="527.5"/>
+  <text class="completion" x="873.8" y="528.0" text-anchor="end">92% complete</text>
+  <circle class="dot" cx="1028.0" cy="524" r="4.5"><title>qwen3.8-27b (xhigh, FP8): score 92.5; 92% task completion; 227.13 seconds total; — per completion; Baseten (dedicated)</title></circle>
+  <text class="score" x="1039.0" y="528" text-anchor="start">92.5</text>
+  <text class="model" x="38" y="569">Claude Sonnet 4.6 · none</text>
+  <text class="meta" x="38" y="586">126s total · $0.281 / completion · Anthropic</text>
+  <circle class="dot" cx="1018.8" cy="572" r="4.5"><title>claude-sonnet-4-6 (none): score 92; 100% task completion; 125.53 seconds total; $0.281 per completion; Anthropic</title></circle>
   <text class="score" x="1029.8" y="576" text-anchor="start">92</text>
-  <text class="model" x="38" y="617">GPT-5.6 Terra · xhigh</text>
-  <text class="meta" x="38" y="634">137s total · $0.222 / completion · OpenAI</text>
-  <circle class="dot" cx="1018.8" cy="620" r="4.5"><title>gpt-5.6-terra (xhigh): score 92; 100% task completion; 136.56 seconds total; $0.222 per completion; OpenAI</title></circle>
+  <text class="model" x="38" y="617">GPT-5.4 · low</text>
+  <text class="meta" x="38" y="634">136s total · $0.256 / completion · OpenAI</text>
+  <circle class="dot" cx="1018.8" cy="620" r="4.5"><title>gpt-5.4 (low): score 92; 100% task completion; 136.22 seconds total; $0.256 per completion; OpenAI</title></circle>
   <text class="score" x="1029.8" y="624" text-anchor="start">92</text>
-  <text class="model" x="38" y="665">Gemini 3.5 Flash Lite · high</text>
-  <text class="meta" x="38" y="682">72s total · $0.113 / completion · AI Studio</text>
-  <circle class="dot" cx="1000.4" cy="668" r="4.5"><title>gemini-3.5-flash-lite (high): score 91; 100% task completion; 71.85 seconds total; $0.113 per completion; AI Studio</title></circle>
-  <text class="score" x="1011.4" y="672" text-anchor="start">91</text>
-  <text class="model" x="38" y="713">GPT-5.2 · medium</text>
-  <text class="meta" x="38" y="730">150s total · $0.171 / completion · OpenAI</text>
-  <circle class="dot" cx="1000.4" cy="716" r="4.5"><title>gpt-5.2 (medium): score 91; 100% task completion; 149.98 seconds total; $0.171 per completion; OpenAI</title></circle>
+  <text class="model" x="38" y="665">GPT-5.6 Terra · xhigh</text>
+  <text class="meta" x="38" y="682">137s total · $0.222 / completion · OpenAI</text>
+  <circle class="dot" cx="1018.8" cy="668" r="4.5"><title>gpt-5.6-terra (xhigh): score 92; 100% task completion; 136.56 seconds total; $0.222 per completion; OpenAI</title></circle>
+  <text class="score" x="1029.8" y="672" text-anchor="start">92</text>
+  <text class="model" x="38" y="713">Gemini 3.5 Flash Lite · high</text>
+  <text class="meta" x="38" y="730">72s total · $0.113 / completion · AI Studio</text>
+  <circle class="dot" cx="1000.4" cy="716" r="4.5"><title>gemini-3.5-flash-lite (high): score 91; 100% task completion; 71.85 seconds total; $0.113 per completion; AI Studio</title></circle>
   <text class="score" x="1011.4" y="720" text-anchor="start">91</text>
-  <text class="model" x="38" y="761">Qwen 3.6 27B · high</text>
-  <text class="meta" x="38" y="778">145s total · $0.194 / completion · OpenRouter</text>
-  <circle class="dot" cx="982.0" cy="764" r="4.5"><title>qwen3.6-27b (high): score 90; 100% task completion; 144.80 seconds total; $0.194 per completion; OpenRouter</title></circle>
-  <text class="score" x="993.0" y="768" text-anchor="start">90</text>
-  <text class="model" x="38" y="809">Gemma 4 31B · thinking</text>
-  <text class="meta" x="38" y="826">60s total · $0.051 / completion · AWS Bedrock</text>
-  <circle class="dot" cx="963.6" cy="812" r="4.5"><title>gemma-4-31b (thinking): score 89; 100% task completion; 60.43 seconds total; $0.051 per completion; AWS Bedrock</title></circle>
-  <text class="score" x="974.6" y="816" text-anchor="start">89</text>
-  <text class="model" x="38" y="857">Claude Haiku 4.5 · low</text>
-  <text class="meta" x="38" y="874">125s total · $0.116 / completion · Anthropic</text>
-  <circle class="dot" cx="963.6" cy="860" r="4.5"><title>claude-haiku-4-5-20251001 (low): score 89; 100% task completion; 125.41 seconds total; $0.116 per completion; Anthropic</title></circle>
+  <text class="model" x="38" y="761">GPT-5.2 · medium</text>
+  <text class="meta" x="38" y="778">150s total · $0.171 / completion · OpenAI</text>
+  <circle class="dot" cx="1000.4" cy="764" r="4.5"><title>gpt-5.2 (medium): score 91; 100% task completion; 149.98 seconds total; $0.171 per completion; OpenAI</title></circle>
+  <text class="score" x="1011.4" y="768" text-anchor="start">91</text>
+  <text class="model" x="38" y="809">Qwen 3.6 27B · high</text>
+  <text class="meta" x="38" y="826">145s total · $0.194 / completion · OpenRouter</text>
+  <circle class="dot" cx="982.0" cy="812" r="4.5"><title>qwen3.6-27b (high): score 90; 100% task completion; 144.80 seconds total; $0.194 per completion; OpenRouter</title></circle>
+  <text class="score" x="993.0" y="816" text-anchor="start">90</text>
+  <text class="model" x="38" y="857">Gemma 4 31B · thinking</text>
+  <text class="meta" x="38" y="874">60s total · $0.051 / completion · AWS Bedrock</text>
+  <circle class="dot" cx="963.6" cy="860" r="4.5"><title>gemma-4-31b (thinking): score 89; 100% task completion; 60.43 seconds total; $0.051 per completion; AWS Bedrock</title></circle>
   <text class="score" x="974.6" y="864" text-anchor="start">89</text>
-  <text class="model" x="38" y="905">Nemotron 3 Ultra 550B · thinking</text>
-  <text class="meta" x="38" y="922">81s total · $0.299 / completion · Baseten</text>
-  <circle class="dot" cx="945.2" cy="908" r="4.5"><title>nemotron-3-ultra-550b (thinking): score 88; 100% task completion; 81.03 seconds total; $0.299 per completion; Baseten</title></circle>
-  <text class="score" x="956.2" y="912" text-anchor="start">88</text>
-  <text class="model" x="38" y="953">Qwen 3.6 35B-A3B · high, FP8</text>
-  <text class="meta" x="38" y="970">101s total · $0.097 / completion · OpenRouter</text>
-  <circle class="dot" cx="945.2" cy="956" r="4.5"><title>qwen3.6-35b-a3b (high, FP8): score 88; 100% task completion; 101.04 seconds total; $0.097 per completion; OpenRouter</title></circle>
+  <text class="model" x="38" y="905">Claude Haiku 4.5 · low</text>
+  <text class="meta" x="38" y="922">125s total · $0.116 / completion · Anthropic</text>
+  <circle class="dot" cx="963.6" cy="908" r="4.5"><title>claude-haiku-4-5-20251001 (low): score 89; 100% task completion; 125.41 seconds total; $0.116 per completion; Anthropic</title></circle>
+  <text class="score" x="974.6" y="912" text-anchor="start">89</text>
+  <text class="model" x="38" y="953">Nemotron 3 Ultra 550B · thinking</text>
+  <text class="meta" x="38" y="970">81s total · $0.299 / completion · Baseten</text>
+  <circle class="dot" cx="945.2" cy="956" r="4.5"><title>nemotron-3-ultra-550b (thinking): score 88; 100% task completion; 81.03 seconds total; $0.299 per completion; Baseten</title></circle>
   <text class="score" x="956.2" y="960" text-anchor="start">88</text>
-  <text class="model" x="38" y="1001">GPT-5.6 Luna · xhigh</text>
-  <text class="meta" x="38" y="1018">125s total · $0.111 / completion · OpenAI</text>
-  <line class="tail" x1="871.6" y1="1004" x2="940.2" y2="1004"/>
-  <line class="tail-cap" x1="871.6" y1="1000.5" x2="871.6" y2="1007.5"/>
-  <text class="completion" x="864.6" y="1008.0" text-anchor="end">96% complete</text>
-  <circle class="dot" cx="945.2" cy="1004" r="4.5"><title>gpt-5.6-luna (xhigh): score 88; 96% task completion; 125.40 seconds total; $0.111 per completion; OpenAI</title></circle>
+  <text class="model" x="38" y="1001">Qwen 3.6 35B-A3B · high, FP8</text>
+  <text class="meta" x="38" y="1018">101s total · $0.097 / completion · OpenRouter</text>
+  <circle class="dot" cx="945.2" cy="1004" r="4.5"><title>qwen3.6-35b-a3b (high, FP8): score 88; 100% task completion; 101.04 seconds total; $0.097 per completion; OpenRouter</title></circle>
   <text class="score" x="956.2" y="1008" text-anchor="start">88</text>
-  <text class="model" x="38" y="1049">Laguna S 2.1 · none</text>
-  <text class="meta" x="38" y="1066">93s total · $0.013 / completion · OpenRouter</text>
-  <line class="tail" x1="650.8" y1="1052" x2="940.2" y2="1052"/>
-  <line class="tail-cap" x1="650.8" y1="1048.5" x2="650.8" y2="1055.5"/>
-  <text class="completion" x="643.8" y="1056.0" text-anchor="end">84% complete</text>
-  <circle class="dot" cx="945.2" cy="1052" r="4.5"><title>poolside/laguna-s-2.1 (none): score 88; 84% task completion; 93.44 seconds total; $0.013 per completion; OpenRouter</title></circle>
+  <text class="model" x="38" y="1049">GPT-5.6 Luna · xhigh</text>
+  <text class="meta" x="38" y="1066">125s total · $0.111 / completion · OpenAI</text>
+  <line class="tail" x1="871.6" y1="1052" x2="940.2" y2="1052"/>
+  <line class="tail-cap" x1="871.6" y1="1048.5" x2="871.6" y2="1055.5"/>
+  <text class="completion" x="864.6" y="1056.0" text-anchor="end">96% complete</text>
+  <circle class="dot" cx="945.2" cy="1052" r="4.5"><title>gpt-5.6-luna (xhigh): score 88; 96% task completion; 125.40 seconds total; $0.111 per completion; OpenAI</title></circle>
   <text class="score" x="956.2" y="1056" text-anchor="start">88</text>
-  <text class="model" x="38" y="1097">Qwen 3.8 27B · low, NVFP4</text>
-  <text class="meta" x="38" y="1114">371s total · no API price · Local RTX 5090</text>
-  <line class="tail" x1="430.0" y1="1100" x2="940.2" y2="1100"/>
-  <line class="tail-cap" x1="430.0" y1="1096.5" x2="430.0" y2="1103.5"/>
-  <text class="completion" x="423.0" y="1104.0" text-anchor="end">68% complete</text>
-  <circle class="dot" cx="945.2" cy="1100" r="4.5"><title>qwen3.8-27b (low, NVFP4): score 88; 68% task completion; 371.18 seconds total; — per completion; Local RTX 5090</title></circle>
+  <text class="model" x="38" y="1097">Laguna S 2.1 · none</text>
+  <text class="meta" x="38" y="1114">93s total · $0.013 / completion · OpenRouter</text>
+  <line class="tail" x1="650.8" y1="1100" x2="940.2" y2="1100"/>
+  <line class="tail-cap" x1="650.8" y1="1096.5" x2="650.8" y2="1103.5"/>
+  <text class="completion" x="643.8" y="1104.0" text-anchor="end">84% complete</text>
+  <circle class="dot" cx="945.2" cy="1100" r="4.5"><title>poolside/laguna-s-2.1 (none): score 88; 84% task completion; 93.44 seconds total; $0.013 per completion; OpenRouter</title></circle>
   <text class="score" x="956.2" y="1104" text-anchor="start">88</text>
-  <text class="model" x="38" y="1145">Muse Glimmer 30B · high, GGUF</text>
-  <text class="meta" x="38" y="1162">166s total · no API price · Local RTX 5090</text>
-  <line class="tail" x1="779.6" y1="1148" x2="921.8" y2="1148"/>
-  <line class="tail-cap" x1="779.6" y1="1144.5" x2="779.6" y2="1151.5"/>
-  <text class="completion" x="772.6" y="1152.0" text-anchor="end">92% complete</text>
-  <circle class="dot" cx="926.8" cy="1148" r="4.5"><title>muse-glimmer-30b (high, GGUF): score 87; 92% task completion; 166.07 seconds total; — per completion; Local RTX 5090</title></circle>
-  <text class="score" x="937.8" y="1152" text-anchor="start">87</text>
-  <text class="model" x="38" y="1193">Inkling · low</text>
-  <text class="meta" x="38" y="1210">57s total · $0.074 / completion · Baseten</text>
-  <circle class="dot" cx="908.4" cy="1196" r="4.5"><title>inkling (low): score 86; 100% task completion; 57.16 seconds total; $0.074 per completion; Baseten</title></circle>
-  <text class="score" x="919.4" y="1200" text-anchor="start">86</text>
-  <text class="model" x="38" y="1241">GPT-4.1</text>
-  <text class="meta" x="38" y="1258">61s total · $0.210 / completion · OpenAI</text>
-  <circle class="dot" cx="908.4" cy="1244" r="4.5"><title>gpt-4.1: score 86; 100% task completion; 61.33 seconds total; $0.210 per completion; OpenAI</title></circle>
+  <text class="model" x="38" y="1145">Qwen 3.8 27B · low, NVFP4</text>
+  <text class="meta" x="38" y="1162">371s total · no API price · Local RTX 5090</text>
+  <line class="tail" x1="430.0" y1="1148" x2="940.2" y2="1148"/>
+  <line class="tail-cap" x1="430.0" y1="1144.5" x2="430.0" y2="1151.5"/>
+  <text class="completion" x="423.0" y="1152.0" text-anchor="end">68% complete</text>
+  <circle class="dot" cx="945.2" cy="1148" r="4.5"><title>qwen3.8-27b (low, NVFP4): score 88; 68% task completion; 371.18 seconds total; — per completion; Local RTX 5090</title></circle>
+  <text class="score" x="956.2" y="1152" text-anchor="start">88</text>
+  <text class="model" x="38" y="1193">Muse Glimmer 30B · high, GGUF</text>
+  <text class="meta" x="38" y="1210">166s total · no API price · Local RTX 5090</text>
+  <line class="tail" x1="779.6" y1="1196" x2="921.8" y2="1196"/>
+  <line class="tail-cap" x1="779.6" y1="1192.5" x2="779.6" y2="1199.5"/>
+  <text class="completion" x="772.6" y="1200.0" text-anchor="end">92% complete</text>
+  <circle class="dot" cx="926.8" cy="1196" r="4.5"><title>muse-glimmer-30b (high, GGUF): score 87; 92% task completion; 166.07 seconds total; — per completion; Local RTX 5090</title></circle>
+  <text class="score" x="937.8" y="1200" text-anchor="start">87</text>
+  <text class="model" x="38" y="1241">Inkling · low</text>
+  <text class="meta" x="38" y="1258">57s total · $0.074 / completion · Baseten</text>
+  <circle class="dot" cx="908.4" cy="1244" r="4.5"><title>inkling (low): score 86; 100% task completion; 57.16 seconds total; $0.074 per completion; Baseten</title></circle>
   <text class="score" x="919.4" y="1248" text-anchor="start">86</text>
-  <text class="model" x="38" y="1289">Gemini 3.5 Flash Lite · minimal</text>
-  <text class="meta" x="38" y="1306">50s total · $0.104 / completion · AI Studio</text>
-  <circle class="dot" cx="871.6" cy="1292" r="4.5"><title>gemini-3.5-flash-lite (minimal): score 84; 100% task completion; 49.87 seconds total; $0.104 per completion; AI Studio</title></circle>
-  <text class="score" x="882.6" y="1296" text-anchor="start">84</text>
-  <text class="model" x="38" y="1337">Nemotron 3 Super 120B · tb=512</text>
-  <text class="meta" x="38" y="1354">109s total · $0.044 / completion · OpenRouter</text>
-  <circle class="dot" cx="834.8" cy="1340" r="4.5"><title>nemotron-3-super-120b (tb=512): score 82; 100% task completion; 109.38 seconds total; $0.044 per completion; OpenRouter</title></circle>
-  <text class="score" x="845.8" y="1344" text-anchor="start">82</text>
-  <text class="note" x="38" y="1397">Dot = median primary score. Tail length = unfinished share (100% − completion), on the same percentage-point scale.</text>
+  <text class="model" x="38" y="1289">GPT-4.1</text>
+  <text class="meta" x="38" y="1306">61s total · $0.210 / completion · OpenAI</text>
+  <circle class="dot" cx="908.4" cy="1292" r="4.5"><title>gpt-4.1: score 86; 100% task completion; 61.33 seconds total; $0.210 per completion; OpenAI</title></circle>
+  <text class="score" x="919.4" y="1296" text-anchor="start">86</text>
+  <text class="model" x="38" y="1337">Gemini 3.5 Flash Lite · minimal</text>
+  <text class="meta" x="38" y="1354">50s total · $0.104 / completion · AI Studio</text>
+  <circle class="dot" cx="871.6" cy="1340" r="4.5"><title>gemini-3.5-flash-lite (minimal): score 84; 100% task completion; 49.87 seconds total; $0.104 per completion; AI Studio</title></circle>
+  <text class="score" x="882.6" y="1344" text-anchor="start">84</text>
+  <text class="model" x="38" y="1385">Nemotron 3 Super 120B · tb=512</text>
+  <text class="meta" x="38" y="1402">109s total · $0.044 / completion · OpenRouter</text>
+  <circle class="dot" cx="834.8" cy="1388" r="4.5"><title>nemotron-3-super-120b (tb=512): score 82; 100% task completion; 109.38 seconds total; $0.044 per completion; OpenRouter</title></circle>
+  <text class="score" x="845.8" y="1392" text-anchor="start">82</text>
+  <text class="note" x="38" y="1445">Dot = median primary score. Tail length = unfinished share (100% − completion), on the same percentage-point scale.</text>
 </svg>
