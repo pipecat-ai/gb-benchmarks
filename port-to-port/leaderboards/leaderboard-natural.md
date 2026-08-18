@@ -8,6 +8,14 @@
 - Enriched scores: `runs/leaderboard-natural-v2-linked-refresh-qwen36-27b-35b-inkling-small-20260731.jsonl`, `runs/muse-glimmer-30b-natural-high-card-nomax-dflash15-n25-20260810T213830Z/eval/enriched_runs.jsonl`, `runs/eval-nemotron-3.5-lightning-natural-*-sglang-20260811T223912Z/enriched_runs.jsonl`, `runs/eval-nemotron3-nano-native-prod-20260812T192200Z/enriched_runs.jsonl`, `runs/deepseek-v4-baseten-full3-20260818T044040Z/{eval-flash-low,eval-flash-high,eval-pro0813-low}/enriched_runs.jsonl`, `runs/gemini37-flash-production-20260813T194708Z/publication/enriched_runs.jsonl`, `runs/eval-grok-4.6-xai-{low,high}-production-*/enriched_runs.jsonl`, `runs/gemini35-flash-lite-replacement-20260814T153547Z/production-high/eval/enriched_runs.jsonl`, and `runs/eval-qwen38-local-sglang-max12-production-r2-gb-{low,xhigh}-v1/enriched_runs.jsonl`
 - Sort: Primary /100 desc, Task Complete % desc, Total Time P50 (s) asc
 
+Gemini 3.7 Flash uses the exact Google AI Studio model ID and native `thinking_level`; this model supports `low`, `medium`, and `high` but not `minimal`. The high and medium rows are independent 25-run cohorts with no output-token cap or sampling override. Pricing is not part of this score table; see the companion cost leaderboard for Google’s introductory rate through December 31, 2026.
+
+Gemini 3.5 Flash-Lite uses Google's stable `gemini-3.5-flash-lite` model ID and native `thinking_level`, with no output-token cap or sampling override. A judged five-run sweep selected high over medium (92 versus 89, both 100% complete); the independent N=25 high cohort scored 91 with 100% task completion. The retired `gemini-3.1-flash-lite-preview` rows have been removed.
+
+Kimi K2.6 uses Baseten's public Model API with the exact `moonshotai/Kimi-K2.6` slug and binary native thinking. Thinking used the model-card sampling values `temperature=1.0` and `top_p=0.95`; instant mode used `temperature=0.6` and `top_p=0.95`. Both rows are independent 25-run cohorts with no output-token cap. One run in each cohort exhausted the benchmark's 50-turn limit and was retained and judged. Pricing is not part of this score table; see the companion cost leaderboard for the measured Baseten token cost.
+
+Grok 4.6 uses xAI's exact `grok-4.6` model ID and native `reasoning.effort` through the Responses API. Requests used stateful `previous_response_id` chaining, one stable `prompt_cache_key` per conversation, no sampling override, and no output-token cap. Independent N=25 cohorts scored 99 at high and 92 at low, both with 100% task completion. Pricing is not part of this score table; see the companion cost leaderboard for xAI's measured token cost.
+
 The local Nemotron rows used official NVIDIA NVFP4 checkpoints on one RTX 5090 with SGLang and binary native thinking, without a thinking-token budget. Nano used a 262,144-token context, `max_tokens=10000`, model-card tool sampling (`temperature=0.6`, `top_p=0.95`) when thinking was on, greedy decoding when off, and a cache flush between conversations. Lightning used `temperature=1.0`, `top_p=0.95`, no output-token ceiling, and did not flush between conversations, so its latency regime is not identical to Nano's.
 
 DeepSeek V4 Flash 0731 and V4 Pro 0813 were independent judged N=25 cohorts through Baseten's Model API, with native `reasoning_effort`, temperature 1.0, model-default top-p, and `max_tokens=8192`. Flash low and Pro low each scored 97 with 100% completion; Flash high scored 95 with 100% completion.
@@ -51,6 +59,7 @@ The local Qwen 3.8 rows used the community Unsloth `Qwen3.8-27B-NVFP4` checkpoin
 | claude-haiku-4-5-20251001 (th=low) | 25 | 89 | 100.0% | 4.3 | 14.1 | 14.4 | 14.8 | 2157.9 | 6863.1 | 125.41 |
 | claude-sonnet-5 (th=none) | 25 | 89 | 100.0% | 6.1 | 14.0 | 14.6 | 15.0 | 2543.8 | 10036.0 | 189.48 |
 | qwen3.5-27b (th=high, mt=4096, base=daily--qwen35-sglang-serve-27b.modal.run) | 25 | 89 | 100.0% | 5.4 | 14.3 | 14.8 | 15.0 | 4281.0 | 11008.7 | 200.22 |
+| moonshotai/Kimi-K2.6 (th=none, base=inference.baseten.co) | 25 | 89 | 96.0% | 5.8 | 14.1 | 14.3 | 13.5 | 604.8 | 1466.8 | 67.63 |
 | nemotron-3-ultra-550b (th=high, mt=8192, base=inference.baseten.co) | 25 | 88 | 100.0% | 4.6 | 13.2 | 14.9 | 14.0 | 989.3 | 2817.5 | 81.03 |
 | Qwen/Qwen3.6-35B-A3B-FP8 (th=high, mt=4096, base=model-qzkm8mpq.api.baseten.co/deployment/qe20zvr/sync) | 25 | 88 | 100.0% | 5.3 | 13.6 | 13.4 | 15.0 | 1091.1 | 4003.3 | 101.04 |
 | gpt-5.1 (th=low) | 25 | 88 | 100.0% | 4.2 | 15.0 | 14.8 | 14.4 | 1798.2 | 12660.8 | 162.69 |
