@@ -17,13 +17,13 @@ SPEC.loader.exec_module(chart)
 class UnderFourReliabilityTests(unittest.TestCase):
     def test_current_readme_renders_every_curated_row(self):
         rows = chart.load_rows(chart.DEFAULT_README)
-        self.assertEqual(len(rows), 26)
+        self.assertEqual(len(rows), 27)
         self.assertEqual(rows[0].label, "grok-4.6 (high)")
         self.assertEqual(rows[-1].label, "nemotron-3-super-120b (tb=512)")
 
     def test_completion_tails_are_sparse_and_directly_labeled(self):
         svg = chart.render_svg(chart.load_rows(chart.DEFAULT_README))
-        self.assertEqual(svg.count('class="tail"'), 5)
+        self.assertEqual(svg.count('class="tail"'), 6)
         self.assertIn(">96% complete</text>", svg)
         self.assertIn(">84% complete</text>", svg)
         self.assertIn(">92% complete</text>", svg)
