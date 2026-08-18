@@ -1,9 +1,37 @@
 {
   "schema_version": "leaderboard_cost_manifest.v1",
-  "pricing": "costs/pricing-2026-07-28.json",
+  "pricing": "costs/pricing-2026-08-13.json",
   "canonical_history": "runs/leaderboard-natural-v2-linked-qwen36-27b-35b-20260728/*.json",
   "sample_batch": "20260722T113400Z",
   "rows": [
+    {
+      "label": "grok-4.6 (high)",
+      "method": "token_history",
+      "rate": "xai-grok-4-6",
+      "task_complete_rate": 1.0,
+      "source_glob": "runs/grok-4.6-xai-high-production-20260814T032330Z/*.json"
+    },
+    {
+      "label": "grok-4.6 (low)",
+      "method": "token_history",
+      "rate": "xai-grok-4-6",
+      "task_complete_rate": 1.0,
+      "source_glob": "runs/grok-4.6-xai-low-production-20260814T024000Z/*.json"
+    },
+    {
+      "label": "gemini-3.7-flash (high)",
+      "method": "token_history",
+      "rate": "google-gemini-3-7-flash-intro",
+      "task_complete_rate": 1.0,
+      "source_tsv": "runs/gemini37-flash-production-20260813T194708Z/high/results.tsv"
+    },
+    {
+      "label": "gemini-3.7-flash (medium)",
+      "method": "token_history",
+      "rate": "google-gemini-3-7-flash-intro",
+      "task_complete_rate": 1.0,
+      "source_tsv": "runs/gemini37-flash-production-20260813T194708Z/medium/results.tsv"
+    },
     {
       "label": "gemini-3.6-flash (high)",
       "method": "token_history",
@@ -33,11 +61,32 @@
       "selector": {"model": "claude-sonnet-5", "thinking": "xhigh"}
     },
     {
-      "label": "kimi-2.6 Cerebras (thinking)",
-      "method": "token_history_proxy",
-      "rate": "baseten-kimi-k2-6-proxy",
+      "label": "kimi-2.6 (thinking)",
+      "method": "token_history",
+      "rate": "baseten-kimi-k2-6",
+      "task_complete_rate": 0.96,
+      "source_glob": "runs/kimi-k2.6-baseten-modelcard-production-20260814T001733Z/high/*.json"
+    },
+    {
+      "label": "deepseek-v4-flash-0731 (low)",
+      "method": "token_history",
+      "rate": "baseten-deepseek-v4-flash-0731",
       "task_complete_rate": 1.0,
-      "source_tsv": "runs/kimi-k26-cerebras-sweep-20260525T224514Z/thinking/results.tsv"
+      "source_glob": "runs/deepseek-v4-baseten-full3-20260818T044040Z/flash-low/*.json"
+    },
+    {
+      "label": "deepseek-v4-flash-0731 (high)",
+      "method": "token_history",
+      "rate": "baseten-deepseek-v4-flash-0731",
+      "task_complete_rate": 1.0,
+      "source_glob": "runs/deepseek-v4-baseten-full3-20260818T044040Z/flash-high/*.json"
+    },
+    {
+      "label": "deepseek-v4-pro-0813 (low)",
+      "method": "token_history",
+      "rate": "baseten-deepseek-v4-pro-0813",
+      "task_complete_rate": 1.0,
+      "source_glob": "runs/deepseek-v4-baseten-full3-20260818T044040Z/pro0813-low/*.json"
     },
     {
       "label": "claude-sonnet-4-6 (none)",
@@ -136,11 +185,11 @@
       "selector": {"model": "poolside/laguna-s-2.1", "thinking": "none", "max_tokens": 4096, "openai_base_url": "https://openrouter.ai/api/v1"}
     },
     {
-      "label": "gemini-3.1-flash-lite-preview (high)",
+      "label": "gemini-3.5-flash-lite (high)",
       "method": "token_history",
-      "rate": "google-gemini-3-1-flash-lite",
+      "rate": "google-gemini-3-5-flash-lite",
       "task_complete_rate": 1.0,
-      "selector": {"model": "gemini-3.1-flash-lite-preview", "thinking": "high"}
+      "source_tsv": "runs/gemini35-flash-lite-replacement-20260814T153547Z/production-high/results.tsv"
     },
     {
       "label": "inkling (low)",

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Render the README score/turn-time frontier chart."""
+"""Render the README score/turn-completion-time frontier chart."""
 
 from __future__ import annotations
 
@@ -11,7 +11,12 @@ from pathlib import Path
 from render_readme_pareto import (
     DEFAULT_COSTS,
     DEFAULT_README,
+    LabelGeometry,
     Point,
+    _label_geometry,
+    _label_hairline,
+    _money,
+    _validate_label_layout,
     load_points,
     pareto_frontier,
 )
@@ -35,10 +40,15 @@ def time_frontier(points: list[Point]) -> list[Point]:
 
 def _short_label(label: str) -> str:
     replacements = {
+        "gemini-3.5-flash-lite (high)": "Gemini 3.5 Flash Lite · high",
+        "gemini-3.7-flash (high)": "Gemini 3.7 Flash · high",
+        "grok-4.6 (high)": "Grok 4.6 · high",
+        "grok-4.6 (low)": "Grok 4.6 · low",
         "gemini-3.6-flash (high)": "Gemini 3.6 Flash · high",
         "poolside/laguna-s-2.1 (none)": "Laguna S 2.1 · none",
         "gemma-4-31b (thinking)": "Gemma 4 31B · thinking",
-        "kimi-2.6 Cerebras (thinking)": "Kimi 2.6 · thinking",
+        "kimi-2.6 (thinking)": "Kimi 2.6 · thinking",
+        "deepseek-v4-flash-0731 (low)": "DeepSeek V4 Flash · low",
         "glm-5.2 (max)": "GLM 5.2 · max",
         "claude-sonnet-5 (xhigh)": "Claude Sonnet 5 · xhigh",
         "gpt-5.6-terra (xhigh)": "GPT-5.6 Terra · xhigh",
@@ -59,10 +69,12 @@ def render_svg(points: list[Point]) -> str:
     frontier_labels = {point.label for point in frontier}
     cost_frontier_labels = {point.label for point in pareto_frontier(points)}
     prominent_family_labels = {
+        "gemini-3.7-flash (high)",
         "claude-sonnet-5 (xhigh)",
         "gpt-5.6-terra (xhigh)",
     }
     notable_labels = (cost_frontier_labels | prominent_family_labels) - frontier_labels
+    label_geometries: list[LabelGeometry] = []
 
     def x(value: float) -> float:
         return left + (value - min_time) / (max_time - min_time) * plot_width
@@ -73,8 +85,8 @@ def render_svg(points: list[Point]) -> str:
     lines = [
         '<?xml version="1.0" encoding="UTF-8"?>',
         f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {width} {height}" role="img" aria-labelledby="title desc">',
-        '  <title id="title">Official judge score versus median turn time</title>',
-        '  <desc id="desc">A scatter plot of the curated under-four-second models. Kimi 2.6 and Gemini 3.6 Flash form the speed-quality frontier.</desc>',
+        '  <title id="title">Official judge score versus turn completion time</title>',
+        '  <desc id="desc">A scatter plot of the curated under-four-second models. Turn completion time measures the full model response or tool call, not time to first token. The red path marks configurations not dominated on lower median turn completion time and higher score.</desc>',
         "  <style>",
         "    text { font-family: ui-sans-serif, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; fill: #24211f; }",
         "    .title { font-family: Georgia, 'Times New Roman', serif; font-size: 24px; }",
@@ -88,13 +100,14 @@ def render_svg(points: list[Point]) -> str:
         "    .other { fill: #b9b5b0; fill-opacity: .72; }",
         "    .notable { fill: #625d59; fill-opacity: .9; }",
         "    .frontier-line { fill: none; stroke: #a23b2a; stroke-width: 2; }",
+        "    .label-hairline { stroke: #aaa49e; stroke-width: .65; }",
         "    .frontier { fill: #a23b2a; stroke: #fff; stroke-width: 1.5; }",
         "    .point-label { font-size: 13px; font-weight: 600; }",
         "    .notable-label { font-size: 12px; font-weight: 600; fill: #4f4a46; }",
         "    .point-detail { font-size: 12px; font-weight: 400; }",
         "  </style>",
-        f'  <text class="title" x="{left}" y="31">Score versus median turn time</text>',
-        f'  <text class="subtitle" x="{left}" y="55">Curated README models · upper left is better · speed–quality frontier in red</text>',
+        f'  <text class="title" x="{left}" y="31">Score versus turn completion time</text>',
+        f'  <text class="subtitle" x="{left}" y="55">Turn P50: full response or tool call · upper left is better · frontier in red</text>',
     ]
 
     for tick in y_ticks:
@@ -119,7 +132,7 @@ def render_svg(points: list[Point]) -> str:
         [
             f'  <line class="axis" x1="{left}" y1="{height - bottom}" x2="{width - right}" y2="{height - bottom}"/>',
             f'  <line class="cutoff" x1="{cutoff_x:.1f}" y1="{top}" x2="{cutoff_x:.1f}" y2="{height - bottom}"/>',
-            f'  <text class="axis-label" x="{left + plot_width / 2:.1f}" y="{height - 21}" text-anchor="middle">Median time per model turn</text>',
+            f'  <text class="axis-label" x="{left + plot_width / 2:.1f}" y="{height - 21}" text-anchor="middle">Turn P50 completion time</text>',
             f'  <text class="axis-label" transform="translate(25 {top + plot_height / 2:.1f}) rotate(-90)" text-anchor="middle">Official judge score</text>',
         ]
     )
@@ -141,28 +154,52 @@ def render_svg(points: list[Point]) -> str:
         )
 
     label_offsets = {
-        "kimi-2.6 Cerebras (thinking)": (13, 32),
-        "gemini-3.6-flash (high)": (13, -22),
+        "grok-4.6 (high)": (8, 28, "start"),
+        "inkling (low)": (-8, -34, "end"),
+        "gemini-3.5-flash-lite (high)": (-12, -38, "end"),
+        "poolside/laguna-s-2.1 (none)": (-136, -32, "start"),
+        "gemma-4-31b (thinking)": (-4, -52, "end"),
+        "kimi-2.6 (thinking)": (-8, -34, "end"),
+        "deepseek-v4-flash-0731 (low)": (-12, -45, "end"),
     }
     for point in frontier:
         px, py = x(point.turn_p50_ms), y(point.score)
-        dx, dy = label_offsets.get(point.label, (12, -18))
+        dx, dy, anchor = label_offsets.get(point.label, (12, -18, "start"))
+        label_x = px + dx
         label = html.escape(_short_label(point.label))
-        detail = f"{point.score} · {point.turn_p50_ms / 1000:.2f}s"
+        detail = (
+            f"{point.score} · {point.turn_p50_ms / 1000:.2f}s · "
+            f"{_money(point.cost_per_complete)}"
+        )
+        geometry = _label_geometry(
+            model_label=point.label,
+            point_x=px,
+            point_y=py,
+            point_radius=5.5,
+            label_x=label_x,
+            label_baseline=py + dy,
+            anchor=anchor,
+            label=_short_label(point.label),
+            detail=detail,
+            notable=False,
+        )
+        label_geometries.append(geometry)
         lines.extend(
             [
+                _label_hairline(geometry),
                 f'  <circle class="frontier" cx="{px:.1f}" cy="{py:.1f}" r="5.5"><title>{html.escape(point.label)}: {point.score}, {point.turn_p50_ms / 1000:.2f}s median turn time</title></circle>',
-                f'  <text class="point-label" x="{px + dx:.1f}" y="{py + dy:.1f}">{label}'
-                f'<tspan class="point-detail" x="{px + dx:.1f}" dy="16">{detail}</tspan></text>',
+                f'  <text class="point-label" x="{label_x:.1f}" y="{py + dy:.1f}" text-anchor="{anchor}">{label}'
+                f'<tspan class="point-detail" x="{label_x:.1f}" dy="16">{detail}</tspan></text>',
             ]
         )
 
     notable_offsets = {
-        "poolside/laguna-s-2.1 (none)": (-13, 44, "end"),
-        "gemma-4-31b (thinking)": (13, 32, "start"),
+        "gemini-3.7-flash (high)": (142, 26, "end"),
+        "poolside/laguna-s-2.1 (none)": (16, 54, "start"),
+        "gemma-4-31b (thinking)": (12, -22, "start"),
         "glm-5.2 (max)": (13, 38, "start"),
-        "claude-sonnet-5 (xhigh)": (13, -20, "start"),
-        "gpt-5.6-terra (xhigh)": (-13, 31, "end"),
+        "claude-sonnet-5 (xhigh)": (12, -28, "start"),
+        "gpt-5.6-terra (xhigh)": (-142, -32, "start"),
     }
     for point in points:
         if point.label not in notable_labels:
@@ -171,11 +208,39 @@ def render_svg(points: list[Point]) -> str:
         dx, dy, anchor = notable_offsets[point.label]
         label_x = px + dx
         label = html.escape(_short_label(point.label))
-        detail = f"{point.score} · {point.turn_p50_ms / 1000:.2f}s"
-        lines.append(
-            f'  <text class="notable-label" x="{label_x:.1f}" y="{py + dy:.1f}" text-anchor="{anchor}">{label}'
-            f'<tspan class="point-detail" x="{label_x:.1f}" dy="15">{detail}</tspan></text>'
+        detail = (
+            f"{point.score} · {point.turn_p50_ms / 1000:.2f}s · "
+            f"{_money(point.cost_per_complete)}"
         )
+        geometry = _label_geometry(
+            model_label=point.label,
+            point_x=px,
+            point_y=py,
+            point_radius=4.0,
+            label_x=label_x,
+            label_baseline=py + dy,
+            anchor=anchor,
+            label=_short_label(point.label),
+            detail=detail,
+            notable=True,
+        )
+        label_geometries.append(geometry)
+        lines.extend(
+            [
+                _label_hairline(geometry),
+                f'  <text class="notable-label" x="{label_x:.1f}" y="{py + dy:.1f}" text-anchor="{anchor}">{label}'
+                f'<tspan class="point-detail" x="{label_x:.1f}" dy="15">{detail}</tspan></text>',
+            ]
+        )
+
+    _validate_label_layout(
+        label_geometries,
+        points,
+        frontier,
+        x_position=x,
+        y_position=y,
+        point_x_value=lambda point: point.turn_p50_ms,
+    )
 
     lines.append("</svg>")
     return "\n".join(lines) + "\n"
